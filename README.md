@@ -37,6 +37,10 @@
 │   ├── exchanges/
 │   ├── models/
 │   └── strategies/
+├── frontend/
+│   ├── src/
+│   ├── package.json
+│   └── vite.config.ts
 └── requirements.txt
 ```
 
@@ -234,6 +238,110 @@ http://127.0.0.1:8000/docs
 
 ```bash
 uv run python main.py trade
+```
+
+## 前端工作台
+
+前端是 React + Vite + TypeScript，默认调用后端：
+
+```text
+http://127.0.0.1:8000
+```
+
+先启动后端：
+
+```bash
+uv run python main.py api --host 0.0.0.0 --port 8000 --workers 4
+```
+
+再启动前端：
+
+```bash
+cd frontend
+npm install
+npm run dev
+```
+
+访问：
+
+```text
+http://127.0.0.1:5173
+```
+
+如果后端地址不同，新建 `frontend/.env`：
+
+```bash
+VITE_API_BASE_URL=http://127.0.0.1:8000
+```
+
+前端第一版包含：
+
+- API/LIVE 状态栏
+- OKX Swap / Binance USD-M 切换
+- 合约 symbol、数量、价格、杠杆和保证金模式
+- 开多、平多、开空、平空
+- maker/taker 手续费查询
+- 合约成本估算
+- 风控和本地持仓状态展示
+
+## Docker 镜像
+
+镜像会把后端 API 和前端页面打在一起：
+
+- FastAPI 监听 `8000`
+- React 静态页面由 FastAPI 托管
+- `/api/v1/*` 仍然是后端接口
+- `/docs` 仍然是 FastAPI 文档
+
+本地构建：
+
+```bash
+docker build -t web3-trading:local .
+```
+
+本地运行：
+
+```bash
+docker run --rm \
+  --name web3-trading \
+  -p 8000:8000 \
+  --env-file .env \
+  web3-trading:local
+```
+
+访问：
+
+```text
+http://127.0.0.1:8000
+http://127.0.0.1:8000/docs
+```
+
+如果只是查看页面和状态，可以不传真实 API key，但真实下单前必须确认 `.env`：
+
+```bash
+ENABLE_LIVE_TRADING=false
+```
+
+## GitHub Actions 镜像推送
+
+仓库包含 GitHub Actions workflow：
+
+```text
+.github/workflows/docker.yml
+```
+
+推送到 `main` 后会自动构建并推送镜像到 GHCR：
+
+```text
+ghcr.io/bilbilmyc/trading:latest
+ghcr.io/bilbilmyc/trading:sha-<commit>
+```
+
+GitHub Packages 使用仓库自带的 `GITHUB_TOKEN`，不需要额外配置 Docker registry secret。仓库改成 private 后，GHCR 镜像通常也会跟随权限，需要登录后拉取：
+
+```bash
+echo <GITHUB_TOKEN> | docker login ghcr.io -u <GITHUB_USER> --password-stdin
+docker pull ghcr.io/bilbilmyc/trading:latest
 ```
 
 ## 验证

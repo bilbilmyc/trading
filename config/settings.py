@@ -81,6 +81,7 @@ class Settings(BaseSettings):
 
     host: str = "0.0.0.0"
     port: int = 8000
+    frontend_static_dir: str = "static"
 
     default_exchange: str = "okx"
     default_symbol: str = "BTC-USDT"

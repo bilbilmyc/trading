@@ -3,9 +3,12 @@ FastAPI server for trading operations.
 """
 
 from contextlib import asynccontextmanager
+from pathlib import Path
 from typing import Any, Dict, Optional
 
 from fastapi import Depends, FastAPI, HTTPException, Query
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from app.engine.risk_manager import RiskConfig
@@ -112,6 +115,20 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
         title=settings.app_name,
         version="0.1.0",
         lifespan=lifespan,
+    )
+
+    # Frontend development runs on Vite's local port. Keep CORS explicit so a
+    # browser dashboard can call the API without opening the service to every
+    # origin by default.
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=[
+            "http://127.0.0.1:5173",
+            "http://localhost:5173",
+        ],
+        allow_credentials=True,
+        allow_methods=["*"],
+        allow_headers=["*"],
     )
 
     def get_state() -> AppState:
@@ -242,5 +259,11 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
         strategy = SMAStrategy(short_window=short_window, long_window=long_window)
         state.engine.add_strategy(strategy.name, strategy)
         return {"strategy": strategy.name}
+
+    static_dir = Path(settings.frontend_static_dir)
+    if static_dir.exists():
+        # The Docker image copies the React build into /app/static. Mount it
+        # last so API and docs routes continue to win over the SPA fallback.
+        app.mount("/", StaticFiles(directory=static_dir, html=True), name="frontend")
 
     return app
