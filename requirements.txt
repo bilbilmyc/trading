@@ -1,0 +1,33 @@
+# 项目依赖
+
+# Web 框架
+fastapi>=0.109.0
+uvicorn[standard]>=0.27.0
+pydantic>=2.5.0
+pydantic-settings>=2.1.0
+
+# 异步 HTTP 客户端
+httpx>=0.26.0
+
+# WebSocket 支持
+websockets>=12.0
+
+# 数据处理
+pandas>=2.1.0
+numpy>=1.26.0
+ta-lib>=0.4.28
+
+# 并发与异步
+asyncio-throttle>=1.0.2
+aiolimiter>=1.1.0
+
+# 日志
+loguru>=0.7.0
+
+# 工具库
+python-dotenv>=1.0.0
+orjson>=3.9.0
+
+# 测试
+pytest>=7.4.0
+pytest-asyncio>=0.23.0
