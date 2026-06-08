@@ -1,0 +1,202 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 680" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#0f172a"/>
+      <stop offset="100%" stop-color="#1e293b"/>
+    </linearGradient>
+    <linearGradient id="accent" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#3b82f6"/>
+      <stop offset="100%" stop-color="#8b5cf6"/>
+    </linearGradient>
+    <linearGradient id="green" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#22c55e"/>
+      <stop offset="100%" stop-color="#16a34a"/>
+    </linearGradient>
+    <linearGradient id="amber" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#f59e0b"/>
+      <stop offset="100%" stop-color="#d97706"/>
+    </linearGradient>
+    <linearGradient id="rose" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#f43f5e"/>
+      <stop offset="100%" stop-color="#e11d48"/>
+    </linearGradient>
+    <linearGradient id="cyan" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#06b6d4"/>
+      <stop offset="100%" stop-color="#0891b2"/>
+    </linearGradient>
+    <filter id="shadow">
+      <feDropShadow dx="0" dy="2" stdDeviation="3" flood-opacity="0.3"/>
+    </filter>
+    <filter id="glow">
+      <feGaussianBlur stdDeviation="4" result="blur"/>
+      <feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge>
+    </filter>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto">
+      <path d="M0,0 L10,5 L0,10 Z" fill="#64748b"/>
+    </marker>
+    <marker id="arrow-accent" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto">
+      <path d="M0,0 L10,5 L0,10 Z" fill="#3b82f6"/>
+    </marker>
+  </defs>
+
+  <!-- Background -->
+  <rect width="960" height="680" fill="url(#bg)" rx="8"/>
+
+  <!-- Title -->
+  <text x="480" y="36" text-anchor="middle" fill="#f1f5f9" font-size="20" font-weight="bold" letter-spacing="1">
+    Web3 量化交易系统 - 架构图
+  </text>
+  <line x1="160" y1="46" x2="800" y2="46" stroke="#334155" stroke-width="1"/>
+
+  <!-- Layer 1: Exchange Layer -->
+  <rect x="40" y="60" width="880" height="120" rx="6" fill="#1e293b" stroke="#334155" stroke-width="1"/>
+  <text x="56" y="84" fill="#94a3b8" font-size="11" font-weight="600" letter-spacing="1">层 1 · 交易所接入</text>
+
+  <!-- Exchange boxes -->
+  <rect x="56" y="96" width="136" height="68" rx="6" fill="#1e3a5f" stroke="#3b82f6" stroke-width="1" filter="url(#shadow)" opacity="0.8"/>
+  <text x="124" y="124" text-anchor="middle" fill="#60a5fa" font-size="12" font-weight="bold">OKX 现货</text>
+  <text x="124" y="142" text-anchor="middle" fill="#94a3b8" font-size="9">okx</text>
+  <text x="124" y="156" text-anchor="middle" fill="#64748b" font-size="9">REST + WebSocket</text>
+
+  <rect x="206" y="96" width="136" height="68" rx="6" fill="#1e3a5f" stroke="#3b82f6" stroke-width="1" filter="url(#shadow)" opacity="0.8"/>
+  <text x="274" y="124" text-anchor="middle" fill="#60a5fa" font-size="12" font-weight="bold">Binance 现货</text>
+  <text x="274" y="142" text-anchor="middle" fill="#94a3b8" font-size="9">binance</text>
+  <text x="274" y="156" text-anchor="middle" fill="#64748b" font-size="9">REST + WebSocket</text>
+
+  <rect x="356" y="96" width="136" height="68" rx="6" fill="#312e81" stroke="#8b5cf6" stroke-width="1.5" filter="url(#shadow)"/>
+  <text x="424" y="124" text-anchor="middle" fill="#a78bfa" font-size="12" font-weight="bold">OKX 永续合约</text>
+  <text x="424" y="142" text-anchor="middle" fill="#94a3b8" font-size="9">okx_swap</text>
+  <text x="424" y="156" text-anchor="middle" fill="#64748b" font-size="9">USDT 保证金</text>
+
+  <rect x="506" y="96" width="136" height="68" rx="6" fill="#312e81" stroke="#8b5cf6" stroke-width="1.5" filter="url(#shadow)"/>
+  <text x="574" y="124" text-anchor="middle" fill="#a78bfa" font-size="12" font-weight="bold">Binance USD-M</text>
+  <text x="574" y="142" text-anchor="middle" fill="#94a3b8" font-size="9">binance_usdm</text>
+  <text x="574" y="156" text-anchor="middle" fill="#64748b" font-size="9">U 本位合约</text>
+
+  <rect x="656" y="96" width="248" height="68" rx="6" fill="#1a2332" stroke="#475569" stroke-width="1" stroke-dasharray="4,2"/>
+  <text x="780" y="118" text-anchor="middle" fill="#64748b" font-size="11">ExchangeFactory</text>
+  <text x="780" y="136" text-anchor="middle" fill="#475569" font-size="9">单例管理 · 自动注册</text>
+  <text x="780" y="152" text-anchor="middle" fill="#475569" font-size="9">ExchangeBase / ContractExchangeBase</text>
+
+  <!-- Arrow from layer 1 to 2 -->
+  <line x1="480" y1="180" x2="480" y2="198" stroke="#64748b" stroke-width="1.5" marker-end="url(#arrow)"/>
+
+  <!-- Layer 2: Engine Layer -->
+  <rect x="40" y="198" width="880" height="150" rx="6" fill="#1e293b" stroke="#334155" stroke-width="1"/>
+  <text x="56" y="222" fill="#94a3b8" font-size="11" font-weight="600" letter-spacing="1">层 2 · 交易引擎</text>
+
+  <!-- TradingEngine central box -->
+  <rect x="56" y="234" width="240" height="100" rx="8" fill="url(#accent)" filter="url(#shadow)"/>
+  <text x="176" y="264" text-anchor="middle" fill="#fff" font-size="14" font-weight="bold">TradingEngine</text>
+  <text x="176" y="284" text-anchor="middle" fill="#c7d2fe" font-size="10">多交易所 · 多策略</text>
+  <text x="176" y="300" text-anchor="middle" fill="#c7d2fe" font-size="10">并发控制 · 生命周期</text>
+  <text x="176" y="316" text-anchor="middle" fill="#c7d2fe" font-size="10">信号过滤器链</text>
+
+  <!-- Engine sub-components -->
+  <rect x="316" y="234" width="130" height="44" rx="6" fill="#1e293b" stroke="#f59e0b" stroke-width="1"/>
+  <text x="381" y="254" text-anchor="middle" fill="#fbbf24" font-size="11" font-weight="bold">RiskManager</text>
+  <text x="381" y="270" text-anchor="middle" fill="#94a3b8" font-size="9">风控 · 止损 · 频率限制</text>
+
+  <rect x="316" y="286" width="130" height="44" rx="6" fill="#1e293b" stroke="#22c55e" stroke-width="1"/>
+  <text x="381" y="306" text-anchor="middle" fill="#4ade80" font-size="11" font-weight="bold">PositionManager</text>
+  <text x="381" y="322" text-anchor="middle" fill="#94a3b8" font-size="9">持仓 · 余额 · PnL</text>
+
+  <rect x="460" y="234" width="130" height="44" rx="6" fill="#1e293b" stroke="#06b6d4" stroke-width="1"/>
+  <text x="525" y="254" text-anchor="middle" fill="#22d3ee" font-size="11" font-weight="bold">OrderSync</text>
+  <text x="525" y="270" text-anchor="middle" fill="#94a3b8" font-size="9">订单状态同步</text>
+
+  <rect x="460" y="286" width="130" height="44" rx="6" fill="#1e293b" stroke="#06b6d4" stroke-width="1"/>
+  <text x="525" y="306" text-anchor="middle" fill="#22d3ee" font-size="11" font-weight="bold">PositionSync</text>
+  <text x="525" y="322" text-anchor="middle" fill="#94a3b8" font-size="9">持仓/余额同步</text>
+
+  <rect x="604" y="234" width="130" height="44" rx="6" fill="#1e293b" stroke="#f43f5e" stroke-width="1"/>
+  <text x="669" y="254" text-anchor="middle" fill="#fb7185" font-size="11" font-weight="bold">Monitor</text>
+  <text x="669" y="270" text-anchor="middle" fill="#94a3b8" font-size="9">告警 · 健康检查</text>
+
+  <rect x="604" y="286" width="130" height="44" rx="6" fill="#1e293b" stroke="#a855f7" stroke-width="1"/>
+  <text x="669" y="306" text-anchor="middle" fill="#c084fc" font-size="11" font-weight="bold">PaperAccount</text>
+  <text x="669" y="322" text-anchor="middle" fill="#94a3b8" font-size="9">模拟盘</text>
+
+  <!-- LLM Filter box -->
+  <rect x="748" y="234" width="158" height="96" rx="6" fill="#1a2332" stroke="#475569" stroke-width="1" stroke-dasharray="4,2"/>
+  <text x="827" y="258" text-anchor="middle" fill="#94a3b8" font-size="10" font-weight="bold">LLMSignalFilter</text>
+  <text x="827" y="278" text-anchor="middle" fill="#64748b" font-size="9">B 方案：SMA</text>
+  <text x="827" y="294" text-anchor="middle" fill="#64748b" font-size="9">↓ LLM 二次确认</text>
+  <text x="827" y="312" text-anchor="middle" fill="#64748b" font-size="9">→ 放行/拒绝</text>
+
+  <!-- Arrow from layer 2 to 3 -->
+  <line x1="480" y1="348" x2="480" y2="366" stroke="#64748b" stroke-width="1.5" marker-end="url(#arrow)"/>
+
+  <!-- Layer 3: Strategy Layer -->
+  <rect x="40" y="366" width="880" height="120" rx="6" fill="#1e293b" stroke="#334155" stroke-width="1"/>
+  <text x="56" y="390" fill="#94a3b8" font-size="11" font-weight="600" letter-spacing="1">层 3 · 策略层</text>
+
+  <!-- SMA Strategy -->
+  <rect x="56" y="402" width="160" height="72" rx="6" fill="#0f2937" stroke="#06b6d4" stroke-width="1.5" filter="url(#shadow)"/>
+  <text x="136" y="428" text-anchor="middle" fill="#22d3ee" font-size="12" font-weight="bold">SMAStrategy</text>
+  <text x="136" y="446" text-anchor="middle" fill="#94a3b8" font-size="9">双均线交叉</text>
+  <text x="136" y="462" text-anchor="middle" fill="#64748b" font-size="9">short 5 / long 20</text>
+
+  <!-- Arrow SMA → Engine -->
+  <line x1="216" y1="438" x2="256" y2="438" stroke="#64748b" stroke-width="1" marker-end="url(#arrow)"/>
+
+  <!-- LLM Strategy -->
+  <rect x="266" y="402" width="200" height="72" rx="6" fill="#1a0f33" stroke="#a855f7" stroke-width="1.5" filter="url(#shadow)"/>
+  <text x="366" y="428" text-anchor="middle" fill="#c084fc" font-size="12" font-weight="bold">LLMStrategy</text>
+  <text x="366" y="446" text-anchor="middle" fill="#94a3b8" font-size="9">LLMAnalyzer → Signal</text>
+  <text x="366" y="462" text-anchor="middle" fill="#64748b" font-size="9">D:signal / paper / A:live</text>
+
+  <!-- Arrow LLM Strategy → Engine -->
+  <line x1="466" y1="438" x2="500" y2="438" stroke="#64748b" stroke-width="1" marker-end="url(#arrow)"/>
+
+  <!-- LLMAnalyzer -->
+  <rect x="510" y="402" width="180" height="72" rx="6" fill="#1a2332" stroke="#475569" stroke-width="1" stroke-dasharray="4,2"/>
+  <text x="600" y="424" text-anchor="middle" fill="#94a3b8" font-size="11" font-weight="bold">LLMAnalyzer</text>
+  <text x="600" y="442" text-anchor="middle" fill="#64748b" font-size="9">Prompt 构建 → LLM 调用</text>
+  <text x="600" y="460" text-anchor="middle" fill="#64748b" font-size="9">响应解析 → AnalysisResult</text>
+
+  <!-- LLM API box -->
+  <rect x="710" y="402" width="196" height="72" rx="6" fill="#1a2332" stroke="#f59e0b" stroke-width="1" stroke-dasharray="4,2"/>
+  <text x="808" y="428" text-anchor="middle" fill="#fbbf24" font-size="12" font-weight="bold">LLM API</text>
+  <text x="808" y="446" text-anchor="middle" fill="#94a3b8" font-size="9">OpenAI / Claude / DeepSeek</text>
+  <text x="808" y="462" text-anchor="middle" fill="#64748b" font-size="9">Ollama / vLLM 本地部署</text>
+
+  <!-- Arrow from layer 3 to 4 -->
+  <line x1="480" y1="486" x2="480" y2="504" stroke="#64748b" stroke-width="1.5" marker-end="url(#arrow)"/>
+
+  <!-- Layer 4: API & Frontend -->
+  <rect x="40" y="504" width="880" height="100" rx="6" fill="#1e293b" stroke="#334155" stroke-width="1"/>
+  <text x="56" y="528" fill="#94a3b8" font-size="11" font-weight="600" letter-spacing="1">层 4 · API &amp; 前端</text>
+
+  <rect x="56" y="540" width="220" height="52" rx="6" fill="url(#accent)" filter="url(#shadow)"/>
+  <text x="166" y="564" text-anchor="middle" fill="#fff" font-size="13" font-weight="bold">FastAPI Server</text>
+  <text x="166" y="582" text-anchor="middle" fill="#c7d2fe" font-size="9">REST · WebSocket · CORS</text>
+
+  <rect x="296" y="540" width="220" height="52" rx="6" fill="#1e293b" stroke="#f59e0b" stroke-width="1"/>
+  <text x="406" y="564" text-anchor="middle" fill="#fbbf24" font-size="11" font-weight="bold">AI 分析 API</text>
+  <text x="406" y="582" text-anchor="middle" fill="#94a3b8" font-size="9">POST /api/v1/ai/analyze</text>
+
+  <rect x="536" y="540" width="168" height="52" rx="6" fill="#1e293b" stroke="#22c55e" stroke-width="1"/>
+  <text x="620" y="564" text-anchor="middle" fill="#4ade80" font-size="11" font-weight="bold">监控 API</text>
+  <text x="620" y="582" text-anchor="middle" fill="#94a3b8" font-size="9">monitor/status/alerts</text>
+
+  <rect x="724" y="540" width="182" height="52" rx="6" fill="#1e293b" stroke="#06b6d4" stroke-width="1"/>
+  <text x="815" y="560" text-anchor="middle" fill="#22d3ee" font-size="11" font-weight="bold">前端工作台</text>
+  <text x="815" y="578" text-anchor="middle" fill="#94a3b8" font-size="9">React + Vite + TypeScript</text>
+
+  <!-- Bottom layer: external -->
+  <line x1="480" y1="604" x2="480" y2="622" stroke="#64748b" stroke-width="1.5" marker-end="url(#arrow)"/>
+
+  <rect x="40" y="622" width="880" height="44" rx="6" fill="#0f172a" stroke="#334155" stroke-width="1"/>
+  <text x="480" y="642" text-anchor="middle" fill="#64748b" font-size="11">
+    外部：交易所 REST/WebSocket · LLM API · 用户浏览器 · terminal curl
+  </text>
+
+  <!-- Legend -->
+  <text x="56" y="668" fill="#475569" font-size="9">■ 现货适配器  ■ 合约适配器  ■ 核心引擎  ■ 策略  ■ API</text>
+  <rect x="246" y="660" width="10" height="10" rx="2" fill="#3b82f6" opacity="0.6"/>
+  <rect x="300" y="660" width="10" height="10" rx="2" fill="#8b5cf6" opacity="0.8"/>
+  <rect x="360" y="660" width="10" height="10" rx="2" fill="#3b82f6" opacity="1"/>
+  <rect x="420" y="660" width="10" height="10" rx="2" fill="#a855f7" opacity="1"/>
+  <rect x="468" y="660" width="10" height="10" rx="2" fill="#f59e0b" opacity="1"/>
+</svg>

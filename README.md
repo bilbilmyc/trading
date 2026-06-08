@@ -1,531 +1,519 @@
 # Web3 量化交易系统
 
-一个基于 Python/asyncio 的 Web3 交易系统骨架，当前支持 OKX、Binance 的统一 REST 接口，并提供 FastAPI 服务入口、SMA 示例策略、风险控制和持仓管理模块。
+一个基于 Python/asyncio 的 Web3 量化交易系统，支持 OKX、Binance 的统一 **现货 + 永续合约**接口，
+内置 SMA 策略、**大模型 AI 分析**、风控、订单/持仓同步和监控告警。
 
-> 风险提示：默认关闭真实下单。只有显式设置 `ENABLE_LIVE_TRADING=true` 后，API 才允许下单和撤单。
+![架构图](docs/architecture.svg)
 
-## 功能
+> ⚠️ **风险提示**：默认关闭真实下单。只有显式设置 `ENABLE_LIVE_TRADING=true` 后 API 才允许下单和撤单。
+> 实盘前务必在 **testnet** 验证完整流程。
 
-- 统一交易所接口：OKX、Binance 使用同一套抽象方法
-- 异步实现：REST 请求、交易引擎、策略处理均使用 async/await
-- REST API：查询行情、K 线、余额、挂单、下单、撤单、引擎状态
-- Uvicorn 并发：支持 async IO 和多 worker 进程
-- 合约底座：OKX 永续和 Binance USD-M Futures 独立适配器
-- WebSocket 行情：ticker 订阅、取消订阅、断线重连
-- 风控模块：订单金额、频率、每日亏损、回撤限制
-- 策略框架：内置 SMA 双均线示例策略
-- 配置管理：支持 `.env` 和环境变量
+---
 
-## 项目结构
+## 功能一览
 
-```text
-.
-├── .python-version
-├── .env.example
-├── pyproject.toml
-├── uv.lock
-├── main.py
-├── config/
-│   ├── __init__.py
-│   └── settings.py
-├── app/
-│   ├── api/
-│   │   ├── __init__.py
-│   │   └── server.py
-│   ├── core/
-│   ├── engine/
-│   ├── exchanges/
-│   ├── models/
-│   └── strategies/
-├── frontend/
-│   ├── src/
-│   ├── package.json
-│   └── vite.config.ts
-└── requirements.txt
-```
+| 模块 | 功能 |
+|------|------|
+| **交易所接入** | OKX 现货/永续 + Binance 现货/USD-M Futures，统一抽象接口 |
+| **交易引擎** | 多交易所、多策略并行、并发控制、生命周期管理 |
+| **策略** | SMA 双均线 (内置) + **LLMAnalyzer 大模型分析 (新增)** |
+| **风控** | 仓位/金额/频率/每日亏损/回撤限制 |
+| **订单同步** | 定时从交易所拉取订单状态，更新本地记录 |
+| **持仓同步** | 定时同步余额和合约持仓到 PositionManager |
+| **监控告警** | 引擎健康、网络断开、风控触发 → 结构化 Alert |
+| **模拟盘** | 内存 USDT 模拟账户，支持信号模拟执行 |
+| **AI 分析** | 接入 OpenAI/Claude/DeepSeek/Ollama 分析市场，辅助决策 |
+| **WebSocket** | Ticker 订阅/取消订阅/断线重连 |
+| **REST API** | FastAPI 服务，查询行情/K 线/余额/挂单/下单/撤单/合约操作/引擎状态 |
+| **前端** | React + Vite + TypeScript 合约交易工作台 |
 
-## 环境准备
+---
 
-本项目推荐只用 `uv` 管理 Python 和虚拟环境。当前项目默认 Python 版本写在 `.python-version`：
+## 目录
 
-```text
-3.13
-```
+- [快速开始](#快速开始)
+- [运行](#运行)
+- [阶段 5：实盘自动交易](#阶段-5实盘自动交易)
+- [AI 大模型分析](#ai-大模型分析)
+- [LLM 策略：D→B→A 三层架构](#llm-策略db-a-三层架构)
+- [前端工作台](#前端工作台)
+- [Docker](#docker)
+- [API 参考](#api-参考)
+- [项目结构](#项目结构)
+- [常见问题](#常见问题)
 
-检查 `uv`：
+---
+
+## 快速开始
 
 ```bash
-uv --version
-```
+# 1. 安装 uv（Python 项目管理）
+curl -LsSf https://astral.sh/uv/install.sh | sh
 
-如果终端找不到 `uv`，确认 `~/.local/bin` 在 `PATH` 中：
-
-```bash
-export PATH="$HOME/.local/bin:$PATH"
-uv --version
-```
-
-建议把这行放进 `~/.zshrc`：
-
-```bash
-export PATH="$HOME/.local/bin:$PATH"
-```
-
-## 安装 Python
-
-用 `uv` 安装常用 Python 版本：
-
-```bash
-uv python install 3.12 3.13 3.14
-```
-
-查看已安装和可下载版本：
-
-```bash
-uv python list
-```
-
-只看已安装版本：
-
-```bash
-uv python list --only-installed
-```
-
-`/usr/bin/python3` 是 macOS/Command Line Tools 自带 Python，可能会显示为 3.9.x，不建议删除。项目环境请用 `uv venv --managed-python`，这样会优先使用 uv 管理的 Python。
-
-## 创建项目环境
-
-进入项目目录：
-
-```bash
+# 2. 创建环境 + 安装依赖
 cd trading
-```
-
-按 `.python-version` 创建虚拟环境：
-
-```bash
 uv venv --managed-python
-```
-
-如果想指定版本：
-
-```bash
-uv venv --python 3.13 --managed-python
-```
-
-激活环境：
-
-```bash
 source .venv/bin/activate
-```
-
-安装依赖：
-
-```bash
 uv sync
-```
 
-`uv sync` 会读取 `pyproject.toml` 和 `uv.lock`，创建/更新 `.venv` 并安装锁定版本。
-
-如果只想兼容旧的 requirements 流程，也可以：
-
-```bash
-uv pip install -r requirements.txt
-```
-
-检查项目 Python：
-
-```bash
-python --version
-python -c "import sys; print(sys.executable); print(sys.base_prefix)"
-```
-
-预期应看到 Python 3.13.x，并且解释器来自 `.venv` 或 uv 管理目录。
-
-## 配置
-
-复制环境变量模板：
-
-```bash
+# 3. 配置
 cp .env.example .env
+# 编辑 .env：填入交易所 testnet API Key（可选，查行情不需要）
+
+# 4. 启动 API
+uv run python main.py api
+
+# 5. 验证
+curl http://127.0.0.1:8000/health
+curl http://127.0.0.1:8000/api/v1/exchanges
 ```
 
-常用配置：
-
-```bash
-DEFAULT_EXCHANGE=okx
-DEFAULT_SYMBOL=BTC-USDT
-ENABLE_LIVE_TRADING=false
-
-OKX_ENABLED=true
-OKX_SWAP_ENABLED=true
-OKX_USE_TESTNET=true
-OKX_API_KEY=
-OKX_SECRET_KEY=
-OKX_PASSPHRASE=
-
-BINANCE_ENABLED=true
-BINANCE_USDM_ENABLED=true
-BINANCE_USE_TESTNET=true
-BINANCE_API_KEY=
-BINANCE_SECRET_KEY=
-
-MAX_POSITION_VALUE=1000
-MAX_ORDERS_PER_MINUTE=5
-```
-
-`ENABLE_LIVE_TRADING=false` 时，查询类接口可用，但下单/撤单会返回 403。
-
-## 交易所名称
-
-现货和合约适配器是分开的，避免把合约单误发到现货接口：
-
-```text
-okx             OKX 现货
-binance         Binance 现货
-okx_swap        OKX USDT 永续合约
-binance_usdm    Binance USD-M Futures
-```
-
-常用 symbol：
-
-```text
-OKX 永续：BTC-USDT-SWAP
-Binance USD-M：BTCUSDT
-```
-
-代码会做基础标准化，例如 OKX 传 `BTC-USDT` 会补成 `BTC-USDT-SWAP`，Binance 传 `BTC-USDT` 会转成 `BTCUSDT`。
+---
 
 ## 运行
 
-查看项目状态：
+### 查看状态
 
 ```bash
 uv run python main.py status
 ```
 
-启动 API：
+### 启动 API 服务
 
 ```bash
-uv run python main.py api
+uv run python main.py api --host 0.0.0.0 --port 8000
+# 多 worker：
+uv run python main.py api --host 0.0.0.0 --port 8000 --workers 4
 ```
 
-指定地址和端口：
-
-```bash
-uv run python main.py api --host 127.0.0.1 --port 8000
-```
-
-多 worker 并发启动：
-
-```bash
-uv run python main.py api --workers 4
-```
-
-也可以直接使用 uvicorn：
-
-```bash
-uvicorn app.api.server:create_app --factory --host 0.0.0.0 --port 8000 --workers 4
-```
-
-访问 API 文档：
-
-```text
-http://127.0.0.1:8000/docs
-```
-
-运行示例策略循环：
+### 运行策略循环
 
 ```bash
 uv run python main.py trade
 ```
 
-## 前端工作台
+### API 文档
 
-前端是 React + Vite + TypeScript，默认调用后端：
+启动后访问：
 
 ```text
-http://127.0.0.1:8000
+http://127.0.0.1:8000/docs
 ```
 
-先启动后端：
+---
 
-```bash
-uv run python main.py api --host 0.0.0.0 --port 8000 --workers 4
+## 阶段 5：实盘自动交易
+
+阶段 5 打通了从策略信号到实盘执行的完整链路，同时保护你不会意外全仓。
+
+### 架构
+
+```text
+┌─────────┐  信号   ┌────────────┐  风控通过   ┌────────────┐
+│ 策略     │───────→│ TradingEngine │─────────→│ Exchange   │
+│ SMA/LLM  │        │ _execute_signal │         │ place_order│
+└─────────┘        └────────────┘         └────────────┘
+                           │
+                    ┌──────┼──────┐
+                    │      │      │
+               OrderSync PositionSync Monitor
+               (拉取订单) (拉取持仓) (健康告警)
 ```
 
-再启动前端：
+### 6 个子系统
+
+| # | 子系统 | 说明 | 启用方式 |
+|---|--------|------|---------|
+| 1 | **策略信号** | 策略产生 Signal(buy/sell/hold) | `POST /api/v1/strategies/{name}/start` |
+| 2 | **风控检查** | RiskManager 拦截超限订单 | 默认启用 |
+| 3 | **执行引擎** | TradingEngine 调用 exchange.place_order | `ENABLE_LIVE_TRADING=true` |
+| 4 | **订单同步** | OrderSync 定时拉取交易所订单状态 | 引擎 start() 自动启动 |
+| 5 | **持仓同步** | PositionSync 定时同步余额+合约持仓 | 引擎 start() 自动启动 |
+| 6 | **监控告警** | Monitor 检查引擎+风控+网络健康 | 引擎 start() 自动启动 |
+
+### 防全仓保护
+
+实盘模式仍受风控限制保护：
+
+```ini
+# .env
+MAX_POSITION_VALUE=1000        # 单笔最大金额 (USDT)
+MAX_DAILY_LOSS=100             # 每日最大亏损
+MAX_ORDERS_PER_MINUTE=5        # 每分钟最大订单数
+STOP_LOSS_PCT=0.05             # 默认止损 5%
+```
+
+所有 API 下单端点（`/api/v1/order`、`/api/v1/contracts/order`）在 `ENABLE_LIVE_TRADING=false` 时返回 **403**。
+
+### 监控与告警
 
 ```bash
+# 监控面板
+curl http://127.0.0.1:8000/api/v1/monitor/status
+curl http://127.0.0.1:8000/api/v1/monitor/alerts
+curl http://127.0.0.1:8000/api/v1/monitor/last-error
+
+# 同步器状态
+curl http://127.0.0.1:8000/api/v1/sync/status
+
+# 手动触发同步
+curl -X POST http://127.0.0.1:8000/api/v1/sync/orders/binance_usdm
+curl -X POST http://127.0.0.1:8000/api/v1/sync/positions/binance_usdm
+```
+
+---
+
+## AI 大模型分析
+
+系统内置 LLMAnalyzer 模块，支持将市场数据发送给大模型分析，返回结构化交易建议。
+
+### 支持的 LLM
+
+| 提供方 | `LLM_BASE_URL` | 推荐模型 |
+|--------|----------------|---------|
+| **OpenAI** | `https://api.openai.com/v1` | `gpt-4o-mini`（成本低） |
+| **DeepSeek** | `https://api.deepseek.com/v1` | `deepseek-chat` |
+| **Ollama (本地)** | `http://localhost:11434/v1` | `llama3` |
+| **vLLM (本地)** | `http://localhost:8000/v1` | 任意部署模型 |
+
+### 配置
+
+```ini
+# .env
+LLM_API_KEY=sk-your-key-here
+LLM_BASE_URL=https://api.openai.com/v1
+LLM_MODEL=gpt-4o-mini
+LLM_TEMPERATURE=0.3
+LLM_DEFAULT_ORDER_AMOUNT=50    # 单笔默认金额 USDT
+```
+
+### 手动分析
+
+```bash
+curl -X POST http://127.0.0.1:8000/api/v1/ai/analyze \
+  -H 'Content-Type: application/json' \
+  -d '{"exchange":"binance_usdm","symbol":"BTCUSDT","interval":"1h","limit":30}'
+```
+
+返回示例：
+
+```json
+{
+  "decision": "buy",
+  "confidence": 0.78,
+  "reason": "BTC 突破 68500 阻力位后放量站稳，均线多头排列...",
+  "suggested_action": "open_long",
+  "suggested_quantity": 0.000727,
+  "suggested_price": 68750,
+  "stop_loss": 67200,
+  "take_profit": 71000,
+  "risk_level": "medium",
+  "risk_note": "上方 70000 整数关口有压力"
+}
+```
+
+---
+
+## LLM 策略：D→B→A 三层架构
+
+![LLM 三层架构](docs/llm-architecture.svg)
+
+从**观察 → 辅助过滤 → 全自动**，逐步升级，每个阶段都受默认金额保护。
+
+### D 方案：信号顾问（观察）
+
+```bash
+# 创建 LLM 策略 (mode=signal)
+curl -X POST http://127.0.0.1:8000/api/v1/strategies/llm \
+  -H 'Content-Type: application/json' \
+  -d '{"exchange":"binance_usdm","symbol":"BTCUSDT",
+       "interval":"1h","default_order_amount":50,
+       "mode":"signal","enabled":true}'
+
+# 启动信号运行器
+curl -X POST http://127.0.0.1:8000/api/v1/runner/start \
+  -H 'Content-Type: application/json' \
+  -d '{"poll_seconds":300,"candle_limit":80}'
+
+# 查看 LLM 信号
+curl http://127.0.0.1:8000/api/v1/signals/recent?limit=5
+```
+
+- LLMStrategy 在 `generate_signals()` 中调用 LLM
+- `mode=signal`：引擎不执行，信号仅展示在面板
+- 每笔 `quantity = default_order_amount / current_price`
+
+### B 方案：混合过滤（SMA + LLM 二次确认）
+
+```bash
+# 附加 LLM 过滤器
+curl -X POST 'http://127.0.0.1:8000/api/v1/strategies/llm-filter/attach?\
+exchange=binance_usdm&symbol=BTCUSDT&default_order_amount=50&min_confidence=0.5'
+
+# 启动 SMA 策略
+curl -X POST http://127.0.0.1:8000/api/v1/strategies/sma_5_20_btcusdt/start
+
+# 查看被 LLM 拒绝的信号
+curl 'http://127.0.0.1:8000/api/v1/strategies/llm-filter/rejected?limit=10'
+```
+
+- SMA 出信号 → `LLMSignalFilter.check()` → LLM 二次确认 → 放行/拒绝
+- 方向不一致或置信度不足时拒绝
+- 过滤器异常时默认放行，不阻塞交易
+
+### A 方案：全自动执行
+
+```bash
+# 切换为 live 模式
+curl -X POST http://127.0.0.1:8000/api/v1/strategies/llm_btcusdt_1h/mode \
+  -H 'Content-Type: application/json' \
+  -d '{"mode":"live"}'
+
+# 启动策略
+curl -X POST http://127.0.0.1:8000/api/v1/strategies/llm_btcusdt_1h/start
+```
+
+- LLMStrategy `mode=live`：引擎自动执行信号
+- 仍经过风控检查 + 过滤器链
+- 单笔金额受 `default_order_amount` 限制
+
+---
+
+## 前端工作台
+
+前端是 React + Vite + TypeScript。
+
+```bash
+# 先启动后端
+uv run python main.py api --host 0.0.0.0 --port 8000
+
+# 再启动前端
 cd frontend
 npm install
 npm run dev
 ```
 
-访问：
+访问 `http://127.0.0.1:5173`
 
-```text
-http://127.0.0.1:5173
-```
-
-如果后端地址不同，新建 `frontend/.env`：
-
-```bash
-VITE_API_BASE_URL=http://127.0.0.1:8000
-```
-
-前端第一版包含：
+功能：
 
 - API/LIVE 状态栏
 - OKX Swap / Binance USD-M 切换
-- 合约 symbol、数量、价格、杠杆和保证金模式
-- 开多、平多、开空、平空
-- maker/taker 手续费查询
-- 合约成本估算
-- 风控和本地持仓状态展示
+- 合约 symbol 搜索、数量、价格、杠杆、保证金模式
+- 开多/平多/开空/平空方向选择
+- Maker/Taker 手续费查询 + 成本估算
+- 策略信号面板
+- 风控 / 持仓状态展示
+- 模拟盘
 
-## Docker 镜像
+---
 
-镜像会把后端 API 和前端页面打在一起：
-
-- FastAPI 监听 `8000`
-- React 静态页面由 FastAPI 托管
-- `/api/v1/*` 仍然是后端接口
-- `/docs` 仍然是 FastAPI 文档
-
-本地构建：
+## Docker
 
 ```bash
+# 构建
 docker build -t web3-trading:local .
-```
 
-本地运行：
-
-```bash
+# 运行
 docker run --rm \
   --name web3-trading \
   -p 8000:8000 \
   --env-file .env \
   web3-trading:local
+
+# 访问
+open http://127.0.0.1:8000
 ```
 
-访问：
-
-```text
-http://127.0.0.1:8000
-http://127.0.0.1:8000/docs
-```
-
-如果只是查看页面和状态，可以不传真实 API key，但真实下单前必须确认 `.env`：
+GitHub Actions 自动构建推送到 GHCR：
 
 ```bash
-ENABLE_LIVE_TRADING=false
-```
-
-## GitHub Actions 镜像推送
-
-仓库包含 GitHub Actions workflow：
-
-```text
-.github/workflows/docker.yml
-```
-
-推送到 `main` 后会自动构建并推送镜像到 GHCR：
-
-```text
-ghcr.io/bilbilmyc/trading:latest
-ghcr.io/bilbilmyc/trading:sha-<commit>
-```
-
-GitHub Packages 使用仓库自带的 `GITHUB_TOKEN`，不需要额外配置 Docker registry secret。仓库改成 private 后，GHCR 镜像通常也会跟随权限，需要登录后拉取：
-
-```bash
-echo <GITHUB_TOKEN> | docker login ghcr.io -u <GITHUB_USER> --password-stdin
 docker pull ghcr.io/bilbilmyc/trading:latest
 ```
 
-## 验证
+---
 
-编译检查：
+## API 参考
 
-```bash
-uv run python -m compileall app config main.py
-```
-
-健康检查：
+### 行情数据
 
 ```bash
-curl http://127.0.0.1:8000/health
+GET  /health
+GET  /api/v1/config
+GET  /api/v1/exchanges
+GET  /api/v1/ticker/{exchange}/{symbol}
+GET  /api/v1/klines/{exchange}/{symbol}?interval=1m&limit=100
+GET  /api/v1/trades/{exchange}/{symbol}?limit=50
 ```
 
-交易所列表：
+### 账户与订单
 
 ```bash
-curl http://127.0.0.1:8000/api/v1/exchanges
+GET  /api/v1/balances/{exchange}
+GET  /api/v1/balances/{exchange}/available
+GET  /api/v1/order/{exchange}/{symbol}/{order_id}
+GET  /api/v1/orders/{exchange}/open?symbol=BTCUSDT
+POST /api/v1/order                          # 需 ENABLE_LIVE_TRADING
+POST /api/v1/contracts/order                # 合约专用，需 ENABLE_LIVE_TRADING
+DELETE /api/v1/order/{exchange}/{symbol}/{order_id}
+DELETE /api/v1/orders/{exchange}/open
 ```
 
-引擎状态：
+### 合约
 
 ```bash
-curl http://127.0.0.1:8000/api/v1/engine/status
+GET  /api/v1/contracts/{exchange}?search=BTC&limit=200
+GET  /api/v1/contracts/{exchange}/{symbol}/fee-rate
+GET  /api/v1/contracts/{exchange}/{symbol}/cost-estimate?quantity=1&price=100000&liquidity=maker
+POST /api/v1/contracts/{exchange}/{symbol}/leverage?leverage=3&margin_mode=cross
 ```
 
-查询合约手续费率：
+### 引擎与策略
 
 ```bash
-curl http://127.0.0.1:8000/api/v1/contracts/okx_swap/BTC-USDT-SWAP/fee-rate
-curl http://127.0.0.1:8000/api/v1/contracts/binance_usdm/BTCUSDT/fee-rate
+GET   /api/v1/engine/status
+GET   /api/v1/strategies
+POST  /api/v1/strategies/sma                          # 创建 SMA 策略
+POST  /api/v1/strategies/llm                          # 创建 LLM 策略
+POST  /api/v1/strategies/{name}/start
+POST  /api/v1/strategies/{name}/stop
+POST  /api/v1/strategies/{name}/mode                  # signal|paper|live
+DELETE /api/v1/strategies/{name}
 ```
 
-估算合约订单手续费：
+### 信号运行器
 
 ```bash
-curl "http://127.0.0.1:8000/api/v1/contracts/okx_swap/BTC-USDT-SWAP/cost-estimate?quantity=1&price=100000&liquidity=maker"
+GET   /api/v1/runner/status
+POST  /api/v1/runner/start     {"poll_seconds":60, "candle_limit":80}
+POST  /api/v1/runner/stop
+POST  /api/v1/runner/run-once
+GET   /api/v1/signals/recent?limit=20
+POST  /api/v1/signals/evaluate?exchange=binance_usdm&symbol=BTCUSDT
 ```
 
-这个估算只计算 `notional * maker/taker fee rate`，不包含滑点、价差、资金费率和强平风险。
-
-## API 示例
-
-获取行情：
+### 模拟盘
 
 ```bash
-curl http://127.0.0.1:8000/api/v1/ticker/okx/BTC-USDT
+GET  /api/v1/paper
+POST /api/v1/paper/reset   {"initial_cash": 10000}
 ```
 
-获取 K 线：
+### AI 分析
 
 ```bash
-curl "http://127.0.0.1:8000/api/v1/klines/okx/BTC-USDT?interval=1m&limit=100"
+POST /api/v1/ai/analyze
+  {"exchange":"binance_usdm","symbol":"BTCUSDT","interval":"1h","limit":30}
 ```
 
-下单：
+### LLM 策略管理
 
 ```bash
-curl -X POST http://127.0.0.1:8000/api/v1/order \
-  -H "Content-Type: application/json" \
-  -d '{
-    "exchange": "okx",
-    "symbol": "BTC-USDT",
-    "side": "buy",
-    "order_type": "market",
-    "quantity": 0.001
-  }'
+POST  /api/v1/strategies/llm                 # 创建 LLM 策略
+POST  /api/v1/strategies/llm-filter/attach    # 附加 LLM 过滤器
+GET   /api/v1/strategies/llm-filter/rejected  # 被拒信号列表
 ```
 
-如果 `ENABLE_LIVE_TRADING=false`，下单接口会返回 403。
+### 监控与同步
 
-## 合约下单示例
+```bash
+GET   /api/v1/monitor/status
+GET   /api/v1/monitor/alerts?level=error&limit=50
+GET   /api/v1/monitor/last-error
+GET   /api/v1/sync/status
+POST  /api/v1/sync/orders/{exchange}
+POST  /api/v1/sync/positions/{exchange}
+```
 
-合约下单接口：
+---
+
+## 项目结构
 
 ```text
-POST /api/v1/contracts/order
+.
+├── main.py                     # CLI 入口
+├── config/
+│   ├── __init__.py
+│   └── settings.py             # 全部配置（风控/AI/监控/同步）
+├── app/
+│   ├── api/server.py           # FastAPI 路由
+│   ├── core/                   # 日志、并发
+│   ├── engine/
+│   │   ├── trader.py           # 核心引擎
+│   │   ├── risk_manager.py     # 风控
+│   │   ├── position_manager.py # 持仓
+│   │   ├── paper_trading.py    # 模拟盘
+│   │   ├── order_sync.py       # 订单同步
+│   │   ├── position_sync.py    # 持仓同步
+│   │   ├── monitor.py          # 监控告警
+│   │   └── llm_filter.py       # LLM 信号过滤器 (B)
+│   ├── exchanges/              # 交易所适配器
+│   │   ├── base.py             # ExchangeBase 抽象
+│   │   ├── contract_base.py    # 合约抽象
+│   │   ├── factory.py          # 工厂/单例
+│   │   ├── okx.py / okx_swap.py
+│   │   └── binance.py / binance_usdm.py
+│   ├── models/                 # 数据模型
+│   │   ├── order.py / position.py / balance.py
+│   │   ├── market.py           # Ticker / Candlestick / Trade
+│   │   └── contract.py         # 合约请求/费率/估算
+│   └── strategies/
+│       ├── base.py             # StrategyBase + Signal
+│       ├── sma.py              # SMA 双均线
+│       ├── llm_analyzer.py     # LLM 调用/ Prompt/ 解析
+│       └── llm_strategy.py     # LLMStrategy (D/A)
+├── frontend/                   # React 工作台
+│   ├── src/App.tsx / api.ts / styles.css
+│   └── package.json
+├── docs/
+│   ├── architecture.svg        # 架构图
+│   └── llm-architecture.svg    # LLM 三层架构图
+├── Dockerfile
+├── .env.example
+└── pyproject.toml
 ```
 
-OKX maker 开多：
-
-```bash
-curl -X POST http://127.0.0.1:8000/api/v1/contracts/order \
-  -H "Content-Type: application/json" \
-  -d '{
-    "exchange": "okx_swap",
-    "symbol": "BTC-USDT-SWAP",
-    "intent": "open_long",
-    "quantity": 1,
-    "order_type": "post_only",
-    "price": 100000,
-    "margin_mode": "cross",
-    "position_side": "long",
-    "leverage": 3
-  }'
-```
-
-OKX 平多：
-
-```bash
-curl -X POST http://127.0.0.1:8000/api/v1/contracts/order \
-  -H "Content-Type: application/json" \
-  -d '{
-    "exchange": "okx_swap",
-    "symbol": "BTC-USDT-SWAP",
-    "intent": "close_long",
-    "quantity": 1,
-    "order_type": "post_only",
-    "price": 100500,
-    "margin_mode": "cross",
-    "position_side": "long",
-    "reduce_only": true
-  }'
-```
-
-Binance USD-M maker 开空：
-
-```bash
-curl -X POST http://127.0.0.1:8000/api/v1/contracts/order \
-  -H "Content-Type: application/json" \
-  -d '{
-    "exchange": "binance_usdm",
-    "symbol": "BTCUSDT",
-    "intent": "open_short",
-    "quantity": 0.001,
-    "order_type": "post_only",
-    "price": 100000,
-    "position_side": "short",
-    "leverage": 3
-  }'
-```
-
-合约开平仓建议：
-
-- 优先用 `post_only` 拿 maker 费率
-- 止损或快速离场用 taker，不要为了手续费扩大风险
-- 平仓要显式 `reduce_only=true`
-- 下单前先查手续费和估算成本
-- 实盘前必须在测试网/模拟盘验证 symbol、数量单位、仓位模式和杠杆
+---
 
 ## 常见问题
 
 ### uv 找不到
 
-先确认路径：
-
-```bash
-which uv
-```
-
-如果为空，把 `~/.local/bin` 加入 PATH：
-
 ```bash
 export PATH="$HOME/.local/bin:$PATH"
 ```
 
-### 项目 Python 不是 3.13
-
-重建虚拟环境：
+### API 不能下单
 
 ```bash
-uv venv --python 3.13 --managed-python --clear
-uv sync
-```
-
-### 看到 /usr/bin/python3 3.9
-
-这是系统 Python。不要删除它。项目只要用 `.venv/bin/python` 或激活 `.venv` 后的 `python` 即可。
-
-### API 起来了但不能下单
-
-检查 `.env`：
-
-```bash
+# 检查 .env
 ENABLE_LIVE_TRADING=true
 ```
 
-确认 API key、secret、passphrase 配置正确。实盘前先用测试网或模拟盘验证。
+确认 API key 配置正确。实盘前先用 testnet。
 
-## 后续建议
+### LLM 分析返回 "未配置 API Key"
 
-- 加测试：交易所签名、symbol 标准化、风控拦截、API 禁止实盘下单
-- 加订单持久化：SQLite/PostgreSQL 存储订单、成交、策略信号
-- 加私有 WebSocket：订单成交和余额变化用交易所推送同步
-- 加 dry-run/paper trading：在不触发交易所下单的情况下完整演练策略
+```bash
+# 在 .env 中配置
+LLM_API_KEY=sk-xxx
+LLM_BASE_URL=https://api.openai.com/v1
+```
+
+未配置时端点依然可用，返回 `hold` + 提示。
+
+### Docker 拉取私有镜像
+
+```bash
+echo <GITHUB_TOKEN> | docker login ghcr.io -u <USER> --password-stdin
+```
+
+---
+
+## 后续路线
+
+- [ ] 单元测试：交易所签名、symbol 标准化、风控拦截
+- [ ] 订单持久化：SQLite/PostgreSQL
+- [ ] 私有 WebSocket：订单成交推送
+- [ ] 多用户认证
+- [ ] 策略回测框架
