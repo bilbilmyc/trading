@@ -7,6 +7,7 @@
 from app.strategies.base import StrategyBase, Signal, SignalAction
 from app.strategies.sma import SMAStrategy
 from app.strategies.llm_analyzer import LLMAnalyzer, LLMAnalyzerConfig, LLMAnalysisResult
+from app.strategies.llm_strategy import LLMStrategy
 
 __all__ = [
     'StrategyBase',
@@ -16,4 +17,5 @@ __all__ = [
     'LLMAnalyzer',
     'LLMAnalyzerConfig',
     'LLMAnalysisResult',
+    'LLMStrategy',
 ]

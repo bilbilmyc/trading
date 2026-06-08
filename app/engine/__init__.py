@@ -11,6 +11,7 @@ from app.engine.position_manager import PositionManager
 from app.engine.paper_trading import PaperTradingAccount
 from app.engine.order_sync import OrderSync
 from app.engine.position_sync import PositionSync
+from app.engine.llm_filter import LLMSignalFilter
 from app.engine.monitor import Monitor, Alert, AlertLevel, AlertCategory
 
 __all__ = [
@@ -21,6 +22,7 @@ __all__ = [
     'PaperTradingAccount',
     'OrderSync',
     'PositionSync',
+    'LLMSignalFilter',
     'Monitor',
     'Alert',
     'AlertLevel',

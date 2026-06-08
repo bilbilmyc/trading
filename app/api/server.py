@@ -646,6 +646,121 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
         finally:
             await analyzer.close()
 
+    # ── LLM 策略（D / B / A）管理 API ─────────────────────────
+
+    class LLMStrategyCreateRequest(BaseModel):
+        """Create an LLM strategy instance."""
+
+        name: Optional[str] = Field(None, min_length=1, max_length=64)
+        exchange: str = Field("binance_usdm", min_length=1)
+        symbol: str = Field("BTCUSDT", min_length=1)
+        interval: str = Field("1h", min_length=1, max_length=16)
+        default_order_amount: Optional[float] = Field(None, gt=0)
+        min_confidence: float = Field(0.5, ge=0.0, le=1.0)
+        enabled: bool = False
+        mode: str = Field("signal", pattern="^(signal|paper|live)$")
+
+    @app.post("/api/v1/strategies/llm")
+    async def create_llm_strategy(
+        request: LLMStrategyCreateRequest,
+        state: AppState = Depends(get_state),
+    ):
+        """创建 LLM 策略。
+
+        mode 说明:
+          signal (D) — 只发信号，引擎不执行
+          paper     — 模拟盘执行
+          live (A)  — 全自动执行
+        """
+
+        from app.strategies.llm_analyzer import LLMAnalyzer, LLMAnalyzerConfig
+        from app.strategies.llm_strategy import LLMStrategy
+
+        llm_config = LLMAnalyzerConfig(
+            api_key=state.settings.llm_api_key,
+            base_url=state.settings.llm_base_url,
+            model=state.settings.llm_model,
+            temperature=state.settings.llm_temperature,
+            max_tokens=state.settings.llm_max_tokens,
+            request_timeout=state.settings.llm_request_timeout,
+            min_candles=state.settings.llm_min_candles,
+            max_candles=state.settings.llm_max_candles,
+        )
+        analyzer = LLMAnalyzer(llm_config)
+
+        amount = request.default_order_amount or state.settings.llm_default_order_amount
+        strategy_name = request.name or f"llm_{request.symbol.lower()}_{request.interval}"
+
+        strategy = LLMStrategy(
+            analyzer=analyzer,
+            name=strategy_name,
+            default_order_amount_usdt=amount,
+            min_confidence=request.min_confidence,
+        )
+        state.engine.add_strategy(
+            strategy_name,
+            strategy,
+            exchange=request.exchange,
+            symbol=request.symbol,
+            interval=request.interval,
+            enabled=request.enabled,
+            mode=request.mode,
+        )
+        return {"strategy": next(
+            item for item in state.engine.list_strategies() if item["name"] == strategy_name
+        )}
+
+    @app.post("/api/v1/strategies/llm-filter/attach")
+    async def attach_llm_filter(
+        exchange: str = Query("binance_usdm", min_length=1),
+        symbol: str = Query("BTCUSDT", min_length=1),
+        default_order_amount: Optional[float] = Query(None, gt=0),
+        min_confidence: float = Query(0.5, ge=0.0, le=1.0),
+        state: AppState = Depends(get_state),
+    ):
+        """创建 LLM 信号过滤器并附加到引擎（B 方案）。
+
+        过滤器会拦截所有策略信号，让 LLM 二次确认后才放行。
+        """
+
+        from app.strategies.llm_analyzer import LLMAnalyzer, LLMAnalyzerConfig
+        from app.engine.llm_filter import LLMSignalFilter
+
+        llm_config = LLMAnalyzerConfig(
+            api_key=state.settings.llm_api_key,
+            base_url=state.settings.llm_base_url,
+            model=state.settings.llm_model,
+            temperature=state.settings.llm_temperature,
+            max_tokens=state.settings.llm_max_tokens,
+            request_timeout=state.settings.llm_request_timeout,
+            min_candles=state.settings.llm_min_candles,
+            max_candles=state.settings.llm_max_candles,
+        )
+        analyzer = LLMAnalyzer(llm_config)
+        amount = default_order_amount or state.settings.llm_default_order_amount
+
+        filter_ = LLMSignalFilter(
+            analyzer=analyzer,
+            default_order_amount_usdt=amount,
+            min_confidence=min_confidence,
+        )
+        state.engine.add_signal_filter(filter_.check)
+
+        return {
+            "status": "attached",
+            "filter": "LLMSignalFilter",
+            "default_order_amount_usdt": amount,
+            "min_confidence": min_confidence,
+        }
+
+    @app.get("/api/v1/strategies/llm-filter/rejected")
+    async def llm_filter_rejected(
+        limit: int = Query(20, ge=1, le=100),
+        state: AppState = Depends(get_state),
+    ):
+        """查看被 LLM 过滤器拒绝的信号列表。"""
+        return {"rejected": state.engine.get_rejected_signals(limit=limit)}
+
     # ── 阶段 5：实盘同步 + 监控告警 API ─────────────────────────
 
     @app.get("/api/v1/monitor/status")

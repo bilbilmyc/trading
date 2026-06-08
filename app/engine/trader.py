@@ -82,6 +82,11 @@ class TradingEngine:
         self._on_signal_callbacks: List[Callable] = []
         self._on_order_callbacks: List[Callable] = []
         
+        # 信号过滤器（B 方案：LLM 二次确认）
+        # async (exchange_name, strategy_name, signal) -> bool
+        self._signal_filters: List[Callable] = []
+        self._signal_filter_rejects: List[Dict[str, Any]] = []
+        
         logger.info("交易引擎初始化完成（含 stage-5 实盘同步组件）")
     
     def add_exchange(self, name: str, exchange: ExchangeBase):
@@ -242,6 +247,18 @@ class TradingEngine:
     def on_order(self, callback: Callable):
         """注册订单回调"""
         self._on_order_callbacks.append(callback)
+
+    def add_signal_filter(self, filter_fn: Callable) -> None:
+        """注册信号过滤器（B 方案用）。
+
+        async (exchange_name, strategy_name, signal) -> bool
+        返回 False 表示拒绝该信号。
+        """
+        self._signal_filters.append(filter_fn)
+
+    def get_rejected_signals(self, limit: int = 20) -> List[Dict[str, Any]]:
+        """返回最近被过滤器拒绝的信号。"""
+        return list(self._signal_filter_rejects[-limit:])
     
     async def start(self):
         """启动交易引擎
@@ -393,6 +410,10 @@ class TradingEngine:
                     except Exception as e:
                         logger.error(f"信号回调错误：{e}")
                 
+                # 注入策略名到 metadata（供过滤器使用）
+                if signal.metadata is None:
+                    signal.metadata = {}
+                signal.metadata["strategy_name"] = strategy_name
                 # 执行订单
                 await self._execute_signal(exchange, signal)
                 executed_signals.append(signal)
@@ -660,6 +681,31 @@ class TradingEngine:
     
     async def _execute_signal(self, exchange: ExchangeBase, signal: Signal):
         """执行交易信号"""
+
+        # ── B 方案：信号过滤器链 ──
+        exchange_name = exchange.name
+        strategy_name = signal.metadata.get("strategy_name", "unknown") if signal.metadata else "unknown"
+        for filter_fn in self._signal_filters:
+            try:
+                if asyncio.iscoroutinefunction(filter_fn):
+                    allowed = await filter_fn(exchange_name, strategy_name, signal)
+                else:
+                    allowed = filter_fn(exchange_name, strategy_name, signal)
+                if not allowed:
+                    logger.info(f"信号被过滤器拦截: {signal.action.value} {signal.symbol} by {filter_fn.__name__}")
+                    self._signal_filter_rejects.append({
+                        "exchange": exchange_name,
+                        "strategy": strategy_name,
+                        "symbol": signal.symbol,
+                        "action": signal.action.value,
+                        "reason": f"Rejected by filter: {filter_fn.__name__}",
+                        "timestamp": datetime.utcnow().isoformat(),
+                    })
+                    self._signal_filter_rejects = self._signal_filter_rejects[-50:]
+                    return
+            except Exception as exc:
+                logger.warning(f"信号过滤器异常: {exc}")
+                # 过滤器异常时默认放行，避免阻塞交易
 
         async with self._order_semaphore:
             # ── 获取价格 ──

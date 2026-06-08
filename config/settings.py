@@ -91,6 +91,7 @@ class LLMSettings(BaseModel):
     request_timeout: float = 30.0
     min_candles: int = 20
     max_candles: int = 100
+    default_order_amount: float = 50.0  # USDT, 单笔默认金额
 
 
 class Settings(BaseSettings):
@@ -148,6 +149,7 @@ class Settings(BaseSettings):
     llm_request_timeout: float = 30.0
     llm_min_candles: int = 20
     llm_max_candles: int = 100
+    llm_default_order_amount: float = 50.0
 
     model_config = SettingsConfigDict(
         env_file=".env",
@@ -191,6 +193,7 @@ class Settings(BaseSettings):
             request_timeout=self.llm_request_timeout,
             min_candles=self.llm_min_candles,
             max_candles=self.llm_max_candles,
+            default_order_amount=self.llm_default_order_amount,
         )
 
     @property
