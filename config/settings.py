@@ -71,6 +71,15 @@ class RiskSettings(BaseModel):
     max_orders_per_minute: int = 5
 
 
+class MonitorSettings(BaseModel):
+    """Alert threshold and scheduling settings."""
+
+    check_interval_seconds: int = 30
+    max_alerts: int = 100
+    order_sync_interval_seconds: int = 10
+    position_sync_interval_seconds: int = 15
+
+
 class Settings(BaseSettings):
     """Top-level application settings."""
 
@@ -111,6 +120,12 @@ class Settings(BaseSettings):
     max_drawdown_pct: float = Field(default=0.20, gt=0, le=1)
     max_orders_per_minute: int = Field(default=5, gt=0)
 
+    # Monitor / sync intervals
+    order_sync_interval_seconds: int = 10
+    position_sync_interval_seconds: int = 15
+    monitor_check_interval_seconds: int = 30
+    monitor_max_alerts: int = 100
+
     model_config = SettingsConfigDict(
         env_file=".env",
         env_file_encoding="utf-8",
@@ -138,6 +153,17 @@ class Settings(BaseSettings):
             secret_key=self.binance_secret_key,
             use_testnet=self.binance_use_testnet,
             enabled=self.binance_enabled,
+        )
+
+    @property
+    def monitor(self) -> MonitorSettings:
+        """Build the MonitorSettings from flat env fields."""
+
+        return MonitorSettings(
+            check_interval_seconds=self.monitor_check_interval_seconds,
+            max_alerts=self.monitor_max_alerts,
+            order_sync_interval_seconds=self.order_sync_interval_seconds,
+            position_sync_interval_seconds=self.position_sync_interval_seconds,
         )
 
     @property

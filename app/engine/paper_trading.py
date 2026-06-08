@@ -1,0 +1,160 @@
+"""
+In-memory paper trading account.
+
+The paper account is intentionally separate from exchange execution. It consumes
+strategy signals, simulates fills using public ticker prices, and tracks a
+small virtual portfolio for dashboard and later persistence work.
+"""
+
+from datetime import datetime
+from typing import Any, Dict, List, Optional
+from uuid import uuid4
+
+from app.strategies.base import Signal
+
+
+class PaperTradingAccount:
+    """Simple USDT-margined paper account for signal validation."""
+
+    def __init__(self, initial_cash: float = 10000.0, fee_rate: float = 0.0005):
+        self.initial_cash = initial_cash
+        self.cash = initial_cash
+        self.fee_rate = fee_rate
+        self.positions: Dict[str, Dict[str, Any]] = {}
+        self.orders: List[Dict[str, Any]] = []
+        self.enabled = True
+
+    def reset(self, initial_cash: Optional[float] = None) -> None:
+        """Reset account state."""
+
+        if initial_cash is not None:
+            self.initial_cash = initial_cash
+        self.cash = self.initial_cash
+        self.positions.clear()
+        self.orders.clear()
+
+    def _position_key(self, exchange: str, symbol: str) -> str:
+        return f"{exchange}:{symbol}"
+
+    def mark_price(self, exchange: str, symbol: str, price: float) -> None:
+        """Update one paper position mark price."""
+
+        key = self._position_key(exchange, symbol)
+        position = self.positions.get(key)
+        if not position:
+            return
+        position["current_price"] = price
+        quantity = position["quantity"]
+        avg_price = position["avg_entry_price"]
+        if quantity > 0:
+            position["unrealized_pnl"] = (price - avg_price) * quantity
+        elif quantity < 0:
+            position["unrealized_pnl"] = (avg_price - price) * abs(quantity)
+        else:
+            position["unrealized_pnl"] = 0.0
+        position["updated_at"] = datetime.utcnow().isoformat()
+
+    def apply_signal(
+        self,
+        exchange: str,
+        strategy_name: str,
+        signal: Signal,
+        fill_price: float,
+        default_quantity: float = 0.001,
+    ) -> Optional[Dict[str, Any]]:
+        """Simulate a full fill from one actionable signal."""
+
+        if not self.enabled or not signal.is_actionable or fill_price <= 0:
+            return None
+
+        quantity = signal.quantity or default_quantity
+        signed_quantity = quantity if signal.action.value == "buy" else -quantity
+        key = self._position_key(exchange, signal.symbol)
+        position = self.positions.setdefault(
+            key,
+            {
+                "exchange": exchange,
+                "symbol": signal.symbol,
+                "quantity": 0.0,
+                "avg_entry_price": 0.0,
+                "current_price": fill_price,
+                "realized_pnl": 0.0,
+                "unrealized_pnl": 0.0,
+                "updated_at": datetime.utcnow().isoformat(),
+            },
+        )
+
+        old_quantity = float(position["quantity"])
+        old_avg = float(position["avg_entry_price"])
+        fee = abs(quantity * fill_price) * self.fee_rate
+        realized = 0.0
+
+        if old_quantity == 0 or old_quantity * signed_quantity > 0:
+            new_quantity = old_quantity + signed_quantity
+            old_cost = abs(old_quantity) * old_avg
+            new_cost = old_cost + abs(signed_quantity) * fill_price
+            position["quantity"] = new_quantity
+            position["avg_entry_price"] = new_cost / abs(new_quantity)
+        else:
+            closing_quantity = min(abs(old_quantity), abs(signed_quantity))
+            if old_quantity > 0:
+                realized = (fill_price - old_avg) * closing_quantity
+            else:
+                realized = (old_avg - fill_price) * closing_quantity
+
+            new_quantity = old_quantity + signed_quantity
+            position["realized_pnl"] += realized
+            if new_quantity == 0:
+                position["quantity"] = 0.0
+                position["avg_entry_price"] = 0.0
+            elif old_quantity * new_quantity > 0:
+                position["quantity"] = new_quantity
+            else:
+                position["quantity"] = new_quantity
+                position["avg_entry_price"] = fill_price
+
+        self.cash += realized - fee
+        self.mark_price(exchange, signal.symbol, fill_price)
+
+        order = {
+            "order_id": f"paper_{uuid4().hex[:12]}",
+            "exchange": exchange,
+            "strategy": strategy_name,
+            "symbol": signal.symbol,
+            "side": signal.action.value,
+            "quantity": quantity,
+            "price": fill_price,
+            "fee": fee,
+            "realized_pnl": realized,
+            "status": "filled",
+            "timestamp": datetime.utcnow().isoformat(),
+            "signal_metadata": signal.metadata,
+        }
+        self.orders.append(order)
+        self.orders = self.orders[-200:]
+        return order
+
+    def summary(self) -> Dict[str, Any]:
+        """Return paper account summary."""
+
+        active_positions = [
+            position
+            for position in self.positions.values()
+            if abs(float(position.get("quantity", 0))) > 0
+        ]
+        unrealized = sum(float(position.get("unrealized_pnl", 0)) for position in active_positions)
+        realized = sum(float(position.get("realized_pnl", 0)) for position in self.positions.values())
+        equity = self.cash + unrealized
+        return {
+            "enabled": self.enabled,
+            "initial_cash": self.initial_cash,
+            "cash": self.cash,
+            "equity": equity,
+            "realized_pnl": realized,
+            "unrealized_pnl": unrealized,
+            "total_pnl": equity - self.initial_cash,
+            "fee_rate": self.fee_rate,
+            "active_positions": len(active_positions),
+            "positions": active_positions,
+            "orders": self.orders[-20:],
+        }

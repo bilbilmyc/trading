@@ -17,6 +17,8 @@ import {
 
 import {
   api,
+  AppConfig,
+  ContractMarket,
   ContractOrderPayload,
   CostEstimate,
   EngineStatus,
@@ -25,19 +27,26 @@ import {
   Intent,
   Liquidity,
   MarginMode,
+  OpenOrder,
+  PaperSummary,
   PositionSide,
+  RecentTrade,
+  SignalRunnerStatus,
+  StrategyInfo,
+  StrategySignal,
+  Ticker,
 } from "./api";
 
-const EXCHANGE_OPTIONS: Array<{ value: ExchangeName; label: string; symbol: string }> = [
-  { value: "okx_swap", label: "OKX Swap", symbol: "BTC-USDT-SWAP" },
-  { value: "binance_usdm", label: "Binance USD-M", symbol: "BTCUSDT" },
+const EXCHANGE_OPTIONS: Array<{ value: ExchangeName; label: string }> = [
+  { value: "okx_swap", label: "OKX 永续合约" },
+  { value: "binance_usdm", label: "Binance U 本位合约" },
 ];
 
 const INTENTS: Array<{ value: Intent; label: string; tone: "buy" | "sell" }> = [
-  { value: "open_long", label: "开多", tone: "buy" },
-  { value: "close_long", label: "平多", tone: "sell" },
-  { value: "open_short", label: "开空", tone: "sell" },
-  { value: "close_short", label: "平空", tone: "buy" },
+  { value: "open_long", label: "买入开多", tone: "buy" },
+  { value: "close_long", label: "卖出平多", tone: "sell" },
+  { value: "open_short", label: "卖出开空", tone: "sell" },
+  { value: "close_short", label: "买入平空", tone: "buy" },
 ];
 
 function formatNumber(value: number | undefined, digits = 4) {
@@ -63,12 +72,22 @@ function isCloseIntent(intent: Intent) {
   return intent === "close_long" || intent === "close_short";
 }
 
+function formatQuantitySeed(market: ContractMarket | undefined) {
+  if (!market?.min_quantity || market.min_quantity <= 0) return "1";
+  return String(market.min_quantity);
+}
+
 export default function App() {
-  const [exchange, setExchange] = useState<ExchangeName>("okx_swap");
-  const [symbol, setSymbol] = useState("BTC-USDT-SWAP");
+  const [exchange, setExchange] = useState<ExchangeName>("binance_usdm");
+  const [symbol, setSymbol] = useState("BTCUSDT");
+  const [contractSearch, setContractSearch] = useState("");
+  const [contracts, setContracts] = useState<ContractMarket[]>([]);
+  const [contractsLoading, setContractsLoading] = useState(false);
+  const [contractsTotal, setContractsTotal] = useState(0);
   const [intent, setIntent] = useState<Intent>("open_long");
-  const [quantity, setQuantity] = useState("1");
+  const [quantity, setQuantity] = useState("0.001");
   const [price, setPrice] = useState("100000");
+  const [priceSyncedSymbol, setPriceSyncedSymbol] = useState("");
   const [leverage, setLeverage] = useState("3");
   const [orderType, setOrderType] = useState<ContractOrderPayload["order_type"]>("post_only");
   const [marginMode, setMarginMode] = useState<MarginMode>("cross");
@@ -78,12 +97,31 @@ export default function App() {
   const [apiOnline, setApiOnline] = useState(false);
   const [healthEnv, setHealthEnv] = useState("--");
   const [supportedExchanges, setSupportedExchanges] = useState<string[]>([]);
+  const [enabledExchanges, setEnabledExchanges] = useState<string[]>([]);
+  const [config, setConfig] = useState<AppConfig | null>(null);
   const [engine, setEngine] = useState<EngineStatus | null>(null);
+  const [strategies, setStrategies] = useState<StrategyInfo[]>([]);
+  const [signals, setSignals] = useState<StrategySignal[]>([]);
+  const [runner, setRunner] = useState<SignalRunnerStatus | null>(null);
+  const [paper, setPaper] = useState<PaperSummary | null>(null);
+  const [ticker, setTicker] = useState<Ticker | null>(null);
+  const [trades, setTrades] = useState<RecentTrade[]>([]);
+  const [openOrders, setOpenOrders] = useState<OpenOrder[]>([]);
   const [feeRate, setFeeRate] = useState<FeeRate | null>(null);
   const [estimate, setEstimate] = useState<CostEstimate | null>(null);
   const [busy, setBusy] = useState(false);
+  const [evaluating, setEvaluating] = useState(false);
+  const [strategyBusy, setStrategyBusy] = useState("");
+  const [runnerBusy, setRunnerBusy] = useState("");
+  const [strategyName, setStrategyName] = useState("");
+  const [shortWindow, setShortWindow] = useState("5");
+  const [longWindow, setLongWindow] = useState("20");
+  const [strategyInterval, setStrategyInterval] = useState("1m");
+  const [strategyMode, setStrategyMode] = useState<"signal" | "paper">("paper");
   const [message, setMessage] = useState("等待连接后端");
   const [error, setError] = useState("");
+  const [costError, setCostError] = useState("");
+  const [marketError, setMarketError] = useState("");
 
   const numericQuantity = Number(quantity);
   const numericPrice = Number(price);
@@ -95,18 +133,36 @@ export default function App() {
     () => EXCHANGE_OPTIONS.find((item) => item.value === exchange)?.label ?? exchange,
     [exchange],
   );
+  const selectedContract = useMemo(
+    () => contracts.find((item) => item.symbol === symbol),
+    [contracts, symbol],
+  );
+  const selectedContractLabel = selectedContract
+    ? `${selectedContract.base_asset} / ${selectedContract.quote_asset}`
+    : symbol || "请选择合约";
 
   const refreshStatus = useCallback(async () => {
     try {
-      const [health, exchanges, status] = await Promise.all([
+      const [health, exchanges, status, runtimeConfig, strategyResult, signalResult, runnerStatus, paperStatus] = await Promise.all([
         api.health(),
         api.exchanges(),
         api.engineStatus(),
+        api.config(),
+        api.strategies(),
+        api.recentSignals(10),
+        api.runnerStatus(),
+        api.paper(),
       ]);
       setApiOnline(health.status === "ok");
       setHealthEnv(health.env);
       setSupportedExchanges(exchanges.exchanges);
+      setEnabledExchanges(exchanges.enabled);
+      setConfig(runtimeConfig);
       setEngine(status);
+      setStrategies(strategyResult.strategies);
+      setSignals(signalResult.signals);
+      setRunner(runnerStatus);
+      setPaper(paperStatus);
       setError("");
       setMessage("后端连接正常");
     } catch (err) {
@@ -116,8 +172,62 @@ export default function App() {
     }
   }, []);
 
+  const refreshMarket = useCallback(async () => {
+    if (!apiOnline || !symbol) return;
+    const [tickerResult, tradesResult, ordersResult] = await Promise.allSettled([
+      api.ticker(exchange, symbol),
+      api.recentTrades(exchange, symbol),
+      api.openOrders(exchange, symbol),
+    ]);
+
+    if (tickerResult.status === "fulfilled") setTicker(tickerResult.value);
+    else setTicker(null);
+
+    if (
+      tickerResult.status === "fulfilled" &&
+      tickerResult.value.last_price > 0 &&
+      priceSyncedSymbol !== symbol
+    ) {
+      setPrice(String(tickerResult.value.last_price));
+      setPriceSyncedSymbol(symbol);
+    }
+
+    if (tradesResult.status === "fulfilled") setTrades(tradesResult.value);
+    else setTrades([]);
+
+    if (ordersResult.status === "fulfilled") setOpenOrders(ordersResult.value);
+    else setOpenOrders([]);
+
+    const failed = [tickerResult, tradesResult, ordersResult].find((item) => item.status === "rejected");
+    setMarketError(failed?.status === "rejected" ? failed.reason?.message ?? "行情/订单刷新失败" : "");
+  }, [apiOnline, exchange, priceSyncedSymbol, symbol]);
+
+  const refreshContracts = useCallback(async () => {
+    if (!apiOnline) return;
+    setContractsLoading(true);
+    try {
+      const result = await api.contracts(exchange, contractSearch, 200);
+      setContracts(result.contracts);
+      setContractsTotal(result.total);
+      setMarketError("");
+      if (!symbol || !result.contracts.some((item) => item.symbol === symbol)) {
+        const next = result.contracts[0];
+        if (next) {
+          setSymbol(next.symbol);
+          setQuantity(formatQuantitySeed(next));
+        }
+      }
+    } catch (err) {
+      setContracts([]);
+      setContractsTotal(0);
+      setMarketError(err instanceof Error ? err.message : "合约列表获取失败");
+    } finally {
+      setContractsLoading(false);
+    }
+  }, [apiOnline, contractSearch, exchange, symbol]);
+
   const refreshFeeAndCost = useCallback(async () => {
-    if (!apiOnline || numericQuantity <= 0 || numericPrice <= 0) return;
+    if (!apiOnline || !symbol || numericQuantity <= 0 || numericPrice <= 0) return;
     try {
       const [fee, cost] = await Promise.all([
         api.feeRate(exchange, symbol),
@@ -125,11 +235,11 @@ export default function App() {
       ]);
       setFeeRate(fee);
       setEstimate(cost);
-      setError("");
+      setCostError("");
     } catch (err) {
       setFeeRate(null);
       setEstimate(null);
-      setError(err instanceof Error ? err.message : "手续费/成本估算失败");
+      setCostError(err instanceof Error ? err.message : "手续费/成本估算失败");
     }
   }, [apiOnline, exchange, liquidity, numericPrice, numericQuantity, symbol]);
 
@@ -143,10 +253,37 @@ export default function App() {
     refreshFeeAndCost();
   }, [refreshFeeAndCost]);
 
+  useEffect(() => {
+    refreshMarket();
+  }, [refreshMarket]);
+
+  useEffect(() => {
+    refreshContracts();
+  }, [refreshContracts]);
+
   function handleExchangeChange(value: ExchangeName) {
-    const item = EXCHANGE_OPTIONS.find((option) => option.value === value);
     setExchange(value);
-    if (item) setSymbol(item.symbol);
+    setSymbol("");
+    setTicker(null);
+    setTrades([]);
+    setOpenOrders([]);
+    setPriceSyncedSymbol("");
+  }
+
+  async function handleContractSelect(contract: ContractMarket) {
+    setSymbol(contract.symbol);
+    setQuantity(formatQuantitySeed(contract));
+    setError("");
+    try {
+      const latest = await api.ticker(exchange, contract.symbol);
+      setTicker(latest);
+      if (latest.last_price > 0) {
+        setPrice(String(latest.last_price));
+        setPriceSyncedSymbol(contract.symbol);
+      }
+    } catch (err) {
+      setMarketError(err instanceof Error ? err.message : "最新价格获取失败");
+    }
   }
 
   function handleIntentChange(nextIntent: Intent) {
@@ -190,21 +327,152 @@ export default function App() {
     }
   }
 
+  async function evaluateCurrentStrategy() {
+    if (!symbol) return;
+    setEvaluating(true);
+    setError("");
+    try {
+      const result = await api.evaluateSignals(exchange, symbol);
+      setSignals(result.recent_signals);
+      setMessage(`已处理 ${result.candles_processed} 根 K 线，生成 ${result.signals.length} 个信号`);
+      await refreshStatus();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "策略评估失败");
+    } finally {
+      setEvaluating(false);
+    }
+  }
+
+  async function createSmaStrategy() {
+    if (!symbol) return;
+    setStrategyBusy("create");
+    setError("");
+    try {
+      await api.createSmaStrategy({
+        name: strategyName || undefined,
+        exchange,
+        symbol,
+        interval: strategyInterval,
+        short_window: Number(shortWindow),
+        long_window: Number(longWindow),
+        enabled: true,
+        mode: strategyMode,
+      });
+      setStrategyName("");
+      await refreshStatus();
+      setMessage("SMA 策略已创建并启用");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "创建策略失败");
+    } finally {
+      setStrategyBusy("");
+    }
+  }
+
+  async function toggleStrategy(strategy: StrategyInfo) {
+    setStrategyBusy(strategy.name);
+    setError("");
+    try {
+      if (strategy.running) {
+        await api.stopStrategy(strategy.name);
+      } else {
+        await api.startStrategy(strategy.name);
+      }
+      await refreshStatus();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "更新策略状态失败");
+    } finally {
+      setStrategyBusy("");
+    }
+  }
+
+  async function toggleStrategyMode(strategy: StrategyInfo) {
+    setStrategyBusy(strategy.name);
+    setError("");
+    try {
+      await api.setStrategyMode(strategy.name, strategy.mode === "paper" ? "signal" : "paper");
+      await refreshStatus();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "切换策略模式失败");
+    } finally {
+      setStrategyBusy("");
+    }
+  }
+
+  async function resetPaperAccount() {
+    setRunnerBusy("paper-reset");
+    setError("");
+    try {
+      const next = await api.resetPaper();
+      setPaper(next);
+      setMessage("模拟盘已重置");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "重置模拟盘失败");
+    } finally {
+      setRunnerBusy("");
+    }
+  }
+
+  async function startRunner() {
+    setRunnerBusy("start");
+    setError("");
+    try {
+      const next = await api.startRunner(60, 80);
+      setRunner(next);
+      await refreshStatus();
+      setMessage("策略运行器已启动，只记录信号，不自动下单");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "启动运行器失败");
+    } finally {
+      setRunnerBusy("");
+    }
+  }
+
+  async function stopRunner() {
+    setRunnerBusy("stop");
+    setError("");
+    try {
+      const next = await api.stopRunner();
+      setRunner(next);
+      await refreshStatus();
+      setMessage("策略运行器已停止");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "停止运行器失败");
+    } finally {
+      setRunnerBusy("");
+    }
+  }
+
+  async function runOneSignalCycle() {
+    setRunnerBusy("once");
+    setError("");
+    try {
+      const result = await api.runSignalCycle(60, 80);
+      setRunner(result.status);
+      setSignals(result.signals.length ? result.signals : signals);
+      setMessage(`运行器处理 ${result.processed_strategies} 个策略，生成 ${result.signals.length} 个信号`);
+      await refreshStatus();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "运行策略周期失败");
+    } finally {
+      setRunnerBusy("");
+    }
+  }
+
   return (
     <main className="app-shell">
       <section className="topbar">
         <div>
-          <p className="eyebrow">Personal Contract Desk</p>
-          <h1>Web3 Trading Console</h1>
+          <p className="eyebrow">合约交易控制台</p>
+          <h1>合约下单与风险面板</h1>
         </div>
         <div className="status-cluster">
           <span className={`status-pill ${apiOnline ? "ok" : "bad"}`}>
             {apiOnline ? <Wifi size={16} /> : <WifiOff size={16} />}
-            API {apiOnline ? "ONLINE" : "OFFLINE"}
+            后端 {apiOnline ? "在线" : "离线"}
           </span>
           <span className={`status-pill ${liveEnabled ? "danger" : "safe"}`}>
             <Power size={16} />
-            LIVE {liveEnabled ? "ON" : "OFF"}
+            实盘 {liveEnabled ? "开启" : "关闭"}
           </span>
           <span className="status-pill neutral">
             <CircleDot size={16} />
@@ -217,8 +485,8 @@ export default function App() {
         <aside className="panel order-panel">
           <div className="panel-heading">
             <div>
-              <p className="eyebrow">Execution</p>
-              <h2>快速合约下单</h2>
+              <p className="eyebrow">下单</p>
+              <h2>选择交易方向</h2>
             </div>
             <button className="icon-button" onClick={refreshStatus} title="刷新状态">
               <RefreshCw size={18} />
@@ -236,8 +504,35 @@ export default function App() {
             </select>
           </label>
 
+          <div className="field">
+            <span>搜索合约</span>
+            <input
+              placeholder="输入 BTC、ETH、SOL、DOGE..."
+              value={contractSearch}
+              onChange={(event) => setContractSearch(event.target.value)}
+            />
+          </div>
+
+          <div className="field">
+            <span>可交易 USDT 永续合约 {contractsLoading ? "加载中" : `(${contractsTotal})`}</span>
+            <div className="market-picker">
+              {contracts.slice(0, 12).map((item) => (
+                <button
+                  className={symbol === item.symbol ? "active" : ""}
+                  key={item.symbol}
+                  onClick={() => handleContractSelect(item)}
+                  type="button"
+                >
+                  <strong>{item.base_asset}</strong>
+                  <small>{item.symbol}</small>
+                </button>
+              ))}
+              {!contracts.length && <div className="empty-state">没有匹配的合约</div>}
+            </div>
+          </div>
+
           <label className="field">
-            <span>合约</span>
+            <span>合约代码</span>
             <input value={symbol} onChange={(event) => setSymbol(event.target.value)} />
           </label>
 
@@ -257,22 +552,22 @@ export default function App() {
 
           <div className="two-col">
             <label className="field">
-              <span>数量</span>
+              <span>下单数量</span>
               <input value={quantity} onChange={(event) => setQuantity(event.target.value)} inputMode="decimal" />
             </label>
             <label className="field">
-              <span>价格</span>
+              <span>委托价格</span>
               <input value={price} onChange={(event) => setPrice(event.target.value)} inputMode="decimal" />
             </label>
           </div>
 
           <div className="two-col">
             <label className="field">
-              <span>杠杆</span>
+              <span>杠杆倍数</span>
               <input value={leverage} onChange={(event) => setLeverage(event.target.value)} inputMode="numeric" />
             </label>
             <label className="field">
-              <span>保证金</span>
+              <span>保证金模式</span>
               <select value={marginMode} onChange={(event) => setMarginMode(event.target.value as MarginMode)}>
                 <option value="cross">全仓</option>
                 <option value="isolated">逐仓</option>
@@ -291,9 +586,9 @@ export default function App() {
                   setLiquidity(value === "market" || value === "ioc" || value === "fok" ? "taker" : "maker");
                 }}
               >
-                <option value="post_only">Post Only</option>
-                <option value="limit">Limit</option>
-                <option value="market">Market</option>
+                <option value="post_only">只挂单</option>
+                <option value="limit">限价单</option>
+                <option value="market">市价单</option>
                 <option value="ioc">IOC</option>
                 <option value="fok">FOK</option>
               </select>
@@ -301,16 +596,16 @@ export default function App() {
             <label className="field">
               <span>仓位方向</span>
               <select value={positionSide} onChange={(event) => setPositionSide(event.target.value as PositionSide)}>
-                <option value="long">Long</option>
-                <option value="short">Short</option>
-                <option value="net">Net</option>
+                <option value="long">多仓</option>
+                <option value="short">空仓</option>
+                <option value="net">单向持仓</option>
               </select>
             </label>
           </div>
 
           <button className="primary-action" onClick={submitOrder} disabled={busy || orderBlocked}>
             <Send size={18} />
-            {busy ? "提交中" : orderBlocked ? "Live Off" : "提交订单"}
+            {busy ? "提交中" : orderBlocked ? "实盘未开启" : "提交订单"}
           </button>
 
           <div className={`notice ${error ? "error" : "info"}`}>
@@ -323,13 +618,76 @@ export default function App() {
           <div className="panel-heading">
             <div>
               <p className="eyebrow">{selectedExchangeLabel}</p>
-              <h2>手续费与成本</h2>
+              <h2>{selectedContractLabel} 行情与成本</h2>
             </div>
             <span className="symbol-badge">{symbol}</span>
           </div>
 
+          <div className="strategy-summary">
+            <div>
+              <span>策略</span>
+              <strong>{strategies.length}</strong>
+            </div>
+            <div>
+              <span>最近信号</span>
+              <strong>{signals.length}</strong>
+            </div>
+            <div>
+              <span>运行器</span>
+              <strong>{runner?.running ? "运行" : "停止"}</strong>
+            </div>
+            <button className="secondary-action" onClick={evaluateCurrentStrategy} disabled={evaluating || !symbol}>
+              <RefreshCw size={16} />
+              {evaluating ? "评估中" : "评估当前合约"}
+            </button>
+          </div>
+
+          <div className="runner-controls">
+            <button className="secondary-action" onClick={startRunner} disabled={runner?.running || !!runnerBusy}>
+              启动运行器
+            </button>
+            <button className="secondary-action" onClick={stopRunner} disabled={!runner?.running || !!runnerBusy}>
+              停止运行器
+            </button>
+            <button className="secondary-action" onClick={runOneSignalCycle} disabled={!!runnerBusy}>
+              {runnerBusy === "once" ? "运行中" : "手动跑一轮"}
+            </button>
+            <span>
+              周期 {runner?.cycles ?? 0} · 信号 {runner?.signals_generated ?? 0}
+              {runner?.last_error ? ` · 错误 ${runner.last_error}` : ""}
+            </span>
+          </div>
+
+          <div className="signals-list">
+            <div className="section-title">
+              <span>策略信号</span>
+              <small>只观察，不自动下单</small>
+            </div>
+            {signals.length ? (
+              signals.slice(0, 4).map((signal) => (
+                <div className="signal-row" key={`${signal.strategy}-${signal.symbol}-${signal.timestamp}`}>
+                  <div>
+                    <strong>{signal.strategy}</strong>
+                    <span>{signal.symbol}</span>
+                  </div>
+                  <div>
+                    <strong className={signal.action === "buy" ? "buy-text" : "sell-text"}>
+                      {signal.action === "buy" ? "买入" : signal.action === "sell" ? "卖出" : "观望"}
+                    </strong>
+                    <span>{new Date(signal.timestamp).toLocaleTimeString()}</span>
+                  </div>
+                </div>
+              ))
+            ) : (
+              <div className="empty-state">暂无策略信号，点击评估当前合约</div>
+            )}
+          </div>
+
           <div className="metric-grid">
+            <Metric label="最新价格" value={`$${formatNumber(ticker?.last_price, 2)}`} />
+            <Metric label="24h 涨跌" value={`${formatNumber(ticker?.price_change_pct_24h, 2)}%`} />
             <Metric label="名义价值" value={`$${formatNumber(notional, 2)}`} />
+            <Metric label="24h 成交额" value={`$${formatNumber(ticker?.quote_volume_24h, 0)}`} />
             <Metric label="Maker" value={formatPercent(feeRate?.maker)} />
             <Metric label="Taker" value={formatPercent(feeRate?.taker)} />
             <Metric label="预估手续费" value={`$${formatNumber(estimate?.estimated_fee, 4)}`} accent />
@@ -337,10 +695,10 @@ export default function App() {
 
           <div className="liquidity-toggle">
             <button className={liquidity === "maker" ? "active" : ""} onClick={() => setLiquidity("maker")}>
-              Maker 优先
+              挂单费率
             </button>
             <button className={liquidity === "taker" ? "active" : ""} onClick={() => setLiquidity("taker")}>
-              Taker 逃生
+              吃单费率
             </button>
           </div>
 
@@ -349,7 +707,7 @@ export default function App() {
             <div>
               <strong>执行提示</strong>
               <p>
-                默认用 Post Only 争取 maker 费率；遇到止损、极端行情或需要快速离场时，用 taker，不要为了省手续费扩大风险。
+                实盘关闭时不会真实下单；开启实盘后，市价单和吃单会更快成交，也更容易产生滑点。
               </p>
             </div>
           </div>
@@ -360,12 +718,59 @@ export default function App() {
               <strong>{estimate?.exchange ?? exchange}</strong>
             </div>
             <div>
-              <span>Liquidity</span>
-              <strong>{estimate?.liquidity ?? liquidity}</strong>
+              <span>费率类型</span>
+              <strong>{(estimate?.liquidity ?? liquidity) === "maker" ? "挂单" : "吃单"}</strong>
             </div>
             <div>
-              <span>Fee Rate</span>
+              <span>手续费率</span>
               <strong>{formatPercent(estimate?.fee_rate)}</strong>
+            </div>
+          </div>
+
+          {(marketError || costError) && (
+            <div className="notice error compact">
+              <ShieldAlert size={18} />
+              {marketError || costError}
+            </div>
+          )}
+
+          <div className="market-lists">
+            <div>
+              <div className="section-title">
+                <span>最近成交</span>
+                <small>{trades.length}</small>
+              </div>
+              {trades.length ? (
+                trades.map((trade) => (
+                  <div className="trade-row" key={trade.trade_id}>
+                    <span className={trade.side === "buy" ? "buy-text" : "sell-text"}>
+                      {trade.side === "buy" ? "买" : "卖"}
+                    </span>
+                    <strong>{formatNumber(trade.price, 2)}</strong>
+                    <small>{formatNumber(trade.quantity, 6)}</small>
+                  </div>
+                ))
+              ) : (
+                <div className="empty-state">暂无成交数据</div>
+              )}
+            </div>
+
+            <div>
+              <div className="section-title">
+                <span>当前挂单</span>
+                <small>{openOrders.length}</small>
+              </div>
+              {openOrders.length ? (
+                openOrders.slice(0, 8).map((order, index) => (
+                  <div className="trade-row" key={String(order.order_id ?? order.orderId ?? index)}>
+                    <span>{order.side ?? "--"}</span>
+                    <strong>{String(order.price ?? "--")}</strong>
+                    <small>{String(order.status ?? order.quantity ?? order.origQty ?? "--")}</small>
+                  </div>
+                ))
+              ) : (
+                <div className="empty-state">暂无挂单</div>
+              )}
             </div>
           </div>
         </section>
@@ -374,7 +779,7 @@ export default function App() {
           <div className="panel-heading">
             <div>
               <p className="eyebrow">Account Guard</p>
-              <h2>状态与风险</h2>
+              <h2>账户状态</h2>
             </div>
             <Gauge size={22} />
           </div>
@@ -386,9 +791,109 @@ export default function App() {
             <Metric label="活跃仓位" value={String(engine?.positions.active_positions ?? 0)} />
           </div>
 
+          <div className="strategies">
+            <div className="section-title">
+              <span>已加载策略</span>
+              <small>{strategies.length}</small>
+            </div>
+            <div className="strategy-form">
+              <input
+                placeholder="策略名称，可空"
+                value={strategyName}
+                onChange={(event) => setStrategyName(event.target.value)}
+              />
+              <input value={shortWindow} onChange={(event) => setShortWindow(event.target.value)} inputMode="numeric" />
+              <input value={longWindow} onChange={(event) => setLongWindow(event.target.value)} inputMode="numeric" />
+              <select value={strategyInterval} onChange={(event) => setStrategyInterval(event.target.value)}>
+                <option value="1m">1m</option>
+                <option value="5m">5m</option>
+                <option value="15m">15m</option>
+                <option value="1h">1h</option>
+              </select>
+              <select value={strategyMode} onChange={(event) => setStrategyMode(event.target.value as "signal" | "paper")}>
+                <option value="paper">模拟盘</option>
+                <option value="signal">只信号</option>
+              </select>
+              <button className="secondary-action" onClick={createSmaStrategy} disabled={strategyBusy === "create" || !symbol}>
+                {strategyBusy === "create" ? "创建中" : "创建 SMA"}
+              </button>
+            </div>
+            {strategies.map((strategy) => (
+              <div className="strategy-row" key={strategy.name}>
+                <div>
+                  <strong>{strategy.name}</strong>
+                  <span>
+                    {strategy.class_name} · {strategy.exchange ?? "--"} · {strategy.symbol ?? "--"} ·{" "}
+                    {strategy.interval ?? "1m"} · {strategy.mode === "paper" ? "模拟盘" : "只信号"}
+                  </span>
+                </div>
+                <div className="strategy-actions">
+                  <button
+                    className={`state-button ${strategy.mode === "paper" ? "paper" : ""}`}
+                    onClick={() => toggleStrategyMode(strategy)}
+                    disabled={strategyBusy === strategy.name}
+                  >
+                    {strategy.mode === "paper" ? "模拟" : "信号"}
+                  </button>
+                  <button
+                    className={`state-button ${strategy.running ? "running" : ""}`}
+                    onClick={() => toggleStrategy(strategy)}
+                    disabled={strategyBusy === strategy.name}
+                  >
+                    {strategyBusy === strategy.name ? "更新中" : strategy.running ? "运行中" : "已停止"}
+                  </button>
+                </div>
+              </div>
+            ))}
+          </div>
+
+          <div className="paper-panel">
+            <div className="section-title">
+              <span>模拟盘</span>
+              <button className="text-button" onClick={resetPaperAccount} disabled={runnerBusy === "paper-reset"}>
+                重置
+              </button>
+            </div>
+            <div className="paper-grid">
+              <Metric label="权益" value={`$${formatNumber(paper?.equity, 2)}`} />
+              <Metric label="总盈亏" value={`$${formatNumber(paper?.total_pnl, 2)}`} accent />
+              <Metric label="未实现" value={`$${formatNumber(paper?.unrealized_pnl, 2)}`} />
+              <Metric label="持仓" value={String(paper?.active_positions ?? 0)} />
+            </div>
+            {paper?.positions.length ? (
+              paper.positions.map((position) => (
+                <div className="position-row" key={`${position.exchange}-${position.symbol}`}>
+                  <div>
+                    <strong>{position.symbol}</strong>
+                    <span>{position.exchange}</span>
+                  </div>
+                  <div>
+                    <strong>{formatNumber(position.quantity, 6)}</strong>
+                    <span>${formatNumber(position.unrealized_pnl, 2)}</span>
+                  </div>
+                </div>
+              ))
+            ) : (
+              <div className="empty-state">暂无模拟持仓</div>
+            )}
+            <div className="section-title compact-title">
+              <span>虚拟成交</span>
+              <small>{paper?.orders.length ?? 0}</small>
+            </div>
+            {paper?.orders.slice(-4).reverse().map((order) => (
+              <div className="trade-row" key={order.order_id}>
+                <span className={order.side === "buy" ? "buy-text" : "sell-text"}>
+                  {order.side === "buy" ? "买" : "卖"}
+                </span>
+                <strong>{order.symbol}</strong>
+                <small>${formatNumber(order.price, 2)}</small>
+              </div>
+            ))}
+          </div>
+
           <div className="positions">
             <div className="section-title">
-              <span>Positions</span>
+              <span>本地持仓记录</span>
               <small>{engine?.timestamp ? new Date(engine.timestamp).toLocaleTimeString() : "--"}</small>
             </div>
             {engine?.positions.positions.length ? (
@@ -416,9 +921,16 @@ export default function App() {
             <span>后端支持</span>
             <div>
               {supportedExchanges.map((item) => (
-                <code key={item}>{item}</code>
+                <code className={enabledExchanges.includes(item) ? "enabled" : ""} key={item}>
+                  {item}
+                </code>
               ))}
             </div>
+          </div>
+
+          <div className="runtime-grid">
+            <Metric label="默认交易所" value={config?.default_exchange ?? "--"} />
+            <Metric label="默认合约" value={config?.default_symbol ?? "--"} />
           </div>
         </aside>
       </section>

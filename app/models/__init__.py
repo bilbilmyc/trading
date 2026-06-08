@@ -18,7 +18,7 @@ from app.models.contract import (
     MarketType,
     PositionSide,
 )
-from app.models.market import Ticker, Candlestick, Trade
+from app.models.market import ContractMarket, Ticker, Candlestick, Trade
 
 __all__ = [
     # Order
@@ -34,6 +34,7 @@ __all__ = [
     'Ticker',
     'Candlestick',
     'Trade',
+    'ContractMarket',
     # Contract
     'MarketType',
     'MarginMode',

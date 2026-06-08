@@ -22,9 +22,14 @@ def build_engine(settings: Settings):
     from app.engine.trader import TradingEngine
     from app.strategies.sma import SMAStrategy
 
+    monitor_cfg = settings.monitor
     engine = TradingEngine(
         risk_config=RiskConfig(**settings.risk.model_dump()),
         max_concurrent_orders=5,
+        order_sync_interval=monitor_cfg.order_sync_interval_seconds,
+        position_sync_interval=monitor_cfg.position_sync_interval_seconds,
+        monitor_check_interval=monitor_cfg.check_interval_seconds,
+        monitor_max_alerts=monitor_cfg.max_alerts,
     )
 
     for name in ExchangeFactory.list_supported_exchanges():

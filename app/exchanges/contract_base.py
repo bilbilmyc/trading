@@ -3,7 +3,7 @@ Unified contract exchange interface.
 """
 
 from abc import abstractmethod
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 
 from app.exchanges.base import ExchangeBase
 from app.models.contract import (
@@ -15,10 +15,17 @@ from app.models.contract import (
     MarginMode,
     PositionSide,
 )
+from app.models.market import ContractMarket
 
 
 class ContractExchangeBase(ExchangeBase):
     """Base class for perpetual/futures exchange adapters."""
+
+    @abstractmethod
+    async def get_contract_markets(self, quote_asset: str = "USDT") -> List[ContractMarket]:
+        """List tradable perpetual/futures contracts from public exchange metadata."""
+
+        pass
 
     @abstractmethod
     async def get_fee_rate(self, symbol: str) -> FeeRate:
@@ -41,6 +48,17 @@ class ContractExchangeBase(ExchangeBase):
     @abstractmethod
     async def place_contract_order(self, request: ContractOrderRequest) -> Dict[str, Any]:
         """Place a contract order using the unified contract request model."""
+
+        pass
+
+    @abstractmethod
+    async def get_positions(self, symbol: Optional[str] = None) -> List[Dict[str, Any]]:
+        """Get current positions for a symbol (or all symbols if None).
+
+        Returns a list of raw position dicts that PositionSync can parse.
+        Each dict should include keys: ``symbol``, ``quantity`` (signed: +long, -short),
+        ``avg_price`` or ``entryPrice``, ``current_price`` or ``markPrice``.
+        """
 
         pass
 

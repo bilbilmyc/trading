@@ -5,13 +5,14 @@ This adapter is separated from the spot OKX adapter because contract trading
 requires margin mode, position side, reduce-only handling, and leverage.
 """
 
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 
 import orjson
 
 from app.exchanges.contract_base import ContractExchangeBase
 from app.exchanges.okx import OKXExchange
 from app.models.contract import ContractOrderRequest, FeeRate, MarginMode, PositionSide
+from app.models.market import ContractMarket
 
 
 class OKXSwapExchange(OKXExchange, ContractExchangeBase):
@@ -34,6 +35,49 @@ class OKXSwapExchange(OKXExchange, ContractExchangeBase):
 
         normalized = self.normalize_symbol(symbol)
         return normalized.removesuffix("-SWAP")
+
+    async def get_contract_markets(self, quote_asset: str = "USDT") -> List[ContractMarket]:
+        """List OKX swap instruments from the public instruments endpoint."""
+
+        path = "/api/v5/public/instruments"
+        params = {"instType": "SWAP"}
+
+        client = await self._get_client()
+        response = await client.get(path, params=params)
+        response.raise_for_status()
+
+        data = response.json()
+        if data.get("code") != "0":
+            raise Exception(f"OKX instruments query failed: {data.get('msg', 'Unknown error')}")
+
+        quote = quote_asset.upper()
+        markets: List[ContractMarket] = []
+        for item in data.get("data", []):
+            if item.get("settleCcy", "").upper() != quote:
+                continue
+            symbol = item.get("instId", "")
+            parts = symbol.split("-")
+            if len(parts) < 3:
+                continue
+            markets.append(
+                ContractMarket(
+                    exchange=self.name,
+                    symbol=symbol,
+                    base_asset=parts[0],
+                    quote_asset=parts[1],
+                    status=item.get("state", "unknown"),
+                    contract_type="perpetual",
+                    price_tick=float(item["tickSz"]) if item.get("tickSz") else None,
+                    quantity_step=float(item["lotSz"]) if item.get("lotSz") else None,
+                    min_quantity=float(item["minSz"]) if item.get("minSz") else None,
+                    raw={
+                        "alias": item.get("alias"),
+                        "contract_value": item.get("ctVal"),
+                        "contract_value_currency": item.get("ctValCcy"),
+                    },
+                )
+            )
+        return markets
 
     async def get_fee_rate(self, symbol: str) -> FeeRate:
         """Get OKX swap maker/taker fee rates."""
@@ -148,6 +192,45 @@ class OKXSwapExchange(OKXExchange, ContractExchangeBase):
             "symbol": self.normalize_symbol(request.symbol),
             "raw": data,
         }
+
+    async def get_positions(self, symbol: Optional[str] = None) -> List[Dict[str, Any]]:
+        """Get OKX swap positions from the positions API."""
+
+        path = "/api/v5/account/positions"
+        params: Dict[str, Any] = {"instType": "SWAP"}
+        if symbol:
+            params["instId"] = self.normalize_symbol(symbol)
+        headers = await self._sign_request("GET", path, query=params)
+
+        client = await self._get_client()
+        response = await client.get(path, params=params, headers=headers)
+        response.raise_for_status()
+
+        data = response.json()
+        if data.get("code") != "0":
+            raise Exception(f"OKX positions query failed: {data.get('msg', 'Unknown error')}")
+
+        positions = []
+        for pos in data.get("data", []):
+            quantity = float(pos.get("pos", 0))
+            if quantity == 0:
+                continue
+            pos_side = pos.get("posSide", "net")
+            signed_qty = quantity if pos_side == "long" else -quantity
+            positions.append(
+                {
+                    "symbol": pos.get("instId", ""),
+                    "quantity": signed_qty,
+                    "avg_price": float(pos.get("avgPx", 0)),
+                    "current_price": float(pos.get("markPx", 0)),
+                    "leverage": float(pos.get("lever", 0)),
+                    "unrealized_pnl": float(pos.get("upl", 0)),
+                    "margin": float(pos.get("margin", 0)),
+                    "margin_type": pos.get("mgnMode", "cross"),
+                    "raw": pos,
+                }
+            )
+        return positions
 
     async def place_order(
         self,

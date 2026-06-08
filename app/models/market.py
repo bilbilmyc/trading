@@ -5,7 +5,7 @@
 """
 
 from datetime import datetime
-from typing import Optional
+from typing import Any, Dict, Optional
 from pydantic import BaseModel, Field
 
 
@@ -137,3 +137,18 @@ class Trade(BaseModel):
     def value(self) -> float:
         """成交金额"""
         return self.price * self.quantity
+
+
+class ContractMarket(BaseModel):
+    """Tradable contract instrument returned by exchange public metadata APIs."""
+
+    exchange: str = Field(..., min_length=1)
+    symbol: str = Field(..., min_length=1)
+    base_asset: str = Field(..., min_length=1)
+    quote_asset: str = Field(..., min_length=1)
+    status: str = Field(..., min_length=1)
+    contract_type: str = Field("perpetual")
+    price_tick: Optional[float] = Field(None, ge=0)
+    quantity_step: Optional[float] = Field(None, ge=0)
+    min_quantity: Optional[float] = Field(None, ge=0)
+    raw: Dict[str, Any] = Field(default_factory=dict)

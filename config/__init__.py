@@ -5,11 +5,12 @@
 支持环境变量和配置文件。
 """
 
-from config.settings import Settings, ExchangeSettings, RiskSettings, load_settings
+from config.settings import Settings, ExchangeSettings, RiskSettings, MonitorSettings, load_settings
 
 __all__ = [
     "Settings",
     "ExchangeSettings",
     "RiskSettings",
+    "MonitorSettings",
     "load_settings",
 ]

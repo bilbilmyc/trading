@@ -8,6 +8,7 @@ from typing import Any, Dict, List, Optional
 from app.exchanges.binance import BinanceExchange
 from app.exchanges.contract_base import ContractExchangeBase
 from app.models.contract import ContractOrderRequest, FeeRate, MarginMode, PositionSide
+from app.models.market import ContractMarket
 
 
 class BinanceUSDMFuturesExchange(BinanceExchange, ContractExchangeBase):
@@ -36,6 +37,45 @@ class BinanceUSDMFuturesExchange(BinanceExchange, ContractExchangeBase):
         """Normalize to Binance futures format, e.g. BTCUSDT."""
 
         return symbol.upper().replace("-", "").replace("_", "").replace("PERP", "")
+
+    async def get_contract_markets(self, quote_asset: str = "USDT") -> List[ContractMarket]:
+        """List Binance USD-M futures instruments from exchangeInfo."""
+
+        path = "/fapi/v1/exchangeInfo"
+
+        client = await self._get_client()
+        response = await client.get(path)
+        response.raise_for_status()
+
+        quote = quote_asset.upper()
+        markets: List[ContractMarket] = []
+        for item in response.json().get("symbols", []):
+            if item.get("quoteAsset", "").upper() != quote:
+                continue
+            if item.get("contractType") != "PERPETUAL":
+                continue
+
+            filters = {entry.get("filterType"): entry for entry in item.get("filters", [])}
+            price_filter = filters.get("PRICE_FILTER", {})
+            lot_filter = filters.get("LOT_SIZE", {})
+            markets.append(
+                ContractMarket(
+                    exchange=self.name,
+                    symbol=item.get("symbol", ""),
+                    base_asset=item.get("baseAsset", ""),
+                    quote_asset=item.get("quoteAsset", ""),
+                    status=item.get("status", "unknown"),
+                    contract_type="perpetual",
+                    price_tick=float(price_filter["tickSize"]) if price_filter.get("tickSize") else None,
+                    quantity_step=float(lot_filter["stepSize"]) if lot_filter.get("stepSize") else None,
+                    min_quantity=float(lot_filter["minQty"]) if lot_filter.get("minQty") else None,
+                    raw={
+                        "margin_asset": item.get("marginAsset"),
+                        "underlying_type": item.get("underlyingType"),
+                    },
+                )
+            )
+        return markets
 
     async def get_account_balance(self) -> Dict[str, float]:
         """Get USD-M futures wallet balances."""
@@ -165,6 +205,39 @@ class BinanceUSDMFuturesExchange(BinanceExchange, ContractExchangeBase):
             "avg_price": float(data.get("avgPrice", 0)),
             "raw": data,
         }
+
+    async def get_positions(self, symbol: Optional[str] = None) -> List[Dict[str, Any]]:
+        """Get Binance USD-M futures positions."""
+
+        path = "/fapi/v2/positionRisk"
+        params: Dict[str, Any] = {}
+        if symbol:
+            params["symbol"] = self.normalize_symbol(symbol)
+        params = self._sign_params(params)
+
+        client = await self._get_client()
+        response = await client.get(path, params=params)
+        response.raise_for_status()
+
+        positions = []
+        for pos in response.json():
+            amt = float(pos.get("positionAmt", 0))
+            if amt == 0:
+                continue
+            positions.append(
+                {
+                    "symbol": self.normalize_symbol(pos.get("symbol", "")),
+                    "quantity": amt,
+                    "avg_price": float(pos.get("entryPrice", 0)),
+                    "current_price": float(pos.get("markPrice", 0)),
+                    "leverage": float(pos.get("leverage", 0)),
+                    "unrealized_pnl": float(pos.get("unRealizedProfit", 0)),
+                    "margin": float(pos.get("isolatedMargin", 0)),
+                    "margin_type": pos.get("marginType", "cross"),
+                    "raw": pos,
+                }
+            )
+        return positions
 
     async def get_open_orders(self, symbol: Optional[str] = None) -> List[Dict[str, Any]]:
         """Get open Binance USD-M futures orders."""
