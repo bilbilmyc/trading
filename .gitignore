@@ -1,4 +1,3 @@
-```
 # Python
 __pycache__/
 *.py[cod]
@@ -42,6 +41,8 @@ coverage.xml
 .coverage*
 .pytest_cache/
 .mypy_cache/
+.uv-cache/
+.uv-python/
 
 # IDE
 .vscode/
@@ -58,6 +59,7 @@ Thumbs.db
 .env
 .env.local
 *.env*
+!.env.example
 
 # Coverage
 coverage/
@@ -121,9 +123,6 @@ target/
 profile_default/
 ipython_config.py
 
-# pyenv
-.python-version
-
 # pipenv
 Pipfile.lock
 
@@ -174,4 +173,3 @@ dmypy.json
 # Temporary files
 *.tmp
 *.temp
-```

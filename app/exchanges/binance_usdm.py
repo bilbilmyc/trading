@@ -1,0 +1,349 @@
+"""
+Binance USD-M Futures adapter.
+"""
+
+from datetime import datetime
+from typing import Any, Dict, List, Optional
+
+from app.exchanges.binance import BinanceExchange
+from app.exchanges.contract_base import ContractExchangeBase
+from app.models.contract import ContractOrderRequest, FeeRate, MarginMode, PositionSide
+
+
+class BinanceUSDMFuturesExchange(BinanceExchange, ContractExchangeBase):
+    """Binance USD-M perpetual futures implementation."""
+
+    def __init__(
+        self,
+        api_key: str = "",
+        secret_key: str = "",
+        passphrase: str = "",
+        use_testnet: bool = True,
+    ):
+        super().__init__(api_key, secret_key, passphrase, use_testnet)
+        if use_testnet:
+            self._base_url = "https://testnet.binancefuture.com"
+            self._ws_url = "wss://stream.binancefuture.com/ws"
+        else:
+            self._base_url = "https://fapi.binance.com"
+            self._ws_url = "wss://fstream.binance.com/ws"
+
+    @property
+    def name(self) -> str:
+        return "binance_usdm"
+
+    def normalize_symbol(self, symbol: str) -> str:
+        """Normalize to Binance futures format, e.g. BTCUSDT."""
+
+        return symbol.upper().replace("-", "").replace("_", "").replace("PERP", "")
+
+    async def get_account_balance(self) -> Dict[str, float]:
+        """Get USD-M futures wallet balances."""
+
+        path = "/fapi/v3/balance"
+        params = self._sign_params({})
+
+        client = await self._get_client()
+        response = await client.get(path, params=params)
+        response.raise_for_status()
+
+        balances = {}
+        for item in response.json():
+            total = float(item.get("balance", 0))
+            if total > 0:
+                balances[item.get("asset")] = total
+        return balances
+
+    async def get_available_balances(self) -> Dict[str, float]:
+        """Get available USD-M futures balances."""
+
+        path = "/fapi/v3/balance"
+        params = self._sign_params({})
+
+        client = await self._get_client()
+        response = await client.get(path, params=params)
+        response.raise_for_status()
+
+        balances = {}
+        for item in response.json():
+            available = float(item.get("availableBalance", 0))
+            if available > 0:
+                balances[item.get("asset")] = available
+        return balances
+
+    async def get_fee_rate(self, symbol: str) -> FeeRate:
+        """Get Binance USD-M futures maker/taker fee rates."""
+
+        path = "/fapi/v1/commissionRate"
+        params = self._sign_params({"symbol": self.normalize_symbol(symbol)})
+
+        client = await self._get_client()
+        response = await client.get(path, params=params)
+        response.raise_for_status()
+
+        data = response.json()
+        return FeeRate(
+            exchange=self.name,
+            symbol=self.normalize_symbol(symbol),
+            maker=float(data.get("makerCommissionRate", 0)),
+            taker=float(data.get("takerCommissionRate", 0)),
+            raw=data,
+        )
+
+    async def set_leverage(
+        self,
+        symbol: str,
+        leverage: int,
+        margin_mode: MarginMode = MarginMode.CROSS,
+        position_side: PositionSide = PositionSide.NET,
+    ) -> Dict[str, Any]:
+        """Set leverage for a Binance USD-M futures symbol."""
+
+        path = "/fapi/v1/leverage"
+        params = self._sign_params(
+            {
+                "symbol": self.normalize_symbol(symbol),
+                "leverage": leverage,
+            }
+        )
+
+        client = await self._get_client()
+        response = await client.post(path, data=params)
+        response.raise_for_status()
+        return {"success": True, "raw": response.json()}
+
+    async def cancel_order(self, symbol: str, order_id: str) -> Dict[str, Any]:
+        """Cancel one Binance USD-M futures order."""
+
+        path = "/fapi/v1/order"
+        params = self._sign_params(
+            {
+                "symbol": self.normalize_symbol(symbol),
+                "orderId": int(order_id),
+            }
+        )
+
+        client = await self._get_client()
+        response = await client.delete(path, params=params)
+        response.raise_for_status()
+        return {"success": True, "order_id": order_id, "raw": response.json()}
+
+    async def cancel_all_orders(self, symbol: Optional[str] = None) -> int:
+        """Cancel open futures orders. Binance requires a symbol."""
+
+        if symbol is None:
+            raise ValueError("symbol is required when cancelling Binance futures orders")
+
+        path = "/fapi/v1/allOpenOrders"
+        params = self._sign_params({"symbol": self.normalize_symbol(symbol)})
+
+        client = await self._get_client()
+        response = await client.delete(path, params=params)
+        response.raise_for_status()
+        return 1
+
+    async def get_order(self, symbol: str, order_id: str) -> Dict[str, Any]:
+        """Query one Binance USD-M futures order."""
+
+        path = "/fapi/v1/order"
+        params = self._sign_params(
+            {
+                "symbol": self.normalize_symbol(symbol),
+                "orderId": int(order_id),
+            }
+        )
+
+        client = await self._get_client()
+        response = await client.get(path, params=params)
+        response.raise_for_status()
+
+        data = response.json()
+        return {
+            "order_id": str(data.get("orderId")),
+            "status": self._normalize_order_status(data.get("status")),
+            "filled_quantity": float(data.get("executedQty", 0)),
+            "avg_price": float(data.get("avgPrice", 0)),
+            "raw": data,
+        }
+
+    async def get_open_orders(self, symbol: Optional[str] = None) -> List[Dict[str, Any]]:
+        """Get open Binance USD-M futures orders."""
+
+        path = "/fapi/v1/openOrders"
+        params: Dict[str, Any] = {}
+        if symbol:
+            params["symbol"] = self.normalize_symbol(symbol)
+        params = self._sign_params(params)
+
+        client = await self._get_client()
+        response = await client.get(path, params=params)
+        response.raise_for_status()
+        return response.json()
+
+    async def get_ticker(self, symbol: str) -> Dict[str, Any]:
+        """Get Binance USD-M futures 24h ticker."""
+
+        path = "/fapi/v1/ticker/24hr"
+        params = {"symbol": self.normalize_symbol(symbol)}
+
+        client = await self._get_client()
+        response = await client.get(path, params=params)
+        response.raise_for_status()
+
+        data = response.json()
+        return {
+            "symbol": symbol,
+            "exchange": self.name,
+            "last_price": float(data.get("lastPrice", 0)),
+            "bid_price": None,
+            "ask_price": None,
+            "high_24h": float(data.get("highPrice", 0)),
+            "low_24h": float(data.get("lowPrice", 0)),
+            "volume_24h": float(data.get("volume", 0)),
+            "quote_volume_24h": float(data.get("quoteVolume", 0)),
+            "price_change_24h": float(data.get("priceChange", 0)),
+            "price_change_pct_24h": float(data.get("priceChangePercent", 0)),
+            "timestamp": datetime.utcnow(),
+        }
+
+    async def get_klines(
+        self,
+        symbol: str,
+        interval: str,
+        start_time: Optional[datetime] = None,
+        end_time: Optional[datetime] = None,
+        limit: int = 100,
+    ) -> List[Dict[str, Any]]:
+        """Get Binance USD-M futures candles."""
+
+        path = "/fapi/v1/klines"
+        params: Dict[str, Any] = {
+            "symbol": self.normalize_symbol(symbol),
+            "interval": interval,
+            "limit": min(limit, 1500),
+        }
+        if start_time:
+            params["startTime"] = int(start_time.timestamp() * 1000)
+        if end_time:
+            params["endTime"] = int(end_time.timestamp() * 1000)
+
+        client = await self._get_client()
+        response = await client.get(path, params=params)
+        response.raise_for_status()
+
+        klines = []
+        for candle in response.json():
+            klines.append(
+                {
+                    "symbol": symbol,
+                    "exchange": self.name,
+                    "interval": interval,
+                    "open_time": datetime.fromtimestamp(candle[0] / 1000),
+                    "open": float(candle[1]),
+                    "high": float(candle[2]),
+                    "low": float(candle[3]),
+                    "close": float(candle[4]),
+                    "volume": float(candle[5]),
+                    "quote_volume": float(candle[7]),
+                    "trade_count": int(candle[8]),
+                }
+            )
+        return klines
+
+    async def get_recent_trades(self, symbol: str, limit: int = 100) -> List[Dict[str, Any]]:
+        """Get recent Binance USD-M futures trades."""
+
+        path = "/fapi/v1/trades"
+        params = {
+            "symbol": self.normalize_symbol(symbol),
+            "limit": min(limit, 1000),
+        }
+
+        client = await self._get_client()
+        response = await client.get(path, params=params)
+        response.raise_for_status()
+
+        trades = []
+        for trade in response.json():
+            trades.append(
+                {
+                    "symbol": symbol,
+                    "exchange": self.name,
+                    "trade_id": str(trade.get("id")),
+                    "price": float(trade.get("price")),
+                    "quantity": float(trade.get("qty")),
+                    "side": "sell" if trade.get("isBuyerMaker") else "buy",
+                    "timestamp": datetime.fromtimestamp(trade.get("time") / 1000),
+                }
+            )
+        return trades
+
+    async def place_contract_order(self, request: ContractOrderRequest) -> Dict[str, Any]:
+        """Place a Binance USD-M futures order from the unified request."""
+
+        path = "/fapi/v1/order"
+        side, inferred_pos_side, inferred_reduce_only = self.resolve_order_intent(request.intent)
+        position_side = request.position_side if request.position_side != PositionSide.NET else inferred_pos_side
+        reduce_only = inferred_reduce_only if request.reduce_only is None else request.reduce_only
+        order_type = request.order_type.upper()
+
+        params: Dict[str, Any] = {
+            "symbol": self.normalize_symbol(request.symbol),
+            "side": side.upper(),
+            "type": "LIMIT" if order_type == "POST_ONLY" else order_type,
+            "quantity": request.quantity,
+            "newOrderRespType": "RESULT",
+        }
+
+        if position_side == PositionSide.NET:
+            params["positionSide"] = "BOTH"
+            if reduce_only:
+                params["reduceOnly"] = "true"
+        else:
+            params["positionSide"] = position_side.value.upper()
+
+        if request.client_order_id:
+            params["newClientOrderId"] = request.client_order_id
+
+        if order_type in {"LIMIT", "POST_ONLY", "IOC", "FOK"}:
+            if request.price is None:
+                raise ValueError("price is required for Binance limit/post_only/ioc/fok orders")
+            params["price"] = request.price
+            params["timeInForce"] = "GTX" if order_type == "POST_ONLY" else order_type
+
+        if request.leverage:
+            await self.set_leverage(
+                request.symbol,
+                request.leverage,
+                request.margin_mode,
+                position_side,
+            )
+
+        params = self._sign_params(params)
+
+        client = await self._get_client()
+        response = await client.post(path, data=params)
+        response.raise_for_status()
+
+        data = response.json()
+        return {
+            "order_id": str(data.get("orderId")),
+            "client_order_id": data.get("clientOrderId"),
+            "status": self._normalize_order_status(data.get("status")),
+            "exchange": self.name,
+            "symbol": self.normalize_symbol(request.symbol),
+            "raw": data,
+        }
+
+    async def place_order(
+        self,
+        symbol: str,
+        side: str,
+        order_type: str,
+        quantity: float,
+        price: Optional[float] = None,
+        **kwargs,
+    ) -> Dict[str, Any]:
+        """Compatibility wrapper for the base exchange interface."""
+
+        raise NotImplementedError("Use place_contract_order for Binance USD-M futures trading")

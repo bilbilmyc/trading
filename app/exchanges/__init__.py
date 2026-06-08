@@ -6,9 +6,11 @@
 """
 
 from app.exchanges.base import ExchangeBase
+from app.exchanges.contract_base import ContractExchangeBase
 from app.exchanges.factory import ExchangeFactory
 
 __all__ = [
     'ExchangeBase',
+    'ContractExchangeBase',
     'ExchangeFactory',
 ]

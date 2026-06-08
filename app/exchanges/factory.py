@@ -175,5 +175,17 @@ def _auto_register_exchanges():
     except ImportError:
         pass
 
+    try:
+        from app.exchanges.okx_swap import OKXSwapExchange
+        ExchangeFactory.register_exchange('okx_swap', OKXSwapExchange)
+    except ImportError:
+        pass
+
+    try:
+        from app.exchanges.binance_usdm import BinanceUSDMFuturesExchange
+        ExchangeFactory.register_exchange('binance_usdm', BinanceUSDMFuturesExchange)
+    except ImportError:
+        pass
+
 
 _auto_register_exchanges()

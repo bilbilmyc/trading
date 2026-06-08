@@ -5,11 +5,14 @@ Binance 交易所异步实现
 支持 REST API 和 WebSocket 订阅。
 """
 
+import asyncio
+import contextlib
 import hashlib
 import hmac
 from typing import Dict, List, Optional, Any, Callable
 from datetime import datetime
 import orjson
+from urllib.parse import urlencode
 
 try:
     import httpx
@@ -34,13 +37,17 @@ class BinanceExchange(ExchangeBase):
         
         if use_testnet:
             self._base_url = "https://testnet.binance.vision"
-            self._ws_url = "wss://testnet.binance.vision/ws"
+            self._ws_url = "wss://stream.testnet.binance.vision/ws"
         else:
             self._base_url = "https://api.binance.com"
             self._ws_url = "wss://stream.binance.com:9443/ws"
         
         self._client: Optional[httpx.AsyncClient] = None
+        # Keep WebSocket objects and their listener tasks separately:
+        # connection is used for closing the socket, task is used for cancelling
+        # the reconnect loop.
         self._ws_connections: Dict[str, websockets.WebSocketClientProtocol] = {}
+        self._ws_tasks: Dict[str, asyncio.Task] = {}
     
     @property
     def name(self) -> str:
@@ -57,6 +64,8 @@ class BinanceExchange(ExchangeBase):
     async def _get_client(self) -> httpx.AsyncClient:
         """获取或创建 HTTP 客户端"""
         if self._client is None or self._client.is_closed:
+            # Reuse one AsyncClient per exchange adapter. This keeps HTTP
+            # connection pooling effective and avoids reconnecting every request.
             self._client = httpx.AsyncClient(
                 base_url=self._base_url,
                 headers={
@@ -69,7 +78,9 @@ class BinanceExchange(ExchangeBase):
     
     def _generate_signature(self, params: Dict) -> str:
         """生成 Binance 请求签名"""
-        query_string = '&'.join([f"{k}={v}" for k, v in params.items()])
+        # Binance signs the exact URL-encoded query string. Do not hand-build
+        # this with string joins; encoding details affect the signature.
+        query_string = urlencode(params)
         signature = hmac.new(
             self.secret_key.encode('utf-8'),
             query_string.encode('utf-8'),
@@ -79,6 +90,8 @@ class BinanceExchange(ExchangeBase):
     
     def _sign_params(self, params: Dict) -> Dict:
         """为请求参数添加签名"""
+        # Private Binance REST endpoints require timestamp + HMAC-SHA256
+        # signature in the request parameters.
         params['timestamp'] = self.get_timestamp()
         signature = self._generate_signature(params)
         params['signature'] = signature
@@ -139,7 +152,11 @@ class BinanceExchange(ExchangeBase):
         }
         
         if order_type.lower() == 'market':
-            if 'quote_order_qty' in kwargs:
+            # Binance market buys can be specified either by base quantity
+            # (`quantity`) or quote amount (`quoteOrderQty`). Keep both paths so
+            # callers can decide whether they want to buy "0.01 BTC" or
+            # "100 USDT worth of BTC".
+            if kwargs.get('quote_order_qty') is not None:
                 params['quoteOrderQty'] = kwargs['quote_order_qty']
             else:
                 params['quantity'] = quantity
@@ -158,7 +175,7 @@ class BinanceExchange(ExchangeBase):
         return {
             'order_id': str(data.get('orderId')),
             'client_order_id': data.get('clientOrderId'),
-            'status': 'pending',
+            'status': self._normalize_order_status(data.get('status')),
             'raw': data,
         }
     
@@ -216,11 +233,16 @@ class BinanceExchange(ExchangeBase):
         response.raise_for_status()
         
         data = response.json()
+        # Binance order query does not return avgPrice on spot REST. The average
+        # fill price is cumulative quote quantity divided by executed base qty.
+        executed_qty = float(data.get('executedQty', 0))
+        quote_qty = float(data.get('cummulativeQuoteQty', 0))
+        avg_price = quote_qty / executed_qty if executed_qty > 0 else 0.0
         return {
             'order_id': str(data.get('orderId')),
             'status': self._normalize_order_status(data.get('status')),
-            'filled_quantity': float(data.get('executedQty', 0)),
-            'avg_price': float(data.get('avgPrice', 0)),
+            'filled_quantity': executed_qty,
+            'avg_price': avg_price,
             'raw': data,
         }
     
@@ -332,14 +354,66 @@ class BinanceExchange(ExchangeBase):
     
     async def subscribe_ticker(self, symbol: str, callback: Callable):
         """订阅实时行情"""
-        # TODO: 实现 WebSocket 订阅
-        pass
+        normalized = self.normalize_symbol(symbol)
+        key = normalized.lower()
+        # Ensure only one ticker listener exists per symbol.
+        await self.unsubscribe_ticker(normalized)
+
+        async def _listen():
+            url = f"{self._ws_url}/{key}@ticker"
+            while True:
+                try:
+                    async with websockets.connect(url, ping_interval=20, ping_timeout=20) as ws:
+                        self._ws_connections[normalized] = ws
+                        async for message in ws:
+                            data = orjson.loads(message)
+                            # Binance ticker stream uses compact field names.
+                            # Convert them into the unified ticker dict used by
+                            # the engine and API.
+                            ticker = {
+                                'symbol': symbol,
+                                'exchange': 'binance',
+                                'last_price': float(data.get('c', 0)),
+                                'bid_price': float(data.get('b', 0)),
+                                'ask_price': float(data.get('a', 0)),
+                                'high_24h': float(data.get('h', 0)),
+                                'low_24h': float(data.get('l', 0)),
+                                'volume_24h': float(data.get('v', 0)),
+                                'quote_volume_24h': float(data.get('q', 0)),
+                                'price_change_24h': float(data.get('p', 0)),
+                                'price_change_pct_24h': float(data.get('P', 0)),
+                                'timestamp': datetime.utcnow(),
+                            }
+                            result = callback(ticker)
+                            if asyncio.iscoroutine(result):
+                                await result
+                except asyncio.CancelledError:
+                    # Cancellation is intentional during unsubscribe/close.
+                    # Re-raise so the task can finish immediately.
+                    raise
+                except Exception:
+                    # Transient network errors should not kill the subscription.
+                    # A short sleep prevents a tight reconnect loop.
+                    await asyncio.sleep(3)
+                finally:
+                    self._ws_connections.pop(normalized, None)
+
+        self._ws_tasks[normalized] = asyncio.create_task(_listen())
     
     async def unsubscribe_ticker(self, symbol: str):
         """取消订阅行情"""
-        if symbol in self._ws_connections:
-            await self._ws_connections[symbol].close()
-            del self._ws_connections[symbol]
+        normalized = self.normalize_symbol(symbol)
+        task = self._ws_tasks.pop(normalized, None)
+        if task:
+            task.cancel()
+            # Awaiting a cancelled task raises CancelledError by design; suppress
+            # it because unsubscribe is a normal cleanup path.
+            with contextlib.suppress(asyncio.CancelledError):
+                await task
+
+        if normalized in self._ws_connections:
+            await self._ws_connections[normalized].close()
+            del self._ws_connections[normalized]
     
     def _normalize_order_status(self, binance_status: str) -> str:
         """转换 Binance 订单状态到统一格式"""
@@ -358,6 +432,15 @@ class BinanceExchange(ExchangeBase):
         if self._client and not self._client.is_closed:
             await self._client.aclose()
         
+        # Stop listener tasks before closing sockets. Otherwise the listeners may
+        # reconnect while shutdown is in progress.
+        for task in self._ws_tasks.values():
+            task.cancel()
+        for task in self._ws_tasks.values():
+            with contextlib.suppress(asyncio.CancelledError):
+                await task
+        self._ws_tasks.clear()
+
         for ws in self._ws_connections.values():
             await ws.close()
         self._ws_connections.clear()

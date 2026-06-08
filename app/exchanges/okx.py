@@ -5,12 +5,15 @@ OKX 交易所异步实现
 支持 REST API 和 WebSocket 订阅。
 """
 
+import asyncio
+import base64
+import contextlib
 import hashlib
 import hmac
-import time
 from typing import Dict, List, Optional, Any, Callable
 from datetime import datetime
 import orjson
+from urllib.parse import urlencode
 
 try:
     import httpx
@@ -41,7 +44,10 @@ class OKXExchange(ExchangeBase):
             self._ws_url = "wss://ws.okx.com:8443/ws/v5/public"
         
         self._client: Optional[httpx.AsyncClient] = None
+        # Keep active sockets and listener tasks separately. This lets
+        # unsubscribe cancel the reconnect loop and close the current socket.
         self._ws_connections: Dict[str, websockets.WebSocketClientProtocol] = {}
+        self._ws_tasks: Dict[str, asyncio.Task] = {}
     
     @property
     def name(self) -> str:
@@ -50,16 +56,37 @@ class OKXExchange(ExchangeBase):
     @property
     def base_url(self) -> str:
         return self._base_url
+
+    def normalize_symbol(self, symbol: str) -> str:
+        """标准化交易对格式为 OKX 现货格式 (BTC-USDT)。"""
+        normalized = symbol.upper().replace('_', '-')
+        if '-' in normalized:
+            return normalized
+
+        # Many callers naturally pass BTCUSDT. OKX spot APIs expect BTC-USDT,
+        # so split by common quote assets when no separator is present.
+        quote_assets = ('USDT', 'USDC', 'USD', 'BTC', 'ETH')
+        for quote in quote_assets:
+            if normalized.endswith(quote) and len(normalized) > len(quote):
+                return f"{normalized[:-len(quote)]}-{quote}"
+        return normalized
     
     async def _get_client(self) -> httpx.AsyncClient:
         """获取或创建 HTTP 客户端"""
         if self._client is None or self._client.is_closed:
+            headers = {
+                'Content-Type': 'application/json',
+                'OK-ACCESS-KEY': self.api_key,
+            }
+            if self.use_testnet:
+                # OKX simulated trading uses the same domain as production, but
+                # requires this header on private requests.
+                headers['x-simulated-trading'] = '1'
+
+            # One AsyncClient per adapter keeps connection pooling warm.
             self._client = httpx.AsyncClient(
                 base_url=self._base_url,
-                headers={
-                    'Content-Type': 'application/json',
-                    'OK-ACCESS-KEY': self.api_key,
-                },
+                headers=headers,
                 timeout=30.0,
             )
         return self._client
@@ -72,31 +99,43 @@ class OKXExchange(ExchangeBase):
         body: str = ''
     ) -> str:
         """生成 OKX 请求签名"""
+        # OKX signs: timestamp + uppercase method + path-with-query + body.
+        # The HMAC digest must be base64 encoded, not hex encoded.
         message = timestamp + method + request_path + body
-        mac = hmac.new(
-            bytes(self.secret_key, encoding='utf8'),
-            bytes(message, encoding='utf8'),
-            digestmod=hashlib.sha256
-        )
-        return mac.hexdigest()
+        digest = hmac.new(
+            self.secret_key.encode('utf-8'),
+            message.encode('utf-8'),
+            digestmod=hashlib.sha256,
+        ).digest()
+        return base64.b64encode(digest).decode('utf-8')
     
     async def _sign_request(
         self,
         method: str,
         path: str,
-        params: Optional[Dict] = None
+        query: Optional[Dict] = None,
+        body: Optional[Dict] = None,
     ) -> Dict[str, str]:
         """为请求添加签名头"""
         timestamp = datetime.utcnow().strftime('%Y-%m-%dT%H:%M:%S.000Z')
-        body = '' if params is None else orjson.dumps(params).decode('utf-8')
+        request_path = path
+        if query:
+            # GET signatures must include the query string exactly as it will be
+            # sent on the request path.
+            request_path = f"{path}?{urlencode(query)}"
+        body_text = '' if body is None else orjson.dumps(body).decode('utf-8')
         
-        signature = self._generate_signature(timestamp, method, path, body)
+        signature = self._generate_signature(timestamp, method.upper(), request_path, body_text)
         
-        return {
+        headers = {
             'OK-ACCESS-SIGN': signature,
             'OK-ACCESS-TIMESTAMP': timestamp,
             'OK-ACCESS-PASSPHRASE': self.passphrase,
         }
+        if self.use_testnet:
+            # Keep simulated trading enabled for signed private endpoints.
+            headers['x-simulated-trading'] = '1'
+        return headers
     
     async def get_account_balance(self) -> Dict[str, float]:
         """获取账户余额"""
@@ -137,7 +176,9 @@ class OKXExchange(ExchangeBase):
         path = '/api/v5/trade/order'
         
         params = {
-            'instId': symbol,
+            'instId': self.normalize_symbol(symbol),
+            # This adapter is spot/cash only for now. Margin/swap modes should be
+            # added explicitly instead of overloading this path.
             'tdMode': 'cash',  # 现货交易
             'side': side.lower(),
             'ordType': 'market' if order_type.lower() == 'market' else 'limit',
@@ -147,10 +188,13 @@ class OKXExchange(ExchangeBase):
         if order_type.lower() == 'limit' and price is not None:
             params['px'] = str(price)
         
-        headers = await self._sign_request('POST', path, params)
+        # The same JSON bytes used for the request body must be represented in
+        # the signature calculation.
+        body = orjson.dumps(params)
+        headers = await self._sign_request('POST', path, body=params)
         
         client = await self._get_client()
-        response = await client.post(path, json=params, headers=headers)
+        response = await client.post(path, content=body, headers=headers)
         response.raise_for_status()
         
         data = response.json()
@@ -159,6 +203,7 @@ class OKXExchange(ExchangeBase):
                 'order_id': data.get('data', [{}])[0].get('ordId'),
                 'client_order_id': data.get('data', [{}])[0].get('clOrdId'),
                 'status': 'pending',
+                'raw': data,
             }
         else:
             raise Exception(f"OKX 下单失败：{data.get('msg', 'Unknown error')}")
@@ -167,14 +212,16 @@ class OKXExchange(ExchangeBase):
         """撤销订单"""
         path = '/api/v5/trade/cancel-order'
         params = {
-            'instId': symbol,
-            'orderId': order_id,
+            'instId': self.normalize_symbol(symbol),
+            # OKX uses ordId, not orderId, for REST order operations.
+            'ordId': order_id,
         }
         
-        headers = await self._sign_request('POST', path, params)
+        body = orjson.dumps(params)
+        headers = await self._sign_request('POST', path, body=params)
         
         client = await self._get_client()
-        response = await client.post(path, json=params, headers=headers)
+        response = await client.post(path, content=body, headers=headers)
         response.raise_for_status()
         
         data = response.json()
@@ -190,7 +237,7 @@ class OKXExchange(ExchangeBase):
         count = 0
         for order in open_orders:
             try:
-                await self.cancel_order(symbol, order.get('ordId'))
+                await self.cancel_order(order.get('instId', symbol), order.get('ordId'))
                 count += 1
             except Exception:
                 pass
@@ -200,12 +247,14 @@ class OKXExchange(ExchangeBase):
         """查询订单状态"""
         path = '/api/v5/trade/order'
         params = {
-            'instId': symbol,
-            'orderId': order_id,
+            'instId': self.normalize_symbol(symbol),
+            # OKX private query endpoints also use ordId.
+            'ordId': order_id,
         }
         
+        headers = await self._sign_request('GET', path, query=params)
         client = await self._get_client()
-        response = await client.get(path, params=params)
+        response = await client.get(path, params=params, headers=headers)
         response.raise_for_status()
         
         data = response.json()
@@ -226,10 +275,11 @@ class OKXExchange(ExchangeBase):
         path = '/api/v5/trade/orders-pending'
         params = {}
         if symbol:
-            params['instId'] = symbol
+            params['instId'] = self.normalize_symbol(symbol)
         
+        headers = await self._sign_request('GET', path, query=params)
         client = await self._get_client()
-        response = await client.get(path, params=params)
+        response = await client.get(path, params=params, headers=headers)
         response.raise_for_status()
         
         data = response.json()
@@ -240,10 +290,11 @@ class OKXExchange(ExchangeBase):
     
     async def get_ticker(self, symbol: str) -> Dict[str, Any]:
         """获取实时行情"""
-        path = f'/api/v5/market/ticker?instId={symbol}'
+        path = '/api/v5/market/ticker'
+        params = {'instId': self.normalize_symbol(symbol)}
         
         client = await self._get_client()
-        response = await client.get(path)
+        response = await client.get(path, params=params)
         response.raise_for_status()
         
         data = response.json()
@@ -275,8 +326,9 @@ class OKXExchange(ExchangeBase):
         """获取 K 线数据"""
         path = '/api/v5/market/candles'
         params = {
-            'instId': symbol,
+            'instId': self.normalize_symbol(symbol),
             'bar': self._convert_interval(interval),
+            # OKX public candles endpoint caps spot candle result size at 300.
             'limit': min(limit, 300),
         }
         
@@ -313,7 +365,7 @@ class OKXExchange(ExchangeBase):
         """获取最近成交记录"""
         path = '/api/v5/market/trades'
         params = {
-            'instId': symbol,
+            'instId': self.normalize_symbol(symbol),
             'limit': min(limit, 500),
         }
         
@@ -340,14 +392,69 @@ class OKXExchange(ExchangeBase):
     
     async def subscribe_ticker(self, symbol: str, callback: Callable):
         """订阅实时行情"""
-        # TODO: 实现 WebSocket 订阅
-        pass
+        normalized = self.normalize_symbol(symbol)
+        # Ensure only one ticker listener exists per symbol.
+        await self.unsubscribe_ticker(normalized)
+
+        async def _listen():
+            subscribe_msg = {
+                'op': 'subscribe',
+                'args': [{'channel': 'tickers', 'instId': normalized}],
+            }
+            while True:
+                try:
+                    async with websockets.connect(self._ws_url, ping_interval=20, ping_timeout=20) as ws:
+                        self._ws_connections[normalized] = ws
+                        await ws.send(orjson.dumps(subscribe_msg).decode('utf-8'))
+                        async for message in ws:
+                            data = orjson.loads(message)
+                            if data.get('event'):
+                                # Subscribe/heartbeat events do not contain
+                                # ticker payloads.
+                                continue
+                            for item in data.get('data', []):
+                                # Convert OKX field names into the unified
+                                # ticker shape used by the rest of the app.
+                                ticker = {
+                                    'symbol': symbol,
+                                    'exchange': 'okx',
+                                    'last_price': float(item.get('last', 0)),
+                                    'bid_price': float(item.get('bidPx', 0)),
+                                    'ask_price': float(item.get('askPx', 0)),
+                                    'high_24h': float(item.get('high24h', 0)),
+                                    'low_24h': float(item.get('low24h', 0)),
+                                    'volume_24h': float(item.get('vol24h', 0)),
+                                    'quote_volume_24h': float(item.get('volCcy24h', 0)),
+                                    'timestamp': datetime.utcnow(),
+                                }
+                                result = callback(ticker)
+                                if asyncio.iscoroutine(result):
+                                    await result
+                except asyncio.CancelledError:
+                    # Cancellation is intentional during unsubscribe/close.
+                    raise
+                except Exception:
+                    # Keep the subscription alive across transient disconnects.
+                    await asyncio.sleep(3)
+                finally:
+                    self._ws_connections.pop(normalized, None)
+
+        self._ws_tasks[normalized] = asyncio.create_task(_listen())
     
     async def unsubscribe_ticker(self, symbol: str):
         """取消订阅行情"""
-        if symbol in self._ws_connections:
-            await self._ws_connections[symbol].close()
-            del self._ws_connections[symbol]
+        normalized = self.normalize_symbol(symbol)
+        task = self._ws_tasks.pop(normalized, None)
+        if task:
+            task.cancel()
+            # Awaiting a cancelled task raises CancelledError by design; suppress
+            # it because unsubscribe is a normal cleanup path.
+            with contextlib.suppress(asyncio.CancelledError):
+                await task
+
+        if normalized in self._ws_connections:
+            await self._ws_connections[normalized].close()
+            del self._ws_connections[normalized]
     
     def _normalize_order_status(self, okx_status: str) -> str:
         """转换 OKX 订单状态到统一格式"""
@@ -374,6 +481,15 @@ class OKXExchange(ExchangeBase):
         if self._client and not self._client.is_closed:
             await self._client.aclose()
         
+        # Stop listener tasks before closing sockets. Otherwise listeners may
+        # reconnect while shutdown is in progress.
+        for task in self._ws_tasks.values():
+            task.cancel()
+        for task in self._ws_tasks.values():
+            with contextlib.suppress(asyncio.CancelledError):
+                await task
+        self._ws_tasks.clear()
+
         for ws in self._ws_connections.values():
             await ws.close()
         self._ws_connections.clear()

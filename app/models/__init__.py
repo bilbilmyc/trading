@@ -8,6 +8,16 @@
 from app.models.order import Order, OrderSide, OrderType, OrderStatus
 from app.models.position import Position
 from app.models.balance import Balance
+from app.models.contract import (
+    ContractOrderIntent,
+    ContractOrderRequest,
+    CostEstimate,
+    FeeRate,
+    LiquidityType,
+    MarginMode,
+    MarketType,
+    PositionSide,
+)
 from app.models.market import Ticker, Candlestick, Trade
 
 __all__ = [
@@ -24,4 +34,13 @@ __all__ = [
     'Ticker',
     'Candlestick',
     'Trade',
+    # Contract
+    'MarketType',
+    'MarginMode',
+    'PositionSide',
+    'LiquidityType',
+    'ContractOrderIntent',
+    'FeeRate',
+    'ContractOrderRequest',
+    'CostEstimate',
 ]
