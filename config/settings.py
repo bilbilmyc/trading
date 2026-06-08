@@ -80,6 +80,19 @@ class MonitorSettings(BaseModel):
     position_sync_interval_seconds: int = 15
 
 
+class LLMSettings(BaseModel):
+    """LLM / AI analysis settings."""
+
+    api_key: str = ""
+    base_url: str = "https://api.openai.com/v1"
+    model: str = "gpt-4o-mini"
+    temperature: float = 0.3
+    max_tokens: int = 2048
+    request_timeout: float = 30.0
+    min_candles: int = 20
+    max_candles: int = 100
+
+
 class Settings(BaseSettings):
     """Top-level application settings."""
 
@@ -126,6 +139,16 @@ class Settings(BaseSettings):
     monitor_check_interval_seconds: int = 30
     monitor_max_alerts: int = 100
 
+    # LLM / AI analysis
+    llm_api_key: str = ""
+    llm_base_url: str = "https://api.openai.com/v1"
+    llm_model: str = "gpt-4o-mini"
+    llm_temperature: float = 0.3
+    llm_max_tokens: int = 2048
+    llm_request_timeout: float = 30.0
+    llm_min_candles: int = 20
+    llm_max_candles: int = 100
+
     model_config = SettingsConfigDict(
         env_file=".env",
         env_file_encoding="utf-8",
@@ -153,6 +176,21 @@ class Settings(BaseSettings):
             secret_key=self.binance_secret_key,
             use_testnet=self.binance_use_testnet,
             enabled=self.binance_enabled,
+        )
+
+    @property
+    def llm(self) -> LLMSettings:
+        """Build LLMSettings from flat env fields."""
+
+        return LLMSettings(
+            api_key=self.llm_api_key,
+            base_url=self.llm_base_url,
+            model=self.llm_model,
+            temperature=self.llm_temperature,
+            max_tokens=self.llm_max_tokens,
+            request_timeout=self.llm_request_timeout,
+            min_candles=self.llm_min_candles,
+            max_candles=self.llm_max_candles,
         )
 
     @property

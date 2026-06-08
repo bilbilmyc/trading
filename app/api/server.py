@@ -586,6 +586,66 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
         state.engine.add_strategy(strategy.name, strategy)
         return {"strategy": strategy.name}
 
+    # ── AI 大模型分析 API ──────────────────────────────────────
+
+    class AIAnalyzeRequest(BaseModel):
+        """Request payload for AI market analysis."""
+
+        exchange: str = Field("binance_usdm", min_length=1)
+        symbol: str = Field("BTCUSDT", min_length=1)
+        interval: str = Field("1h", min_length=1, max_length=8)
+        limit: int = Field(30, ge=10, le=100)
+
+    @app.post("/api/v1/ai/analyze")
+    async def ai_analyze(
+        request: AIAnalyzeRequest,
+        state: AppState = Depends(get_state),
+    ):
+        """调用大模型分析市场并返回开单建议（不自动下单）。"""
+
+        from app.strategies.llm_analyzer import LLMAnalyzer, LLMAnalyzerConfig
+
+        llm_config = LLMAnalyzerConfig(
+            api_key=state.settings.llm_api_key,
+            base_url=state.settings.llm_base_url,
+            model=state.settings.llm_model,
+            temperature=state.settings.llm_temperature,
+            max_tokens=state.settings.llm_max_tokens,
+            request_timeout=state.settings.llm_request_timeout,
+            min_candles=state.settings.llm_min_candles,
+            max_candles=state.settings.llm_max_candles,
+        )
+
+        client = state.get_exchange(request.exchange)
+
+        # 获取持仓上下文（如果有）
+        position_ctx = None
+        position = await state.engine.position_manager.get_position(
+            request.exchange, request.symbol
+        )
+        if position and not position.is_flat():
+            position_ctx = {
+                "side": position.side,
+                "quantity": position.quantity,
+                "avg_entry_price": position.avg_entry_price,
+                "unrealized_pnl": position.unrealized_pnl,
+                "equity": state.engine.paper_account.cash
+                + state.engine.paper_account.summary().get("unrealized_pnl", 0),
+            }
+
+        analyzer = LLMAnalyzer(llm_config)
+        try:
+            result = await analyzer.analyze(
+                exchange=client,
+                symbol=request.symbol,
+                interval=request.interval,
+                limit=request.limit,
+                position_context=position_ctx,
+            )
+            return result.to_dict()
+        finally:
+            await analyzer.close()
+
     # ── 阶段 5：实盘同步 + 监控告警 API ─────────────────────────
 
     @app.get("/api/v1/monitor/status")
