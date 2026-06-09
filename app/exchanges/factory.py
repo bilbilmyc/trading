@@ -4,7 +4,7 @@
 用于创建和管理不同交易所的实例。
 """
 
-from typing import Dict, Optional, Type
+from typing import Any, Dict, Optional, Type
 from app.exchanges.base import ExchangeBase
 
 
@@ -164,6 +164,22 @@ class ExchangeFactory:
                 pass
         cls._instances.clear()
     
+    @classmethod
+    def get_capabilities(cls, exchange_name: str) -> Dict[str, Any]:
+        """返回交易所的能力标志，不创建实例。"""
+
+        name = exchange_name.lower()
+        exchange_class = cls._exchange_classes.get(name)
+        if exchange_class is None:
+            return {}
+        try:
+            # 用空凭证创建一个临时实例只是为了读取 capabilities 属性。
+            # 不会发起网络请求，因为 capabilities 是纯声明。
+            temp = exchange_class(api_key="", secret_key="", passphrase="", use_testnet=True)
+            return temp.capabilities
+        except Exception:
+            return {}
+
     @classmethod
     def list_supported_exchanges(cls) -> list:
         """列出所有支持的交易所"""

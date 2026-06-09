@@ -63,6 +63,16 @@ class BitgetUSDTFuturesExchange(ContractExchangeBase):
         return "bitget_usdt_futures"
 
     @property
+    def capabilities(self) -> Dict[str, Any]:
+        return {
+            "supports_hedge_mode": True,
+            "supports_post_only": True,
+            "requires_symbol_for_cancel_all": False,
+            "supports_public_fee_lookup": True,
+            "supports_private_fee_lookup": False,
+        }
+
+    @property
     def base_url(self) -> str:
         return self._base_url
 

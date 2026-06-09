@@ -75,6 +75,21 @@ curl http://127.0.0.1:8000/api/v1/exchanges
 
 ## 运行
 
+### 调试模式启动
+
+开发调试时建议开启 DEBUG 日志，方便排查交易所请求和策略执行细节：
+
+```bash
+# API 服务（调试模式）
+LOG_LEVEL=DEBUG uv run python main.py api --host 0.0.0.0 --port 8000
+
+# 策略循环（调试模式）
+LOG_LEVEL=DEBUG uv run python main.py trade
+
+# 查看所有交易所健康状态
+curl http://127.0.0.1:8000/api/v1/health/venues
+```
+
 ### 查看状态
 
 ```bash
@@ -199,7 +214,7 @@ curl -X POST http://127.0.0.1:8000/api/v1/sync/positions/binance_usdm
 | 提供方 | `LLM_BASE_URL` | 推荐模型 |
 |--------|----------------|---------|
 | **OpenAI** | `https://api.openai.com/v1` | `gpt-4o-mini`（成本低） |
-| **DeepSeek** | `https://api.deepseek.com/v1` | `deepseek-chat` |
+| **DeepSeek** | `https://api.deepseek.com/v1` | `deepseek-v4-flash` |
 | **Ollama (本地)** | `http://localhost:11434/v1` | `llama3` |
 | **vLLM (本地)** | `http://localhost:8000/v1` | 任意部署模型 |
 
@@ -337,6 +352,26 @@ npm run dev
 
 ## Docker
 
+### 直接运行（无需构建镜像）
+
+大多数场景不需要构建 Docker 镜像，直接用 `docker run` 拉取预构建镜像即可：
+
+```bash
+# 从 GitHub Container Registry 拉取并运行
+docker run --rm \
+  --name web3-trading \
+  -p 8000:8000 \
+  --env-file .env \
+  ghcr.io/bilbilmyc/trading:latest
+
+# 访问
+open http://127.0.0.1:8000
+```
+
+### 本地构建镜像
+
+当需要修改镜像内容或定制依赖时，才需要本地构建：
+
 ```bash
 # 构建
 docker build -t web3-trading:local .
@@ -347,9 +382,6 @@ docker run --rm \
   -p 8000:8000 \
   --env-file .env \
   web3-trading:local
-
-# 访问
-open http://127.0.0.1:8000
 ```
 
 GitHub Actions 自动构建推送到 GHCR：
@@ -362,12 +394,20 @@ docker pull ghcr.io/bilbilmyc/trading:latest
 
 ## API 参考
 
-### 行情数据
+### 系统与健康
 
 ```bash
 GET  /health
+GET  /api/v1/health/venues          # 各交易所公开/私有 API、时钟偏差、凭证状态
 GET  /api/v1/config
 GET  /api/v1/exchanges
+GET  /api/v1/risk/kill-switch
+POST /api/v1/risk/kill-switch       # {"enabled": true, "reason": "manual"}
+```
+
+### 行情数据
+
+```bash
 GET  /api/v1/ticker/{exchange}/{symbol}
 GET  /api/v1/klines/{exchange}/{symbol}?interval=1m&limit=100
 GET  /api/v1/trades/{exchange}/{symbol}?limit=50

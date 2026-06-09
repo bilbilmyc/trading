@@ -22,6 +22,16 @@ class OKXSwapExchange(OKXExchange, ContractExchangeBase):
     def name(self) -> str:
         return "okx_swap"
 
+    @property
+    def capabilities(self) -> Dict[str, Any]:
+        return {
+            "supports_hedge_mode": True,
+            "supports_post_only": True,
+            "requires_symbol_for_cancel_all": False,
+            "supports_public_fee_lookup": False,
+            "supports_private_fee_lookup": True,
+        }
+
     def normalize_symbol(self, symbol: str) -> str:
         """标准化为 OKX 永续合约格式，例如 BTC-USDT-SWAP。"""
 

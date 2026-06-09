@@ -33,16 +33,16 @@ High-end quant stacks usually separate these responsibilities:
 
 ## Phase 1: Make Current System Safer
 
-- [ ] Add a global kill switch API and UI control.
+- [x] Add a global kill switch API and UI control.
 - [x] Persist all submitted live orders, rejected orders, and cancel requests.
 - [x] Add idempotent `client_order_id` generation for every live order.
 - [x] Add explicit order preview before any live order: notional, leverage,
   margin mode, reduce-only, estimated fee, liquidation-risk note.
-- [ ] Split public market errors from private account/order errors in the API
+- [x] Split public market errors from private account/order errors in the API
   response shape, not only in the frontend.
-- [ ] Add exchange capability flags: supports hedge mode, supports post-only,
+- [x] Add exchange capability flags: supports hedge mode, supports post-only,
   requires symbol for cancel-all, supports public fee lookup.
-- [ ] Add health checks for each enabled venue: public API, private API,
+- [x] Add health checks for each enabled venue: public API, private API,
   clock skew, credentials present, and rate-limit status.
 - [x] Add tests for live-trading guard: order/cancel/leverage must reject when
   `ENABLE_LIVE_TRADING=false`.

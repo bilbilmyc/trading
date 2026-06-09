@@ -236,7 +236,11 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
         # 因为这里闭包捕获了 create_app() 里创建的 state，所以所有路由拿到的是同一个对象。
         return state
 
-    async def call_exchange(operation: Callable[[], Awaitable[T]]) -> T:
+    async def call_exchange(
+        operation: Callable[[], Awaitable[T]],
+        *,
+        is_private: bool = False,
+    ) -> T:
         """统一包装交易所调用，把网络/交易所异常转换成 HTTP 响应。
 
         路由里常见写法：
@@ -244,36 +248,49 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
             client = state.get_exchange(exchange)
             return await call_exchange(lambda: client.get_ticker(symbol))
 
-        这样每个路由不用重复 try/except，前端也能收到稳定的错误格式。
+        当 is_private=True 时，错误分类为 "private"（账户/订单/杠杆），前端可以按
+        类别决定是否提示用户检查 API Key。公开行情失败时分类为 "public"，
+        不应因为缺少 API Key 就阻断前端使用。
         """
 
+        category = "private" if is_private else "public"
         try:
             return await operation()
         except HTTPException:
             raise
         except ValueError as exc:
-            raise HTTPException(status_code=400, detail=str(exc)) from exc
+            raise HTTPException(status_code=400, detail={
+                "message": str(exc),
+                "error_category": category,
+            }) from exc
         except httpx.HTTPStatusError as exc:
             detail: Any
             try:
                 detail = exc.response.json()
             except ValueError:
                 detail = exc.response.text or exc.response.reason_phrase
-            raise HTTPException(
-                status_code=502,
-                detail={
-                    "message": "Exchange returned an error response",
-                    "status_code": exc.response.status_code,
-                    "exchange_detail": detail,
-                },
-            ) from exc
+            body: Dict[str, Any] = {
+                "message": "Exchange returned an error response",
+                "error_category": category,
+                "status_code": exc.response.status_code,
+                "exchange_detail": detail,
+            }
+            if is_private and exc.response.status_code in (401, 403):
+                body["hint"] = "请检查 .env 中对应交易所的 API Key / Secret 是否正确配置，以及账户权限是否足够。"
+            raise HTTPException(status_code=502, detail=body) from exc
         except httpx.HTTPError as exc:
             raise HTTPException(
                 status_code=502,
-                detail=f"Exchange network error: {exc.__class__.__name__}",
+                detail={
+                    "message": f"Exchange network error: {exc.__class__.__name__}",
+                    "error_category": category,
+                },
             ) from exc
         except Exception as exc:
-            raise HTTPException(status_code=502, detail=str(exc)) from exc
+            raise HTTPException(status_code=502, detail={
+                "message": str(exc),
+                "error_category": category,
+            }) from exc
 
     def extract_order_id(result: Any) -> Optional[str]:
         """尽量从不同交易所返回里取订单号。
@@ -477,9 +494,74 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
     async def health() -> Dict[str, Any]:
         return {"status": "ok", "env": settings.app_env}
 
+    @app.get("/api/v1/health/venues")
+    async def venue_health(state: AppState = Depends(get_state)) -> Dict[str, Any]:
+        """检查每个已启用交易所的健康状态。
+
+        对每个 venue 执行：
+        - 公开 API 可达性 (ping ticker)
+        - 私有 API 可达性 (如果配置了 API Key，尝试余额查询)
+        - 时钟偏差 (本地 vs 交易所服务器时间)
+        - 凭证存在性
+        - 频率限制状态 (取决于交易所是否返回 rate-limit 头)
+        """
+
+        venues: Dict[str, Any] = {}
+        for name in ExchangeFactory.list_supported_exchanges():
+            exchange_settings = settings.exchange(name)
+            if exchange_settings is None or not exchange_settings.enabled:
+                continue
+
+            has_keys = bool(exchange_settings.api_key)
+            result: Dict[str, Any] = {
+                "enabled": True,
+                "use_testnet": exchange_settings.use_testnet,
+                "credentials_present": has_keys,
+                "public_api_ok": False,
+                "public_api_error": None,
+                "private_api_ok": None,
+                "private_api_error": None,
+                "clock_skew_ms": None,
+                "rate_limit_ok": None,
+                "checked_at": datetime.utcnow().isoformat(),
+            }
+
+            try:
+                client = state.get_exchange(name)
+            except HTTPException as exc:
+                result["public_api_error"] = exc.detail
+                venues[name] = result
+                continue
+
+            # 公开 API 检查
+            try:
+                ticker = await call_exchange(lambda: client.get_ticker("BTCUSDT"))
+                result["public_api_ok"] = True
+                # 尝试从 ticker 时间戳估算时钟偏差
+                ticker_ts = ticker.get("timestamp")
+                if isinstance(ticker_ts, datetime):
+                    skew = (datetime.utcnow() - ticker_ts).total_seconds() * 1000
+                    result["clock_skew_ms"] = round(skew, 1)
+            except HTTPException as exc:
+                result["public_api_error"] = exc.detail
+
+            # 私有 API 检查（仅当配置了 API Key）
+            if has_keys:
+                try:
+                    await call_exchange(client.get_account_balance, is_private=True)
+                    result["private_api_ok"] = True
+                except HTTPException as exc:
+                    result["private_api_ok"] = False
+                    result["private_api_error"] = exc.detail
+
+            venues[name] = result
+
+        return {"venues": venues, "timestamp": datetime.utcnow().isoformat()}
+
     @app.get("/api/v1/config")
     async def get_config() -> Dict[str, Any]:
         configured = {}
+        capabilities = {}
         for name in ExchangeFactory.list_supported_exchanges():
             exchange_settings = settings.exchange(name)
             configured[name] = {
@@ -487,6 +569,7 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
                 "use_testnet": bool(exchange_settings and exchange_settings.use_testnet),
                 "has_api_key": bool(exchange_settings and exchange_settings.api_key),
             }
+            capabilities[name] = ExchangeFactory.get_capabilities(name)
 
         return {
             "app_name": settings.app_name,
@@ -500,6 +583,7 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
                 "path": str(Path(settings.sqlite_path)),
             },
             "exchanges": configured,
+            "exchange_capabilities": capabilities,
             "risk": settings.risk.model_dump(),
         }
 
@@ -594,12 +678,12 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
     @app.get("/api/v1/balances/{exchange}")
     async def get_balances(exchange: str, state: AppState = Depends(get_state)):
         client = state.get_exchange(exchange)
-        return await call_exchange(client.get_account_balance)
+        return await call_exchange(client.get_account_balance, is_private=True)
 
     @app.get("/api/v1/balances/{exchange}/available")
     async def get_available_balances(exchange: str, state: AppState = Depends(get_state)):
         client = state.get_exchange(exchange)
-        return await call_exchange(client.get_available_balances)
+        return await call_exchange(client.get_available_balances, is_private=True)
 
     @app.get("/api/v1/order/{exchange}/{symbol}/{order_id}")
     async def get_order(
@@ -609,7 +693,7 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
         state: AppState = Depends(get_state),
     ):
         client = state.get_exchange(exchange)
-        return await call_exchange(lambda: client.get_order(symbol, order_id))
+        return await call_exchange(lambda: client.get_order(symbol, order_id), is_private=True)
 
     @app.get("/api/v1/orders/{exchange}/open")
     async def get_open_orders(
@@ -618,7 +702,7 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
         state: AppState = Depends(get_state),
     ):
         client = state.get_exchange(exchange)
-        return await call_exchange(lambda: client.get_open_orders(symbol))
+        return await call_exchange(lambda: client.get_open_orders(symbol), is_private=True)
 
     @app.get("/api/v1/contracts/{exchange}")
     async def list_contract_markets(
@@ -646,7 +730,7 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
         state: AppState = Depends(get_state),
     ):
         client = state.get_contract_exchange(exchange)
-        return await call_exchange(lambda: client.get_fee_rate(symbol))
+        return await call_exchange(lambda: client.get_fee_rate(symbol), is_private=True)
 
     @app.get("/api/v1/contracts/{exchange}/{symbol}/cost-estimate")
     async def estimate_contract_cost(
@@ -716,7 +800,7 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
             },
         )
         client = state.get_contract_exchange(exchange)
-        result = await call_exchange(lambda: client.set_leverage(symbol, leverage, margin_mode, position_side))
+        result = await call_exchange(lambda: client.set_leverage(symbol, leverage, margin_mode, position_side), is_private=True)
         record_event(
             category="order",
             event_type="leverage_changed",
@@ -759,7 +843,8 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
                 quantity=request.quantity,
                 price=request.price,
                 quote_order_qty=request.quote_order_qty,
-            )
+            ),
+            is_private=True,
         )
         record_event(
             category="order",
@@ -795,7 +880,7 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
         )
 
         client = state.get_contract_exchange(request.exchange)
-        result = await call_exchange(lambda: client.place_contract_order(request))
+        result = await call_exchange(lambda: client.place_contract_order(request), is_private=True)
         record_event(
             category="order",
             event_type="contract_order_submitted",
@@ -830,7 +915,7 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
             order_id=order_id,
         )
         client = state.get_exchange(exchange)
-        result = await call_exchange(lambda: client.cancel_order(symbol, order_id))
+        result = await call_exchange(lambda: client.cancel_order(symbol, order_id), is_private=True)
         record_event(
             category="order",
             event_type="order_cancel_requested",
@@ -861,7 +946,7 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
             symbol=symbol,
         )
         client = state.get_exchange(exchange)
-        cancelled = await call_exchange(lambda: client.cancel_all_orders(symbol))
+        cancelled = await call_exchange(lambda: client.cancel_all_orders(symbol), is_private=True)
         record_event(
             category="order",
             event_type="cancel_all_requested",

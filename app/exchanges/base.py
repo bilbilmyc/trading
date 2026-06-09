@@ -44,7 +44,30 @@ class ExchangeBase(ABC):
     def base_url(self) -> str:
         """API 基础 URL"""
         pass
-    
+
+    @property
+    def capabilities(self) -> Dict[str, Any]:
+        """交易所能力标志。
+
+        每个适配器可以覆盖这个 property，声明自己支持哪些功能。
+        API 层和前端可以根据这些标志动态调整 UI 和行为。
+
+        标准键：
+        - supports_hedge_mode: 支持多空双向持仓模式
+        - supports_post_only: 支持只挂单 (GTX / Post-Only)
+        - requires_symbol_for_cancel_all: 批量撤单必须传 symbol
+        - supports_public_fee_lookup: 手续费率可通过公开接口查询
+        - supports_private_fee_lookup: 手续费率需要已签名的私有接口
+        """
+
+        return {
+            "supports_hedge_mode": False,
+            "supports_post_only": False,
+            "requires_symbol_for_cancel_all": False,
+            "supports_public_fee_lookup": False,
+            "supports_private_fee_lookup": False,
+        }
+
     # ========== 账户相关 ==========
     
     @abstractmethod

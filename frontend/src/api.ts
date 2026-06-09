@@ -18,7 +18,16 @@ export interface AppConfig {
   frontend_static_dir: string;
   persistence: { driver: string; path: string };
   exchanges: Record<string, { enabled: boolean; use_testnet: boolean; has_api_key: boolean }>;
+  exchange_capabilities: Record<string, ExchangeCapabilities>;
   risk: Record<string, number>;
+}
+
+export interface ExchangeCapabilities {
+  supports_hedge_mode: boolean;
+  supports_post_only: boolean;
+  requires_symbol_for_cancel_all: boolean;
+  supports_public_fee_lookup: boolean;
+  supports_private_fee_lookup: boolean;
 }
 
 export interface EngineStatus {

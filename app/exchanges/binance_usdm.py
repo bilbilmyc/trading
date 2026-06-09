@@ -33,6 +33,16 @@ class BinanceUSDMFuturesExchange(BinanceExchange, ContractExchangeBase):
     def name(self) -> str:
         return "binance_usdm"
 
+    @property
+    def capabilities(self) -> Dict[str, Any]:
+        return {
+            "supports_hedge_mode": True,
+            "supports_post_only": True,
+            "requires_symbol_for_cancel_all": True,
+            "supports_public_fee_lookup": False,
+            "supports_private_fee_lookup": True,
+        }
+
     def normalize_symbol(self, symbol: str) -> str:
         """标准化为 Binance 合约格式，例如 BTCUSDT。"""
 
