@@ -199,8 +199,8 @@ export default function App() {
     if (ordersResult.status === "fulfilled") setOpenOrders(ordersResult.value);
     else setOpenOrders([]);
 
-    const failed = [tickerResult, tradesResult, ordersResult].find((item) => item.status === "rejected");
-    setMarketError(failed?.status === "rejected" ? failed.reason?.message ?? "行情/订单刷新失败" : "");
+    const failed = [tickerResult, tradesResult].find((item) => item.status === "rejected");
+    setMarketError(failed?.status === "rejected" ? failed.reason?.message ?? "行情刷新失败" : "");
   }, [apiOnline, exchange, priceSyncedSymbol, symbol]);
 
   const refreshContracts = useCallback(async () => {

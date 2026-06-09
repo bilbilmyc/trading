@@ -24,6 +24,20 @@ from app.models.contract import ContractOrderIntent, ContractOrderRequest, FeeRa
 from app.models.market import ContractMarket
 
 
+BASE_ASSET_PRIORITY = [
+    "BTC",
+    "ETH",
+    "SOL",
+    "BNB",
+    "XRP",
+    "DOGE",
+    "ADA",
+    "LINK",
+    "AVAX",
+    "TON",
+]
+
+
 class BitgetUSDTFuturesExchange(ContractExchangeBase):
     """Bitget USDT-M perpetual futures implementation."""
 
@@ -148,7 +162,7 @@ class BitgetUSDTFuturesExchange(ContractExchangeBase):
                     },
                 )
             )
-        return markets
+        return sorted(markets, key=self._market_sort_key)
 
     async def get_fee_rate(self, symbol: str) -> FeeRate:
         data = await self._public_get(
@@ -441,6 +455,14 @@ class BitgetUSDTFuturesExchange(ContractExchangeBase):
         if price_place < 0:
             return None
         return price_end_step * (10 ** -price_place)
+
+    def _market_sort_key(self, market: ContractMarket) -> tuple[int, int, str]:
+        status_rank = 0 if market.status.lower() in {"normal", "trading"} else 1
+        try:
+            asset_rank = BASE_ASSET_PRIORITY.index(market.base_asset.upper())
+        except ValueError:
+            asset_rank = len(BASE_ASSET_PRIORITY)
+        return status_rank, asset_rank, market.symbol
 
     def _margin_mode(self, margin_mode: MarginMode) -> str:
         return "crossed" if margin_mode == MarginMode.CROSS else "isolated"
