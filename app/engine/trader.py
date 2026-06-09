@@ -10,6 +10,7 @@ from typing import Dict, List, Optional, Any, Callable
 from datetime import datetime
 from loguru import logger
 
+from app.core.sqlite_store import SQLiteStore
 from app.exchanges.base import ExchangeBase
 from app.strategies.base import StrategyBase, Signal, SignalAction
 from app.engine.risk_manager import RiskManager, RiskConfig
@@ -41,12 +42,14 @@ class TradingEngine:
         position_sync_interval: int = 15,
         monitor_check_interval: int = 30,
         monitor_max_alerts: int = 100,
+        store: Optional[SQLiteStore] = None,
     ):
         self._exchanges: Dict[str, ExchangeBase] = {}
         self._strategies: Dict[str, StrategyBase] = {}
         self._strategy_configs: Dict[str, Dict[str, Any]] = {}
         self._recent_signals: List[Dict[str, Any]] = []
         self._running = False
+        self.store = store
         
         # 核心组件
         self.risk_manager = RiskManager(risk_config)
@@ -88,6 +91,10 @@ class TradingEngine:
         self._signal_filter_rejects: List[Dict[str, Any]] = []
         
         logger.info("交易引擎初始化完成（含 stage-5 实盘同步组件）")
+
+        if self.store:
+            self._recent_signals = self.store.recent_signals(limit=200)
+            self.paper_account.load_state(**self.store.load_paper_state())
     
     def add_exchange(self, name: str, exchange: ExchangeBase):
         """添加交易所"""
@@ -114,6 +121,7 @@ class TradingEngine:
             "mode": mode,
             "updated_at": datetime.utcnow().isoformat(),
         }
+        self._persist_strategy(name)
         logger.info(f"添加策略：{name}")
 
     def remove_strategy(self, name: str) -> bool:
@@ -122,6 +130,8 @@ class TradingEngine:
         existed = name in self._strategies
         self._strategies.pop(name, None)
         self._strategy_configs.pop(name, None)
+        if existed and self.store:
+            self.store.delete_strategy(name)
         return existed
 
     def set_strategy_enabled(self, name: str, enabled: bool) -> Dict[str, Any]:
@@ -132,6 +142,7 @@ class TradingEngine:
         config = self._strategy_configs.setdefault(name, {})
         config["enabled"] = enabled
         config["updated_at"] = datetime.utcnow().isoformat()
+        self._persist_strategy(name)
         return config
 
     def set_strategy_mode(self, name: str, mode: str) -> Dict[str, Any]:
@@ -144,6 +155,7 @@ class TradingEngine:
         config = self._strategy_configs.setdefault(name, {})
         config["mode"] = mode
         config["updated_at"] = datetime.utcnow().isoformat()
+        self._persist_strategy(name)
         return config
 
     def get_signal_runner_status(self) -> Dict[str, Any]:
@@ -158,6 +170,16 @@ class TradingEngine:
         """Return paper trading account summary."""
 
         return self.paper_account.summary()
+
+    def reset_paper_account(self, initial_cash: Optional[float] = None) -> Dict[str, Any]:
+        """Reset and persist the paper trading account."""
+
+        self.paper_account.reset(initial_cash=initial_cash)
+        summary = self.paper_account.summary()
+        if self.store:
+            self.store.save_paper_state(summary)
+            self.store.clear_paper_orders()
+        return summary
 
     async def start_signal_runner(self, poll_seconds: int = 60, candle_limit: int = 80) -> Dict[str, Any]:
         """Start a background loop that generates strategy signals only."""
@@ -213,6 +235,80 @@ class TradingEngine:
             )
         return strategies
 
+    def _strategy_snapshot(self, name: str) -> Optional[Dict[str, Any]]:
+        """Return one strategy metadata record in the API/storage shape."""
+
+        strategy = self._strategies.get(name)
+        if strategy is None:
+            return None
+        config = self._strategy_configs.get(name, {})
+        return {
+            "name": name,
+            "class_name": strategy.__class__.__name__,
+            "initialized_at": strategy.initialized_at.isoformat(),
+            "running": bool(config.get("enabled", False)),
+            "exchange": config.get("exchange"),
+            "symbol": config.get("symbol"),
+            "interval": config.get("interval", "1m"),
+            "mode": config.get("mode", "signal"),
+            "updated_at": config.get("updated_at"),
+            "parameters": {
+                key: value
+                for key, value in vars(strategy).items()
+                if not key.startswith("_") and isinstance(value, (str, int, float, bool, type(None)))
+            },
+        }
+
+    def _persist_strategy(self, name: str) -> None:
+        """Persist one strategy when a SQLite store is configured."""
+
+        if not self.store:
+            return
+        snapshot = self._strategy_snapshot(name)
+        if snapshot:
+            self.store.upsert_strategy(snapshot)
+
+    def restore_persisted_strategies(self) -> int:
+        """Restore supported persisted strategy definitions.
+
+        At this stage only SMA strategies are restored because they have a small
+        deterministic constructor. Unsupported strategy classes remain ignored
+        instead of being guessed into existence.
+        """
+
+        if not self.store:
+            return 0
+
+        from app.strategies.sma import SMAStrategy
+
+        restored = 0
+        for item in self.store.list_strategies():
+            if item.get("class_name") != "SMAStrategy":
+                continue
+            params = item.get("parameters") or {}
+            strategy = SMAStrategy(
+                short_window=int(params.get("short_window", 5)),
+                long_window=int(params.get("long_window", 20)),
+                min_data_points=int(params.get("min_data_points", params.get("long_window", 20))),
+            )
+            try:
+                strategy._initialized_at = datetime.fromisoformat(str(item["initialized_at"]))
+            except (KeyError, ValueError):
+                pass
+            self.add_strategy(
+                str(item["name"]),
+                strategy,
+                exchange=item.get("exchange"),
+                symbol=item.get("symbol"),
+                interval=str(item.get("interval") or "1m"),
+                enabled=bool(item.get("enabled")),
+                mode=str(item.get("mode") or "signal"),
+            )
+            self._strategy_configs[str(item["name"])]["updated_at"] = item.get("updated_at")
+            self._persist_strategy(str(item["name"]))
+            restored += 1
+        return restored
+
     def get_recent_signals(self, limit: int = 50) -> List[Dict[str, Any]]:
         """Return the newest generated strategy signals."""
 
@@ -221,24 +317,11 @@ class TradingEngine:
     def _record_signal(self, exchange_name: str, strategy_name: str, signal: Signal) -> None:
         """Store recent signals in memory for UI/audit visibility."""
 
-        self._recent_signals.append(
-            {
-                "exchange": exchange_name,
-                "strategy": strategy_name,
-                "symbol": signal.symbol,
-                "action": signal.action.value,
-                "strength": signal.strength,
-                "quantity": signal.quantity,
-                "price": signal.price,
-                "order_type": signal.order_type,
-                "stop_loss": signal.stop_loss,
-                "take_profit": signal.take_profit,
-                "metadata": signal.metadata,
-                "actionable": signal.is_actionable,
-                "timestamp": signal.timestamp.isoformat(),
-            }
-        )
+        row = self._serialize_signal(exchange_name, strategy_name, signal)
+        self._recent_signals.append(row)
         self._recent_signals = self._recent_signals[-200:]
+        if self.store:
+            self.store.append_signal(row)
     
     def on_signal(self, callback: Callable):
         """注册信号回调"""
@@ -645,7 +728,11 @@ class TradingEngine:
         if price <= 0:
             ticker = await exchange.get_ticker(signal.symbol)
             price = float(ticker.get("last_price", 0))
-        return self.paper_account.apply_signal(exchange_name, strategy_name, signal, price)
+        order = self.paper_account.apply_signal(exchange_name, strategy_name, signal, price)
+        if order and self.store:
+            self.store.save_paper_order(order)
+            self.store.save_paper_state(self.paper_account.summary())
+        return order
 
     def _strategy_matches(
         self,

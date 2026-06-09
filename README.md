@@ -1,6 +1,6 @@
 # Web3 量化交易系统
 
-一个基于 Python/asyncio 的 Web3 量化交易系统，支持 OKX、Binance 的统一 **现货 + 永续合约**接口，
+一个基于 Python/asyncio 的 Web3 量化交易系统，以 Binance 为主、Bitget 为辅、OKX 备用，支持统一 **现货 + 永续合约**接口，
 内置 SMA 策略、**大模型 AI 分析**、风控、订单/持仓同步和监控告警。
 
 ![架构图](docs/architecture.svg)
@@ -14,7 +14,7 @@
 
 | 模块 | 功能 |
 |------|------|
-| **交易所接入** | OKX 现货/永续 + Binance 现货/USD-M Futures，统一抽象接口 |
+| **交易所接入** | Binance 现货/USD-M Futures + Bitget USDT Futures + OKX 现货/永续，统一抽象接口 |
 | **交易引擎** | 多交易所、多策略并行、并发控制、生命周期管理 |
 | **策略** | SMA 双均线 (内置) + **LLMAnalyzer 大模型分析 (新增)** |
 | **风控** | 仓位/金额/频率/每日亏损/回撤限制 |
@@ -59,6 +59,7 @@ uv sync
 # 3. 配置
 cp .env.example .env
 # 编辑 .env：填入交易所 testnet API Key（可选，查行情不需要）
+# 默认使用 SQLite 持久化到 data/trading.sqlite3，可通过 SQLITE_PATH 修改
 
 # 4. 启动 API
 uv run python main.py api
@@ -298,7 +299,7 @@ npm run dev
 功能：
 
 - API/LIVE 状态栏
-- OKX Swap / Binance USD-M 切换
+- Binance USD-M / Bitget USDT Futures / OKX Swap 切换
 - 合约 symbol 搜索、数量、价格、杠杆、保证金模式
 - 开多/平多/开空/平空方向选择
 - Maker/Taker 手续费查询 + 成本估算
@@ -451,8 +452,9 @@ POST  /api/v1/sync/positions/{exchange}
 │   │   ├── base.py             # ExchangeBase 抽象
 │   │   ├── contract_base.py    # 合约抽象
 │   │   ├── factory.py          # 工厂/单例
-│   │   ├── okx.py / okx_swap.py
-│   │   └── binance.py / binance_usdm.py
+│   │   ├── binance.py / binance_usdm.py
+│   │   ├── bitget_usdt_futures.py
+│   │   └── okx.py / okx_swap.py
 │   ├── models/                 # 数据模型
 │   │   ├── order.py / position.py / balance.py
 │   │   ├── market.py           # Ticker / Candlestick / Trade

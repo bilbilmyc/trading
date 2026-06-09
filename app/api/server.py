@@ -12,6 +12,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
+from app.core.sqlite_store import SQLiteStore
 from app.engine.risk_manager import RiskConfig
 from app.engine.trader import TradingEngine
 from app.exchanges.base import ExchangeBase
@@ -79,19 +80,22 @@ class AppState:
 
     def __init__(self, settings: Settings):
         self.settings = settings
+        self.store = SQLiteStore(settings.sqlite_path)
         self.engine = TradingEngine(
             risk_config=RiskConfig(**settings.risk.model_dump()),
             max_concurrent_orders=5,
+            store=self.store,
         )
-        self.engine.add_strategy(
-            "sma_5_20_btcusdt",
-            SMAStrategy(short_window=5, long_window=20),
-            exchange="binance_usdm",
-            symbol="BTCUSDT",
-            interval="1m",
-            enabled=False,
-            mode="signal",
-        )
+        if self.engine.restore_persisted_strategies() == 0:
+            self.engine.add_strategy(
+                "sma_5_20_btcusdt",
+                SMAStrategy(short_window=5, long_window=20),
+                exchange="binance_usdm",
+                symbol="BTCUSDT",
+                interval="1m",
+                enabled=False,
+                mode="signal",
+            )
         self.exchanges: Dict[str, ExchangeBase] = {}
 
     def get_exchange(self, name: str) -> ExchangeBase:
@@ -140,6 +144,7 @@ class AppState:
         for exchange in self.exchanges.values():
             await exchange.close()
         self.exchanges.clear()
+        self.store.close()
 
 
 def get_settings() -> Settings:
@@ -240,6 +245,10 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
             "default_symbol": settings.default_symbol,
             "live_trading_enabled": settings.enable_live_trading,
             "frontend_static_dir": settings.frontend_static_dir,
+            "persistence": {
+                "driver": "sqlite",
+                "path": str(Path(settings.sqlite_path)),
+            },
             "exchanges": configured,
             "risk": settings.risk.model_dump(),
         }
@@ -476,8 +485,19 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
         request: PaperResetRequest,
         state: AppState = Depends(get_state),
     ):
-        state.engine.paper_account.reset(initial_cash=request.initial_cash)
-        return state.engine.get_paper_summary()
+        return state.engine.reset_paper_account(initial_cash=request.initial_cash)
+
+    @app.get("/api/v1/storage/status")
+    async def storage_status(state: AppState = Depends(get_state)):
+        db_path = Path(state.settings.sqlite_path)
+        return {
+            "driver": "sqlite",
+            "path": str(db_path),
+            "exists": db_path.exists(),
+            "size_bytes": db_path.stat().st_size if db_path.exists() else 0,
+            "strategies": len(state.store.list_strategies()),
+            "recent_signals": len(state.store.recent_signals(limit=200)),
+        }
 
     @app.get("/api/v1/strategies")
     async def list_strategies(state: AppState = Depends(get_state)):

@@ -105,9 +105,10 @@ class Settings(BaseSettings):
     host: str = "0.0.0.0"
     port: int = 8000
     frontend_static_dir: str = "static"
+    sqlite_path: str = "data/trading.sqlite3"
 
-    default_exchange: str = "okx"
-    default_symbol: str = "BTC-USDT"
+    default_exchange: str = "binance_usdm"
+    default_symbol: str = "BTCUSDT"
     enable_live_trading: bool = False
 
     # Exchange credentials are split into flat env vars so .env remains simple:
@@ -124,6 +125,13 @@ class Settings(BaseSettings):
     binance_use_testnet: bool = True
     binance_enabled: bool = True
     binance_usdm_enabled: bool = True
+
+    bitget_api_key: str = ""
+    bitget_secret_key: str = ""
+    bitget_passphrase: str = ""
+    bitget_use_testnet: bool = True
+    bitget_enabled: bool = True
+    bitget_usdt_futures_enabled: bool = True
 
     # Risk defaults are conservative. Increase them only after dry-run testing.
     max_position_size: float = Field(default=1.0, gt=0)
@@ -181,6 +189,18 @@ class Settings(BaseSettings):
         )
 
     @property
+    def bitget(self) -> ExchangeSettings:
+        """Group flat Bitget environment variables into one exchange settings object."""
+
+        return ExchangeSettings(
+            api_key=self.bitget_api_key,
+            secret_key=self.bitget_secret_key,
+            passphrase=self.bitget_passphrase,
+            use_testnet=self.bitget_use_testnet,
+            enabled=self.bitget_enabled,
+        )
+
+    @property
     def llm(self) -> LLMSettings:
         """Build LLMSettings from flat env fields."""
 
@@ -227,8 +247,10 @@ class Settings(BaseSettings):
         exchanges = {
             "okx": self.okx,
             "binance": self.binance,
+            "bitget": self.bitget,
             "okx_swap": self.okx.model_copy(update={"enabled": self.okx_swap_enabled}),
             "binance_usdm": self.binance.model_copy(update={"enabled": self.binance_usdm_enabled}),
+            "bitget_usdt_futures": self.bitget.model_copy(update={"enabled": self.bitget_usdt_futures_enabled}),
         }
         return exchanges.get(name.lower())
 

@@ -33,6 +33,51 @@ class PaperTradingAccount:
         self.positions.clear()
         self.orders.clear()
 
+    def load_state(
+        self,
+        account: Optional[Dict[str, Any]],
+        positions: List[Dict[str, Any]],
+        orders: List[Dict[str, Any]],
+    ) -> None:
+        """Restore account state from persistence."""
+
+        if account:
+            self.initial_cash = float(account.get("initial_cash", self.initial_cash))
+            self.cash = float(account.get("cash", self.initial_cash))
+            self.fee_rate = float(account.get("fee_rate", self.fee_rate))
+            self.enabled = bool(account.get("enabled", self.enabled))
+
+        self.positions = {
+            self._position_key(str(position["exchange"]), str(position["symbol"])): {
+                "exchange": position["exchange"],
+                "symbol": position["symbol"],
+                "quantity": float(position["quantity"]),
+                "avg_entry_price": float(position["avg_entry_price"]),
+                "current_price": float(position["current_price"]),
+                "realized_pnl": float(position["realized_pnl"]),
+                "unrealized_pnl": float(position["unrealized_pnl"]),
+                "updated_at": position["updated_at"],
+            }
+            for position in positions
+        }
+        self.orders = [
+            {
+                "order_id": order["order_id"],
+                "exchange": order["exchange"],
+                "strategy": order["strategy"],
+                "symbol": order["symbol"],
+                "side": order["side"],
+                "quantity": float(order["quantity"]),
+                "price": float(order["price"]),
+                "fee": float(order["fee"]),
+                "realized_pnl": float(order["realized_pnl"]),
+                "status": order["status"],
+                "timestamp": order["timestamp"],
+                "signal_metadata": order.get("signal_metadata", {}),
+            }
+            for order in orders
+        ][-200:]
+
     def _position_key(self, exchange: str, symbol: str) -> str:
         return f"{exchange}:{symbol}"
 

@@ -138,6 +138,7 @@ h2 {
   background: linear-gradient(180deg, rgba(21, 27, 26, 0.94), rgba(11, 14, 14, 0.96));
   border: 1px solid var(--line);
   box-shadow: var(--shadow);
+  min-width: 0;
   min-height: 320px;
   padding: 18px;
 }
@@ -199,6 +200,7 @@ h2 {
 .market-picker button {
   display: grid;
   gap: 5px;
+  min-width: 0;
   min-height: 58px;
   border: 1px solid var(--line);
   background: #0b0f0f;
@@ -480,6 +482,7 @@ h2 {
 }
 
 .metric {
+  min-width: 0;
   min-height: 82px;
   padding: 13px;
   border: 1px solid var(--line);
@@ -714,5 +717,55 @@ code.enabled {
   .runtime-grid,
   .strategy-summary {
     grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 620px) {
+  .app-shell {
+    padding: 14px;
+  }
+
+  h1 {
+    font-size: 28px;
+  }
+
+  .status-cluster {
+    flex-wrap: wrap;
+  }
+
+  .panel {
+    padding: 14px;
+  }
+
+  .market-picker {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    max-height: 166px;
+  }
+
+  .runner-controls {
+    grid-template-columns: 1fr;
+  }
+
+  .strategy-row {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .strategy-actions {
+    width: 100%;
+    justify-content: flex-end;
+  }
+}
+
+@media (min-width: 1181px) {
+  .workspace {
+    height: calc(100vh - 118px);
+    align-items: stretch;
+  }
+
+  .panel {
+    min-height: 0;
+    max-height: calc(100vh - 118px);
+    overflow: auto;
   }
 }

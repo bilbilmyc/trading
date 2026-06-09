@@ -1,4 +1,4 @@
-export type ExchangeName = "okx_swap" | "binance_usdm";
+export type ExchangeName = "binance_usdm" | "bitget_usdt_futures" | "okx_swap";
 export type Intent = "open_long" | "close_long" | "open_short" | "close_short";
 export type Liquidity = "maker" | "taker";
 export type MarginMode = "cross" | "isolated";
@@ -16,6 +16,7 @@ export interface AppConfig {
   default_symbol: string;
   live_trading_enabled: boolean;
   frontend_static_dir: string;
+  persistence: { driver: string; path: string };
   exchanges: Record<string, { enabled: boolean; use_testnet: boolean; has_api_key: boolean }>;
   risk: Record<string, number>;
 }
@@ -234,6 +235,18 @@ function resolveApiBase() {
 
 const API_BASE = resolveApiBase();
 
+function formatApiError(message: unknown, fallback: string) {
+  if (!message) return fallback;
+  if (typeof message === "string") return message;
+  if (Array.isArray(message)) return JSON.stringify(message);
+  if (typeof message === "object") {
+    const maybeMessage = (message as { message?: unknown }).message;
+    if (typeof maybeMessage === "string") return maybeMessage;
+    return JSON.stringify(message);
+  }
+  return String(message);
+}
+
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await fetch(`${API_BASE}${path}`, {
     headers: {
@@ -246,8 +259,7 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const text = await response.text();
   const payload = text ? JSON.parse(text) : null;
   if (!response.ok) {
-    const message = payload?.detail ?? response.statusText;
-    throw new Error(Array.isArray(message) ? JSON.stringify(message) : message);
+    throw new Error(formatApiError(payload?.detail, response.statusText));
   }
   return payload as T;
 }

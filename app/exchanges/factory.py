@@ -8,6 +8,16 @@ from typing import Dict, Optional, Type
 from app.exchanges.base import ExchangeBase
 
 
+EXCHANGE_PRIORITY = [
+    "binance_usdm",
+    "bitget_usdt_futures",
+    "okx_swap",
+    "binance",
+    "bitget",
+    "okx",
+]
+
+
 class ExchangeFactory:
     """交易所工厂类
     
@@ -157,7 +167,14 @@ class ExchangeFactory:
     @classmethod
     def list_supported_exchanges(cls) -> list:
         """列出所有支持的交易所"""
-        return list(cls._exchange_classes.keys())
+        registered = list(cls._exchange_classes.keys())
+        return sorted(
+            registered,
+            key=lambda name: (
+                EXCHANGE_PRIORITY.index(name) if name in EXCHANGE_PRIORITY else len(EXCHANGE_PRIORITY),
+                name,
+            ),
+        )
 
 
 # 自动注册交易所实现
@@ -184,6 +201,12 @@ def _auto_register_exchanges():
     try:
         from app.exchanges.binance_usdm import BinanceUSDMFuturesExchange
         ExchangeFactory.register_exchange('binance_usdm', BinanceUSDMFuturesExchange)
+    except ImportError:
+        pass
+
+    try:
+        from app.exchanges.bitget_usdt_futures import BitgetUSDTFuturesExchange
+        ExchangeFactory.register_exchange('bitget_usdt_futures', BitgetUSDTFuturesExchange)
     except ImportError:
         pass
 

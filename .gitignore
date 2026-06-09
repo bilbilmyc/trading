@@ -179,3 +179,7 @@ dmypy.json
 # Temporary files
 *.tmp
 *.temp
+
+# Local persistence
+data/*.sqlite3
+data/*.sqlite3-*

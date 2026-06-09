@@ -38,8 +38,9 @@ import {
 } from "./api";
 
 const EXCHANGE_OPTIONS: Array<{ value: ExchangeName; label: string }> = [
-  { value: "okx_swap", label: "OKX 永续合约" },
   { value: "binance_usdm", label: "Binance U 本位合约" },
+  { value: "bitget_usdt_futures", label: "Bitget U 本位合约" },
+  { value: "okx_swap", label: "OKX 永续合约" },
 ];
 
 const INTENTS: Array<{ value: Intent; label: string; tone: "buy" | "sell" }> = [
@@ -125,7 +126,7 @@ export default function App() {
 
   const numericQuantity = Number(quantity);
   const numericPrice = Number(price);
-  const liveEnabled = engine?.risk.trading_enabled ?? false;
+  const liveEnabled = config?.live_trading_enabled ?? false;
   const orderBlocked = !liveEnabled || !apiOnline;
   const notional = numericQuantity * numericPrice;
 
@@ -931,6 +932,8 @@ export default function App() {
           <div className="runtime-grid">
             <Metric label="默认交易所" value={config?.default_exchange ?? "--"} />
             <Metric label="默认合约" value={config?.default_symbol ?? "--"} />
+            <Metric label="存储" value={config?.persistence.driver ?? "--"} />
+            <Metric label="数据库" value={config?.persistence.path ?? "--"} />
           </div>
         </aside>
       </section>
