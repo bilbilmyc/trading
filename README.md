@@ -48,6 +48,28 @@
 
 ## 快速开始
 
+### 方式一：Docker（推荐，无需安装 Python）
+
+```bash
+# 1. 配置
+cp .env.example .env
+# 编辑 .env：填入你的配置（API Key 可选，查行情不需要）
+
+# 2. 拉取并启动（--env-file .env 加载你的配置）
+docker run --rm \
+  --name web3-trading \
+  -p 8000:8000 \
+  --env-file .env \
+  ghcr.io/bilbilmyc/trading:latest
+
+# 3. 验证
+curl http://127.0.0.1:8000/health
+```
+
+> **修改 .env 后**：先 `docker stop web3-trading`，再重新执行上面的 `docker run` 命令即可生效。
+
+### 方式二：本地 Python 运行
+
 ```bash
 # 1. 安装 uv（Python 项目管理）
 curl -LsSf https://astral.sh/uv/install.sh | sh
@@ -60,16 +82,16 @@ uv sync
 
 # 3. 配置
 cp .env.example .env
-# 编辑 .env：填入交易所 testnet API Key（可选，查行情不需要）
-# 默认使用 SQLite 持久化到 data/trading.sqlite3，可通过 SQLITE_PATH 修改
+# 编辑 .env：填入你的配置
 
 # 4. 启动 API
 uv run python main.py api
 
 # 5. 验证
 curl http://127.0.0.1:8000/health
-curl http://127.0.0.1:8000/api/v1/exchanges
 ```
+
+> **修改 .env 后**：`Ctrl+C` 停掉进程，重新 `uv run python main.py api` 即可。
 
 ---
 
@@ -352,9 +374,9 @@ npm run dev
 
 ## Docker
 
-### 直接运行（无需构建镜像）
+所有配置通过 `--env-file .env` 注入容器。**修改 `.env` 后只需 `docker stop` + 重新 `docker run`，不需要重新构建镜像。**
 
-大多数场景不需要构建 Docker 镜像，直接用 `docker run` 拉取预构建镜像即可：
+### 从 GHCR 拉取并运行（推荐）
 
 ```bash
 # 从 GitHub Container Registry 拉取并运行
@@ -370,13 +392,13 @@ open http://127.0.0.1:8000
 
 ### 本地构建镜像
 
-当需要修改镜像内容或定制依赖时，才需要本地构建：
+当修改了代码或依赖时才需要本地构建：
 
 ```bash
 # 构建
 docker build -t web3-trading:local .
 
-# 运行
+# 运行（同样通过 --env-file .env 加载配置）
 docker run --rm \
   --name web3-trading \
   -p 8000:8000 \
@@ -384,7 +406,42 @@ docker run --rm \
   web3-trading:local
 ```
 
-GitHub Actions 自动构建推送到 GHCR：
+### 修改配置后重启
+
+```bash
+# 1. 编辑 .env
+vim .env
+
+# 2. 停掉旧容器
+docker stop web3-trading
+
+# 3. 重新启动（--env-file .env 会重新读取 .env 文件）
+docker run --rm \
+  --name web3-trading \
+  -p 8000:8000 \
+  --env-file .env \
+  ghcr.io/bilbilmyc/trading:latest
+```
+
+> 不需要重新 `docker build`，因为配置文件 `.env` 是在容器启动时读入的，不是打在镜像里的。
+
+### 临时覆盖单个变量
+
+```bash
+# 指定 .env 文件，同时用 -e 覆盖其中某个变量
+# -e 的优先级高于 --env-file
+docker run --rm \
+  --name web3-trading \
+  -p 8000:8000 \
+  --env-file .env \
+  -e ENABLE_LIVE_TRADING=true \
+  -e LLM_API_KEY=sk-your-override-key \
+  ghcr.io/bilbilmyc/trading:latest
+```
+
+### GitHub Actions 自动构建
+
+推送到 `main` 后自动构建镜像到 GHCR：
 
 ```bash
 docker pull ghcr.io/bilbilmyc/trading:latest
