@@ -125,6 +125,7 @@ main.py api
 - `Depends(get_state)`：FastAPI 的依赖注入。请求进来时自动把 `AppState` 传给路由函数。
 - `call_exchange(...)`：统一包住交易所网络调用，把交易所错误转成稳定的 HTTP 响应。
 - `reject_live_disabled(...)`：实盘关闭时拦截下单/撤单/改杠杆，同时写入审计事件。
+- `POST /api/v1/contracts/order/preview`：真实下单前的预览入口，生成 `client_order_id`，估算名义价值、保证金、手续费和强平风险提示。
 
 ---
 
@@ -380,6 +381,7 @@ GET  /api/v1/balances/{exchange}/available
 GET  /api/v1/order/{exchange}/{symbol}/{order_id}
 GET  /api/v1/orders/{exchange}/open?symbol=BTCUSDT
 POST /api/v1/order                          # 需 ENABLE_LIVE_TRADING
+POST /api/v1/contracts/order/preview        # 下单前预览，不会真实提交
 POST /api/v1/contracts/order                # 合约专用，需 ENABLE_LIVE_TRADING
 DELETE /api/v1/order/{exchange}/{symbol}/{order_id}
 DELETE /api/v1/orders/{exchange}/open

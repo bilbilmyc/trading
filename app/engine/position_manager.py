@@ -23,8 +23,8 @@ class PositionManager:
     """
     
     def __init__(self):
-        self._positions: Dict[str, Position] = {}  # key: exchange:symbol
-        self._balances: Dict[str, Dict[str, Balance]] = {}  # key: exchange -> currency -> Balance
+        self._positions: Dict[str, Position] = {}  # 键格式：exchange:symbol
+        self._balances: Dict[str, Dict[str, Balance]] = {}  # 结构：exchange -> currency -> Balance
         self._lock = asyncio.Lock()
     
     def _make_key(self, exchange: str, symbol: str) -> str:

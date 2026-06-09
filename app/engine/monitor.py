@@ -39,7 +39,7 @@ class AlertCategory(str, Enum):
 
 @dataclass
 class Alert:
-    """A single structured alert event."""
+    """一条结构化告警事件。"""
 
     level: AlertLevel
     category: AlertCategory
@@ -84,13 +84,13 @@ class Monitor:
         self._task: Optional[asyncio.Task] = None
         self._running = False
 
-        # Checker functions registered by the engine
+        # 交易引擎注册进来的健康检查函数。
         self._checkers: List[Callable] = []
 
     # ── 生命周期 ──────────────────────────────────────────────
 
     def start(self) -> None:
-        """Start the background monitoring loop."""
+        """启动后台监控循环。"""
 
         if self._running:
             return
@@ -99,7 +99,7 @@ class Monitor:
         logger.info(f"Monitor started (interval={self.check_interval_seconds}s)")
 
     async def stop(self) -> None:
-        """Stop the background monitoring loop."""
+        """停止后台监控循环。"""
 
         self._running = False
         if self._task is not None:
@@ -117,18 +117,18 @@ class Monitor:
     # ── 注册 ──────────────────────────────────────────────────
 
     def add_checker(self, checker: Callable) -> None:
-        """Register an async checker function.
+        """注册异步健康检查函数。
 
-        Signature: ``async def checker() -> Optional[Alert]``
-        Return None if everything is OK.
+        签名：``async def checker() -> Optional[Alert]``。
+        一切正常时返回 None。
         """
 
         self._checkers.append(checker)
 
     def on_alert(self, callback: Callable) -> None:
-        """Register alert callback.
+        """注册告警回调。
 
-        Callback signature: ``async def callback(alert: Alert)``
+        回调签名：``async def callback(alert: Alert)``
         """
 
         self._callbacks.append(callback)
@@ -136,7 +136,7 @@ class Monitor:
     # ── 告警历史 ──────────────────────────────────────────────
 
     def recent_alerts(self, level: Optional[AlertLevel] = None, limit: int = 50) -> List[Dict[str, Any]]:
-        """Return recent alerts, optionally filtered by level."""
+        """返回最近告警，可按级别过滤。"""
 
         filtered = self._alerts
         if level:
@@ -144,7 +144,7 @@ class Monitor:
         return [a.to_dict() for a in filtered[-limit:]]
 
     def last_error(self) -> Optional[Dict[str, Any]]:
-        """Return the most recent ERROR/CRITICAL alert, or None."""
+        """返回最近一条 ERROR/CRITICAL 告警，没有则返回 None。"""
 
         for alert in reversed(self._alerts):
             if alert.level in (AlertLevel.ERROR, AlertLevel.CRITICAL):
@@ -152,7 +152,7 @@ class Monitor:
         return None
 
     def summary(self) -> Dict[str, Any]:
-        """Return a metrics snapshot of the monitor state."""
+        """返回监控器状态快照。"""
 
         by_level: Dict[str, int] = {}
         for alert in self._alerts:
@@ -170,14 +170,14 @@ class Monitor:
     # ── 推送告警 ──────────────────────────────────────────────
 
     def push(self, alert: Alert) -> None:
-        """Push an external alert into the monitor history."""
+        """把外部告警写入监控历史。"""
 
         self._push_alert(alert.level, alert.category, alert.title, alert.message, alert.exchange, alert.symbol, alert.details)
 
     # ── 内部 ──────────────────────────────────────────────────
 
     async def _check_loop(self) -> None:
-        """Background monitoring loop."""
+        """后台监控循环。"""
 
         while self._running:
             await asyncio.sleep(self.check_interval_seconds)
@@ -205,7 +205,7 @@ class Monitor:
         symbol: Optional[str] = None,
         details: Optional[Dict[str, Any]] = None,
     ) -> None:
-        """Create and store an alert, then fire callbacks."""
+        """创建并保存告警，然后触发回调。"""
 
         alert = Alert(
             level=level,
@@ -219,13 +219,13 @@ class Monitor:
         self._push_alert_obj(alert)
 
     def _push_alert_obj(self, alert: Alert) -> None:
-        """Store one alert and notify callbacks."""
+        """保存一条告警并通知回调。"""
 
         self._alerts.append(alert)
         if len(self._alerts) > self.max_alerts:
             self._alerts.pop(0)
 
-        # Log at appropriate level
+        # 按告警级别选择对应日志方法。
             log_levels = {
             AlertLevel.INFO: logger.info,
             AlertLevel.WARNING: logger.warning,
@@ -235,7 +235,7 @@ class Monitor:
         log_fn = log_levels.get(alert.level, logger.info)
         log_fn(f"[Monitor][{alert.category.value}] {alert.title}: {alert.message}")
 
-        # Fire callbacks
+        # 触发告警回调。
         for cb in self._callbacks:
             try:
                 if asyncio.iscoroutinefunction(cb):
@@ -249,9 +249,9 @@ class Monitor:
 # ── 工厂函数 ──────────────────────────────────────────────────
 
 def build_engine_checkers(exchanges: Dict[str, Any], engine) -> List[Callable]:
-    """Build standard checkers for a TradingEngine.
+    """为 TradingEngine 构建标准健康检查器。
 
-    Returns a list of async callables each returning Optional[Alert].
+    返回一组异步函数，每个函数返回 Optional[Alert]。
     """
 
     async def _check_exchange_health() -> Optional[Alert]:

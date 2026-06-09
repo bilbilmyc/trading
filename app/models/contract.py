@@ -1,8 +1,8 @@
 """
-Contract trading models.
+合约交易模型。
 
-These models describe perpetual/futures orders in a unified shape before each
-exchange adapter translates them to native OKX/Binance fields.
+API 和策略先生成统一的合约请求模型，然后各交易所适配器再把它翻译成
+Binance / Bitget / OKX 自己的字段。
 """
 
 from datetime import datetime
@@ -13,21 +13,21 @@ from pydantic import BaseModel, Field
 
 
 class MarketType(str, Enum):
-    """Supported market categories."""
+    """支持的市场类型。"""
 
     SPOT = "spot"
     SWAP = "swap"
 
 
 class MarginMode(str, Enum):
-    """Contract margin mode."""
+    """合约保证金模式。"""
 
     CROSS = "cross"
     ISOLATED = "isolated"
 
 
 class PositionSide(str, Enum):
-    """Position side used by contract exchanges."""
+    """合约持仓方向。"""
 
     NET = "net"
     LONG = "long"
@@ -35,14 +35,14 @@ class PositionSide(str, Enum):
 
 
 class LiquidityType(str, Enum):
-    """Whether an order is expected to add or remove liquidity."""
+    """订单预期是挂单还是吃单，用于估算手续费。"""
 
     MAKER = "maker"
     TAKER = "taker"
 
 
 class ContractOrderIntent(str, Enum):
-    """High-level action requested by the strategy or API."""
+    """策略或前端表达的高级交易意图。"""
 
     OPEN_LONG = "open_long"
     CLOSE_LONG = "close_long"
@@ -51,21 +51,21 @@ class ContractOrderIntent(str, Enum):
 
 
 class FeeRate(BaseModel):
-    """Maker/taker fee rates for a symbol."""
+    """单个合约的 maker/taker 手续费率。"""
 
     exchange: str = Field(..., min_length=1)
     symbol: str = Field(..., min_length=1)
-    maker: float = Field(..., description="Maker fee rate, e.g. 0.0002")
-    taker: float = Field(..., description="Taker fee rate, e.g. 0.0005")
+    maker: float = Field(..., description="Maker 手续费率，例如 0.0002")
+    taker: float = Field(..., description="Taker 手续费率，例如 0.0005")
     raw: Dict[str, Any] = Field(default_factory=dict)
     timestamp: datetime = Field(default_factory=datetime.utcnow)
 
 
 class ContractOrderRequest(BaseModel):
-    """Unified request for opening or closing a contract position."""
+    """统一合约下单请求，用于开仓或平仓。"""
 
     exchange: str = Field(..., min_length=1)
-    symbol: str = Field(..., min_length=1, description="BTC-USDT-SWAP or BTCUSDT")
+    symbol: str = Field(..., min_length=1, description="例如 BTC-USDT-SWAP 或 BTCUSDT")
     intent: ContractOrderIntent
     quantity: float = Field(..., gt=0)
     order_type: str = Field("limit", pattern="^(market|limit|post_only|ioc|fok|MARKET|LIMIT|POST_ONLY|IOC|FOK)$")
@@ -79,7 +79,7 @@ class ContractOrderRequest(BaseModel):
 
 
 class CostEstimate(BaseModel):
-    """Local estimate of execution cost before sending an order."""
+    """下单前的本地成本估算。"""
 
     exchange: str
     symbol: str

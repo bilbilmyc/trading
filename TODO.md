@@ -35,8 +35,8 @@ High-end quant stacks usually separate these responsibilities:
 
 - [ ] Add a global kill switch API and UI control.
 - [x] Persist all submitted live orders, rejected orders, and cancel requests.
-- [ ] Add idempotent `client_order_id` generation for every live order.
-- [ ] Add explicit order preview before any live order: notional, leverage,
+- [x] Add idempotent `client_order_id` generation for every live order.
+- [x] Add explicit order preview before any live order: notional, leverage,
   margin mode, reduce-only, estimated fee, liquidation-risk note.
 - [ ] Split public market errors from private account/order errors in the API
   response shape, not only in the frontend.
@@ -154,6 +154,6 @@ High-end quant stacks usually separate these responsibilities:
 
 ## Next Best Task
 
-Add idempotent `client_order_id` generation plus an explicit order preview
-endpoint/UI before any live order. That is the next safety layer before
-expanding strategies or exchange execution behavior.
+Add a global kill switch API and UI control. It should block strategy live
+execution and manual order endpoints, persist kill-switch events, and be visible
+in the frontend risk panel.

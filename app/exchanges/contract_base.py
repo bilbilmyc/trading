@@ -1,5 +1,8 @@
 """
-Unified contract exchange interface.
+统一合约交易所接口。
+
+Binance USD-M、Bitget USDT Futures、OKX Swap 都继承这个抽象类。
+API 层只依赖这里定义的方法，不直接关心每家交易所的 REST 参数差异。
 """
 
 from abc import abstractmethod
@@ -19,17 +22,17 @@ from app.models.market import ContractMarket
 
 
 class ContractExchangeBase(ExchangeBase):
-    """Base class for perpetual/futures exchange adapters."""
+    """永续/期货交易所适配器基类。"""
 
     @abstractmethod
     async def get_contract_markets(self, quote_asset: str = "USDT") -> List[ContractMarket]:
-        """List tradable perpetual/futures contracts from public exchange metadata."""
+        """从公开接口列出可交易合约。"""
 
         pass
 
     @abstractmethod
     async def get_fee_rate(self, symbol: str) -> FeeRate:
-        """Get maker/taker fee rates for one contract symbol."""
+        """获取单个合约的 maker/taker 手续费率。"""
 
         pass
 
@@ -41,23 +44,23 @@ class ContractExchangeBase(ExchangeBase):
         margin_mode: MarginMode = MarginMode.CROSS,
         position_side: PositionSide = PositionSide.NET,
     ) -> Dict[str, Any]:
-        """Set contract leverage before trading."""
+        """交易前设置合约杠杆。"""
 
         pass
 
     @abstractmethod
     async def place_contract_order(self, request: ContractOrderRequest) -> Dict[str, Any]:
-        """Place a contract order using the unified contract request model."""
+        """使用统一请求模型提交合约订单。"""
 
         pass
 
     @abstractmethod
     async def get_positions(self, symbol: Optional[str] = None) -> List[Dict[str, Any]]:
-        """Get current positions for a symbol (or all symbols if None).
+        """获取当前合约持仓。
 
-        Returns a list of raw position dicts that PositionSync can parse.
-        Each dict should include keys: ``symbol``, ``quantity`` (signed: +long, -short),
-        ``avg_price`` or ``entryPrice``, ``current_price`` or ``markPrice``.
+        返回值保留交易所原始字段，但至少要让 PositionSync 能解析：
+        ``symbol``、``quantity``、``avg_price``/``entryPrice``、
+        ``current_price``/``markPrice``。
         """
 
         pass
@@ -69,14 +72,14 @@ class ContractExchangeBase(ExchangeBase):
         price: float,
         liquidity: LiquidityType = LiquidityType.MAKER,
     ) -> CostEstimate:
-        """Estimate fee cost from notional and current account fee rates."""
+        """根据名义价值和当前费率估算手续费。"""
 
         fee_rate = await self.get_fee_rate(symbol)
         notional = quantity * price
         rate = fee_rate.maker if liquidity == LiquidityType.MAKER else fee_rate.taker
         notes = [
-            "This is a local fee estimate only.",
-            "It excludes slippage, spread, funding rate, borrow costs, and liquidation risk.",
+            "这是本地手续费估算，不代表最终成交成本。",
+            "估算未包含滑点、点差、资金费率、借贷成本和强平风险。",
         ]
         return CostEstimate(
             exchange=self.name,
@@ -90,7 +93,7 @@ class ContractExchangeBase(ExchangeBase):
         )
 
     def resolve_order_intent(self, intent: ContractOrderIntent) -> tuple[str, PositionSide, bool]:
-        """Map a high-level intent into side, position side, and reduce-only."""
+        """把开多/平多/开空/平空翻译成 side、持仓方向和 reduce-only。"""
 
         mapping = {
             ContractOrderIntent.OPEN_LONG: ("buy", PositionSide.LONG, False),

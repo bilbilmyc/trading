@@ -86,7 +86,7 @@ class TradingEngine:
         self._on_order_callbacks: List[Callable] = []
         
         # 信号过滤器（B 方案：LLM 二次确认）
-        # async (exchange_name, strategy_name, signal) -> bool
+        # 过滤器签名：async (exchange_name, strategy_name, signal) -> bool
         self._signal_filters: List[Callable] = []
         self._signal_filter_rejects: List[Dict[str, Any]] = []
         
@@ -125,7 +125,7 @@ class TradingEngine:
         logger.info(f"添加策略：{name}")
 
     def remove_strategy(self, name: str) -> bool:
-        """Remove one strategy instance."""
+        """移除一个策略实例。"""
 
         existed = name in self._strategies
         self._strategies.pop(name, None)
@@ -135,7 +135,7 @@ class TradingEngine:
         return existed
 
     def set_strategy_enabled(self, name: str, enabled: bool) -> Dict[str, Any]:
-        """Enable or disable one strategy instance."""
+        """启用或停用一个策略实例。"""
 
         if name not in self._strategies:
             raise KeyError(name)
@@ -146,7 +146,7 @@ class TradingEngine:
         return config
 
     def set_strategy_mode(self, name: str, mode: str) -> Dict[str, Any]:
-        """Set one strategy execution mode."""
+        """设置单个策略的执行模式。"""
 
         if name not in self._strategies:
             raise KeyError(name)
@@ -159,7 +159,7 @@ class TradingEngine:
         return config
 
     def get_signal_runner_status(self) -> Dict[str, Any]:
-        """Return background signal runner status."""
+        """返回后台信号运行器状态。"""
 
         return {
             **self._signal_runner_status,
@@ -167,12 +167,12 @@ class TradingEngine:
         }
 
     def get_paper_summary(self) -> Dict[str, Any]:
-        """Return paper trading account summary."""
+        """返回模拟盘账户汇总。"""
 
         return self.paper_account.summary()
 
     def reset_paper_account(self, initial_cash: Optional[float] = None) -> Dict[str, Any]:
-        """Reset and persist the paper trading account."""
+        """重置模拟盘账户并持久化。"""
 
         self.paper_account.reset(initial_cash=initial_cash)
         summary = self.paper_account.summary()
@@ -182,7 +182,7 @@ class TradingEngine:
         return summary
 
     async def start_signal_runner(self, poll_seconds: int = 60, candle_limit: int = 80) -> Dict[str, Any]:
-        """Start a background loop that generates strategy signals only."""
+        """启动只生成信号、不真实下单的后台循环。"""
 
         if self._signal_runner_task is not None and not self._signal_runner_task.done():
             return self.get_signal_runner_status()
@@ -200,7 +200,7 @@ class TradingEngine:
         return self.get_signal_runner_status()
 
     async def stop_signal_runner(self) -> Dict[str, Any]:
-        """Stop the background signal runner."""
+        """停止后台信号运行器。"""
 
         if self._signal_runner_task is not None:
             self._signal_runner_task.cancel()
@@ -210,7 +210,7 @@ class TradingEngine:
         return self.get_signal_runner_status()
 
     def list_strategies(self) -> List[Dict[str, Any]]:
-        """Return lightweight strategy metadata for dashboards."""
+        """返回前端仪表盘需要的轻量策略信息。"""
 
         strategies = []
         for name, strategy in self._strategies.items():
@@ -236,7 +236,7 @@ class TradingEngine:
         return strategies
 
     def _strategy_snapshot(self, name: str) -> Optional[Dict[str, Any]]:
-        """Return one strategy metadata record in the API/storage shape."""
+        """把一个策略转换成 API/SQLite 共用的元数据结构。"""
 
         strategy = self._strategies.get(name)
         if strategy is None:
@@ -260,7 +260,7 @@ class TradingEngine:
         }
 
     def _persist_strategy(self, name: str) -> None:
-        """Persist one strategy when a SQLite store is configured."""
+        """如果配置了 SQLite，就持久化一个策略。"""
 
         if not self.store:
             return
@@ -269,11 +269,10 @@ class TradingEngine:
             self.store.upsert_strategy(snapshot)
 
     def restore_persisted_strategies(self) -> int:
-        """Restore supported persisted strategy definitions.
+        """从 SQLite 恢复支持的策略定义。
 
-        At this stage only SMA strategies are restored because they have a small
-        deterministic constructor. Unsupported strategy classes remain ignored
-        instead of being guessed into existence.
+        当前阶段只恢复 SMA 策略，因为它的构造参数少且确定。
+        其他策略类先忽略，避免凭空猜测构造参数导致恢复出错误策略。
         """
 
         if not self.store:
@@ -310,12 +309,12 @@ class TradingEngine:
         return restored
 
     def get_recent_signals(self, limit: int = 50) -> List[Dict[str, Any]]:
-        """Return the newest generated strategy signals."""
+        """返回最近生成的策略信号。"""
 
         return self._recent_signals[-limit:]
 
     def _record_signal(self, exchange_name: str, strategy_name: str, signal: Signal) -> None:
-        """Store recent signals in memory for UI/audit visibility."""
+        """把最新信号写入内存和 SQLite，供 UI/审计查看。"""
 
         row = self._serialize_signal(exchange_name, strategy_name, signal)
         self._recent_signals.append(row)
@@ -336,7 +335,7 @@ class TradingEngine:
         order_id: Optional[str] = None,
         details: Optional[Dict[str, Any]] = None,
     ) -> None:
-        """Persist one audit event without interrupting the trading path."""
+        """持久化审计事件；失败只记日志，不中断交易路径。"""
 
         if not self.store:
             return
@@ -544,7 +543,7 @@ class TradingEngine:
         symbol: str,
         record: bool = True,
     ) -> List[Dict[str, Any]]:
-        """Generate strategy signals without sending orders to an exchange."""
+        """只生成策略信号，不向交易所下单。"""
 
         generated: List[Dict[str, Any]] = []
         signal_tasks = [
@@ -580,7 +579,7 @@ class TradingEngine:
         return generated
 
     async def run_signal_cycle(self, candle_limit: int = 80) -> Dict[str, Any]:
-        """Run one signal-only cycle for all enabled configured strategies."""
+        """为所有已启用策略手动运行一轮信号评估。"""
 
         cycle_started = datetime.utcnow()
         processed = 0
@@ -643,7 +642,7 @@ class TradingEngine:
         }
 
     async def _signal_runner_loop(self, poll_seconds: int, candle_limit: int) -> None:
-        """Background signal-only strategy loop."""
+        """后台信号运行循环。"""
 
         try:
             while True:
@@ -660,7 +659,7 @@ class TradingEngine:
     # ── 阶段 5：实盘同步循环 ──────────────────────────────────
 
     async def _order_sync_loop(self) -> None:
-        """Background loop pulling open orders from all exchanges."""
+        """后台订单同步循环，从所有交易所拉取挂单状态。"""
 
         while self._running:
             for name, exchange in list(self._exchanges.items()):
@@ -691,7 +690,7 @@ class TradingEngine:
             await asyncio.sleep(self.order_sync.interval_seconds)
 
     async def _position_sync_loop(self) -> None:
-        """Background loop pulling positions from all exchanges."""
+        """后台持仓同步循环，从所有交易所拉取持仓状态。"""
 
         while self._running:
             for name, exchange in list(self._exchanges.items()):
@@ -720,7 +719,7 @@ class TradingEngine:
         symbol: str,
         data: Dict[str, Any],
     ) -> None:
-        """Feed one market data point to one strategy instance."""
+        """把一条行情数据喂给匹配的策略实例。"""
 
         price = float(data.get("last_price", data.get("close", 0)))
         if price > 0:
@@ -728,7 +727,7 @@ class TradingEngine:
         await strategy.on_market_data(symbol, data)
 
     def _serialize_signal(self, exchange_name: str, strategy_name: str, signal: Signal) -> Dict[str, Any]:
-        """Serialize a Signal for API/UI responses."""
+        """把 Signal 序列化成 API/UI 使用的字典。"""
 
         return {
             "exchange": exchange_name,
@@ -753,7 +752,7 @@ class TradingEngine:
         strategy_name: str,
         signal: Signal,
     ) -> Optional[Dict[str, Any]]:
-        """Apply actionable signals to the paper account when strategy mode is paper."""
+        """策略处于 paper 模式时，把可执行信号应用到模拟盘。"""
 
         config = self._strategy_configs.get(strategy_name, {})
         if config.get("mode") != "paper" or not signal.is_actionable:
@@ -776,7 +775,7 @@ class TradingEngine:
         symbol: str,
         include_disabled: bool = False,
     ) -> bool:
-        """Check whether a strategy instance is bound to an exchange/symbol."""
+        """判断一个策略实例是否绑定到当前交易所和交易对。"""
 
         config = self._strategy_configs.get(strategy_name, {})
         if not include_disabled and not config.get("enabled", False):

@@ -1,5 +1,5 @@
 """
-Binance USD-M Futures adapter.
+Binance USD-M U 本位合约适配器。
 """
 
 from datetime import datetime
@@ -12,7 +12,7 @@ from app.models.market import ContractMarket
 
 
 class BinanceUSDMFuturesExchange(BinanceExchange, ContractExchangeBase):
-    """Binance USD-M perpetual futures implementation."""
+    """Binance USD-M U 本位永续合约适配器实现。"""
 
     def __init__(
         self,
@@ -34,12 +34,12 @@ class BinanceUSDMFuturesExchange(BinanceExchange, ContractExchangeBase):
         return "binance_usdm"
 
     def normalize_symbol(self, symbol: str) -> str:
-        """Normalize to Binance futures format, e.g. BTCUSDT."""
+        """标准化为 Binance 合约格式，例如 BTCUSDT。"""
 
         return symbol.upper().replace("-", "").replace("_", "").replace("PERP", "")
 
     async def get_contract_markets(self, quote_asset: str = "USDT") -> List[ContractMarket]:
-        """List Binance USD-M futures instruments from exchangeInfo."""
+        """从 exchangeInfo 列出 Binance USD-M 可交易合约。"""
 
         path = "/fapi/v1/exchangeInfo"
 
@@ -78,7 +78,7 @@ class BinanceUSDMFuturesExchange(BinanceExchange, ContractExchangeBase):
         return markets
 
     async def get_account_balance(self) -> Dict[str, float]:
-        """Get USD-M futures wallet balances."""
+        """获取 USD-M 合约钱包余额。"""
 
         path = "/fapi/v3/balance"
         params = self._sign_params({})
@@ -95,7 +95,7 @@ class BinanceUSDMFuturesExchange(BinanceExchange, ContractExchangeBase):
         return balances
 
     async def get_available_balances(self) -> Dict[str, float]:
-        """Get available USD-M futures balances."""
+        """获取 USD-M 合约可用余额。"""
 
         path = "/fapi/v3/balance"
         params = self._sign_params({})
@@ -112,7 +112,7 @@ class BinanceUSDMFuturesExchange(BinanceExchange, ContractExchangeBase):
         return balances
 
     async def get_fee_rate(self, symbol: str) -> FeeRate:
-        """Get Binance USD-M futures maker/taker fee rates."""
+        """获取 Binance USD-M 合约 maker/taker 手续费率。"""
 
         path = "/fapi/v1/commissionRate"
         params = self._sign_params({"symbol": self.normalize_symbol(symbol)})
@@ -137,7 +137,7 @@ class BinanceUSDMFuturesExchange(BinanceExchange, ContractExchangeBase):
         margin_mode: MarginMode = MarginMode.CROSS,
         position_side: PositionSide = PositionSide.NET,
     ) -> Dict[str, Any]:
-        """Set leverage for a Binance USD-M futures symbol."""
+        """设置 Binance USD-M 合约杠杆。"""
 
         path = "/fapi/v1/leverage"
         params = self._sign_params(
@@ -153,7 +153,7 @@ class BinanceUSDMFuturesExchange(BinanceExchange, ContractExchangeBase):
         return {"success": True, "raw": response.json()}
 
     async def cancel_order(self, symbol: str, order_id: str) -> Dict[str, Any]:
-        """Cancel one Binance USD-M futures order."""
+        """撤销一笔 Binance USD-M 合约订单。"""
 
         path = "/fapi/v1/order"
         params = self._sign_params(
@@ -169,7 +169,7 @@ class BinanceUSDMFuturesExchange(BinanceExchange, ContractExchangeBase):
         return {"success": True, "order_id": order_id, "raw": response.json()}
 
     async def cancel_all_orders(self, symbol: Optional[str] = None) -> int:
-        """Cancel open futures orders. Binance requires a symbol."""
+        """批量撤销 Binance USD-M 挂单；Binance 要求必须传 symbol。"""
 
         if symbol is None:
             raise ValueError("symbol is required when cancelling Binance futures orders")
@@ -183,7 +183,7 @@ class BinanceUSDMFuturesExchange(BinanceExchange, ContractExchangeBase):
         return 1
 
     async def get_order(self, symbol: str, order_id: str) -> Dict[str, Any]:
-        """Query one Binance USD-M futures order."""
+        """查询一笔 Binance USD-M 合约订单。"""
 
         path = "/fapi/v1/order"
         params = self._sign_params(
@@ -207,7 +207,7 @@ class BinanceUSDMFuturesExchange(BinanceExchange, ContractExchangeBase):
         }
 
     async def get_positions(self, symbol: Optional[str] = None) -> List[Dict[str, Any]]:
-        """Get Binance USD-M futures positions."""
+        """获取 Binance USD-M 合约持仓。"""
 
         path = "/fapi/v2/positionRisk"
         params: Dict[str, Any] = {}
@@ -240,7 +240,7 @@ class BinanceUSDMFuturesExchange(BinanceExchange, ContractExchangeBase):
         return positions
 
     async def get_open_orders(self, symbol: Optional[str] = None) -> List[Dict[str, Any]]:
-        """Get open Binance USD-M futures orders."""
+        """获取 Binance USD-M 当前挂单。"""
 
         path = "/fapi/v1/openOrders"
         params: Dict[str, Any] = {}
@@ -254,7 +254,7 @@ class BinanceUSDMFuturesExchange(BinanceExchange, ContractExchangeBase):
         return response.json()
 
     async def get_ticker(self, symbol: str) -> Dict[str, Any]:
-        """Get Binance USD-M futures 24h ticker."""
+        """获取 Binance USD-M 24 小时行情。"""
 
         path = "/fapi/v1/ticker/24hr"
         params = {"symbol": self.normalize_symbol(symbol)}
@@ -287,7 +287,7 @@ class BinanceUSDMFuturesExchange(BinanceExchange, ContractExchangeBase):
         end_time: Optional[datetime] = None,
         limit: int = 100,
     ) -> List[Dict[str, Any]]:
-        """Get Binance USD-M futures candles."""
+        """获取 Binance USD-M K 线。"""
 
         path = "/fapi/v1/klines"
         params: Dict[str, Any] = {
@@ -324,7 +324,7 @@ class BinanceUSDMFuturesExchange(BinanceExchange, ContractExchangeBase):
         return klines
 
     async def get_recent_trades(self, symbol: str, limit: int = 100) -> List[Dict[str, Any]]:
-        """Get recent Binance USD-M futures trades."""
+        """获取 Binance USD-M 最近成交。"""
 
         path = "/fapi/v1/trades"
         params = {
@@ -352,7 +352,7 @@ class BinanceUSDMFuturesExchange(BinanceExchange, ContractExchangeBase):
         return trades
 
     async def place_contract_order(self, request: ContractOrderRequest) -> Dict[str, Any]:
-        """Place a Binance USD-M futures order from the unified request."""
+        """把统一合约请求翻译成 Binance USD-M 下单请求。"""
 
         path = "/fapi/v1/order"
         side, inferred_pos_side, inferred_reduce_only = self.resolve_order_intent(request.intent)
@@ -417,6 +417,6 @@ class BinanceUSDMFuturesExchange(BinanceExchange, ContractExchangeBase):
         price: Optional[float] = None,
         **kwargs,
     ) -> Dict[str, Any]:
-        """Compatibility wrapper for the base exchange interface."""
+        """兼容 ExchangeBase 的现货下单接口；USD-M 合约请使用 place_contract_order。"""
 
         raise NotImplementedError("Use place_contract_order for Binance USD-M futures trading")

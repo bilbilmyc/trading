@@ -21,6 +21,7 @@ import {
   AuditEvent,
   ContractMarket,
   ContractOrderPayload,
+  ContractOrderPreview,
   CostEstimate,
   EngineStatus,
   ExchangeName,
@@ -128,7 +129,9 @@ export default function App() {
   const [openOrders, setOpenOrders] = useState<OpenOrder[]>([]);
   const [feeRate, setFeeRate] = useState<FeeRate | null>(null);
   const [estimate, setEstimate] = useState<CostEstimate | null>(null);
+  const [orderPreview, setOrderPreview] = useState<ContractOrderPreview | null>(null);
   const [busy, setBusy] = useState(false);
+  const [previewBusy, setPreviewBusy] = useState(false);
   const [evaluating, setEvaluating] = useState(false);
   const [strategyBusy, setStrategyBusy] = useState("");
   const [runnerBusy, setRunnerBusy] = useState("");
@@ -292,6 +295,28 @@ export default function App() {
     refreshContracts();
   }, [refreshContracts]);
 
+  useEffect(() => {
+    setOrderPreview(null);
+  }, [exchange, symbol, intent, quantity, price, leverage, orderType, marginMode, positionSide]);
+
+  function buildContractOrderPayload(clientOrderId?: string): ContractOrderPayload {
+    const payload: ContractOrderPayload = {
+      exchange,
+      symbol,
+      intent,
+      quantity: numericQuantity,
+      order_type: orderType,
+      margin_mode: marginMode,
+      position_side: positionSide,
+      reduce_only: isCloseIntent(intent),
+    };
+    if (orderType !== "market") payload.price = numericPrice;
+    const lev = Number(leverage);
+    if (lev > 0) payload.leverage = lev;
+    if (clientOrderId) payload.client_order_id = clientOrderId;
+    return payload;
+  }
+
   function handleExchangeChange(value: ExchangeName) {
     setExchange(value);
     setSymbol("");
@@ -323,6 +348,24 @@ export default function App() {
     if (isCloseIntent(nextIntent)) setLiquidity("maker");
   }
 
+  async function previewCurrentOrder(payload = buildContractOrderPayload()) {
+    if (!apiOnline || !symbol) throw new Error("后端离线或合约为空，无法生成预览。");
+    setPreviewBusy(true);
+    setError("");
+    try {
+      const preview = await api.previewContractOrder(payload);
+      setOrderPreview(preview);
+      setMessage(`已生成下单预览：${preview.client_order_id}`);
+      await refreshStatus();
+      return preview;
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "生成下单预览失败");
+      throw err;
+    } finally {
+      setPreviewBusy(false);
+    }
+  }
+
   async function submitOrder() {
     setBusy(true);
     setError("");
@@ -330,25 +373,21 @@ export default function App() {
       if (orderBlocked) {
         throw new Error("当前未允许真实交易，后端会拒绝下单。");
       }
+      const payload = buildContractOrderPayload(orderPreview?.client_order_id);
+      const preview = await previewCurrentOrder(payload);
       if (orderType === "market") {
         const ok = window.confirm("Market 单会直接吃单成交，确认继续？");
         if (!ok) return;
       }
-      const payload: ContractOrderPayload = {
-        exchange,
-        symbol,
-        intent,
-        quantity: numericQuantity,
-        order_type: orderType,
-        margin_mode: marginMode,
-        position_side: positionSide,
-        reduce_only: isCloseIntent(intent),
-      };
-      if (orderType !== "market") payload.price = numericPrice;
-      const lev = Number(leverage);
-      if (lev > 0) payload.leverage = lev;
+      const confirmed = window.confirm(
+        `确认提交订单？\n订单号：${preview.client_order_id}\n名义价值：$${formatNumber(preview.notional, 2)}\n预估手续费：$${formatNumber(preview.estimated_fee ?? undefined, 4)}`,
+      );
+      if (!confirmed) return;
 
-      const result = await api.placeContractOrder(payload);
+      const result = await api.placeContractOrder({
+        ...payload,
+        client_order_id: preview.client_order_id,
+      });
       setMessage(`订单已提交：${String(result.order_id ?? "pending")}`);
       await refreshStatus();
     } catch (err) {
@@ -634,9 +673,35 @@ export default function App() {
             </label>
           </div>
 
+          <button
+            className="secondary-action full-width"
+            onClick={() => previewCurrentOrder().catch(() => undefined)}
+            disabled={previewBusy || !apiOnline || !symbol || numericQuantity <= 0}
+            type="button"
+          >
+            <RefreshCw size={16} />
+            {previewBusy ? "预览中" : "生成下单预览"}
+          </button>
+
+          {orderPreview && (
+            <div className="preview-card">
+              <div className="section-title">
+                <span>下单预览</span>
+                <small>{orderPreview.client_order_id}</small>
+              </div>
+              <div className="preview-grid">
+                <Metric label="名义价值" value={`$${formatNumber(orderPreview.notional, 2)}`} />
+                <Metric label="初始保证金" value={`$${formatNumber(orderPreview.initial_margin, 2)}`} />
+                <Metric label="预估手续费" value={`$${formatNumber(orderPreview.estimated_fee ?? undefined, 4)}`} />
+                <Metric label="Reduce Only" value={orderPreview.reduce_only ? "是" : "否"} />
+              </div>
+              <p>{orderPreview.liquidation_risk_note}</p>
+            </div>
+          )}
+
           <button className="primary-action" onClick={submitOrder} disabled={busy || orderBlocked}>
             <Send size={18} />
-            {busy ? "提交中" : orderBlocked ? "实盘未开启" : "提交订单"}
+            {busy ? "提交中" : orderBlocked ? "实盘未开启" : "预览后提交"}
           </button>
 
           <div className={`notice ${error ? "error" : "info"}`}>

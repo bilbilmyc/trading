@@ -140,7 +140,7 @@ class Trade(BaseModel):
 
 
 class ContractMarket(BaseModel):
-    """Tradable contract instrument returned by exchange public metadata APIs."""
+    """交易所公开元数据接口返回的可交易合约。"""
 
     exchange: str = Field(..., min_length=1)
     symbol: str = Field(..., min_length=1)

@@ -44,8 +44,7 @@ class OKXExchange(ExchangeBase):
             self._ws_url = "wss://ws.okx.com:8443/ws/v5/public"
         
         self._client: Optional[httpx.AsyncClient] = None
-        # Keep active sockets and listener tasks separately. This lets
-        # unsubscribe cancel the reconnect loop and close the current socket.
+        # socket 和监听任务分开保存，取消订阅时才能同时停止重连循环并关闭当前连接。
         self._ws_connections: Dict[str, websockets.WebSocketClientProtocol] = {}
         self._ws_tasks: Dict[str, asyncio.Task] = {}
     
@@ -63,8 +62,8 @@ class OKXExchange(ExchangeBase):
         if '-' in normalized:
             return normalized
 
-        # Many callers naturally pass BTCUSDT. OKX spot APIs expect BTC-USDT,
-        # so split by common quote assets when no separator is present.
+        # 很多调用方会自然传 BTCUSDT；OKX 现货接口要求 BTC-USDT。
+        # 如果没有分隔符，就按常见计价币拆分。
         quote_assets = ('USDT', 'USDC', 'USD', 'BTC', 'ETH')
         for quote in quote_assets:
             if normalized.endswith(quote) and len(normalized) > len(quote):
@@ -79,11 +78,10 @@ class OKXExchange(ExchangeBase):
                 'OK-ACCESS-KEY': self.api_key,
             }
             if self.use_testnet:
-                # OKX simulated trading uses the same domain as production, but
-                # requires this header on private requests.
+                # OKX 模拟盘和生产环境使用同一个域名，但私有请求必须带这个请求头。
                 headers['x-simulated-trading'] = '1'
 
-            # One AsyncClient per adapter keeps connection pooling warm.
+            # 每个适配器复用一个 AsyncClient，让连接池保持热状态。
             self._client = httpx.AsyncClient(
                 base_url=self._base_url,
                 headers=headers,
@@ -99,8 +97,8 @@ class OKXExchange(ExchangeBase):
         body: str = ''
     ) -> str:
         """生成 OKX 请求签名"""
-        # OKX signs: timestamp + uppercase method + path-with-query + body.
-        # The HMAC digest must be base64 encoded, not hex encoded.
+        # OKX 签名串：timestamp + 大写 method + 带 query 的 path + body。
+        # HMAC 结果必须做 base64 编码，不能用十六进制。
         message = timestamp + method + request_path + body
         digest = hmac.new(
             self.secret_key.encode('utf-8'),
@@ -120,8 +118,7 @@ class OKXExchange(ExchangeBase):
         timestamp = datetime.utcnow().strftime('%Y-%m-%dT%H:%M:%S.000Z')
         request_path = path
         if query:
-            # GET signatures must include the query string exactly as it will be
-            # sent on the request path.
+            # GET 签名必须包含最终请求路径上的完整 query string。
             request_path = f"{path}?{urlencode(query)}"
         body_text = '' if body is None else orjson.dumps(body).decode('utf-8')
         
@@ -133,7 +130,7 @@ class OKXExchange(ExchangeBase):
             'OK-ACCESS-PASSPHRASE': self.passphrase,
         }
         if self.use_testnet:
-            # Keep simulated trading enabled for signed private endpoints.
+            # 私有签名接口在模拟盘模式下必须保留这个头。
             headers['x-simulated-trading'] = '1'
         return headers
     
@@ -177,8 +174,8 @@ class OKXExchange(ExchangeBase):
         
         params = {
             'instId': self.normalize_symbol(symbol),
-            # This adapter is spot/cash only for now. Margin/swap modes should be
-            # added explicitly instead of overloading this path.
+            # 这个适配器目前只负责现货 cash 模式。
+            # 杠杆/永续模式应单独实现，不要塞进这条现货路径。
             'tdMode': 'cash',  # 现货交易
             'side': side.lower(),
             'ordType': 'market' if order_type.lower() == 'market' else 'limit',
@@ -188,8 +185,7 @@ class OKXExchange(ExchangeBase):
         if order_type.lower() == 'limit' and price is not None:
             params['px'] = str(price)
         
-        # The same JSON bytes used for the request body must be represented in
-        # the signature calculation.
+        # 签名计算必须和实际发送的 JSON body 保持同一份字节表示。
         body = orjson.dumps(params)
         headers = await self._sign_request('POST', path, body=params)
         
@@ -213,7 +209,7 @@ class OKXExchange(ExchangeBase):
         path = '/api/v5/trade/cancel-order'
         params = {
             'instId': self.normalize_symbol(symbol),
-            # OKX uses ordId, not orderId, for REST order operations.
+            # OKX REST 订单操作使用 ordId，不是 orderId。
             'ordId': order_id,
         }
         
@@ -248,7 +244,7 @@ class OKXExchange(ExchangeBase):
         path = '/api/v5/trade/order'
         params = {
             'instId': self.normalize_symbol(symbol),
-            # OKX private query endpoints also use ordId.
+            # OKX 私有查询接口同样使用 ordId。
             'ordId': order_id,
         }
         
@@ -328,7 +324,7 @@ class OKXExchange(ExchangeBase):
         params = {
             'instId': self.normalize_symbol(symbol),
             'bar': self._convert_interval(interval),
-            # OKX public candles endpoint caps spot candle result size at 300.
+            # OKX 公开 K 线接口现货单次最多返回 300 条。
             'limit': min(limit, 300),
         }
         
@@ -393,7 +389,7 @@ class OKXExchange(ExchangeBase):
     async def subscribe_ticker(self, symbol: str, callback: Callable):
         """订阅实时行情"""
         normalized = self.normalize_symbol(symbol)
-        # Ensure only one ticker listener exists per symbol.
+        # 每个 symbol 只保留一个 ticker 监听任务。
         await self.unsubscribe_ticker(normalized)
 
         async def _listen():
@@ -409,12 +405,10 @@ class OKXExchange(ExchangeBase):
                         async for message in ws:
                             data = orjson.loads(message)
                             if data.get('event'):
-                                # Subscribe/heartbeat events do not contain
-                                # ticker payloads.
+                                # 订阅确认和心跳事件不包含 ticker 数据。
                                 continue
                             for item in data.get('data', []):
-                                # Convert OKX field names into the unified
-                                # ticker shape used by the rest of the app.
+                                # 把 OKX 字段名转换成系统统一的 ticker 结构。
                                 ticker = {
                                     'symbol': symbol,
                                     'exchange': 'okx',
@@ -431,10 +425,10 @@ class OKXExchange(ExchangeBase):
                                 if asyncio.iscoroutine(result):
                                     await result
                 except asyncio.CancelledError:
-                    # Cancellation is intentional during unsubscribe/close.
+                    # 取消订阅或关闭连接时，任务取消是预期行为。
                     raise
                 except Exception:
-                    # Keep the subscription alive across transient disconnects.
+                    # 短暂断线时保持订阅循环，自动重连。
                     await asyncio.sleep(3)
                 finally:
                     self._ws_connections.pop(normalized, None)
@@ -447,8 +441,7 @@ class OKXExchange(ExchangeBase):
         task = self._ws_tasks.pop(normalized, None)
         if task:
             task.cancel()
-            # Awaiting a cancelled task raises CancelledError by design; suppress
-            # it because unsubscribe is a normal cleanup path.
+            # 等待已取消任务会抛 CancelledError；取消订阅属于正常清理流程，这里吞掉即可。
             with contextlib.suppress(asyncio.CancelledError):
                 await task
 
@@ -481,8 +474,7 @@ class OKXExchange(ExchangeBase):
         if self._client and not self._client.is_closed:
             await self._client.aclose()
         
-        # Stop listener tasks before closing sockets. Otherwise listeners may
-        # reconnect while shutdown is in progress.
+        # 关闭 socket 前先停止监听任务，否则关闭过程中监听任务可能再次重连。
         for task in self._ws_tasks.values():
             task.cancel()
         for task in self._ws_tasks.values():

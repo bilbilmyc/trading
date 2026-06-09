@@ -1,4 +1,4 @@
-"""FastAPI application package."""
+"""FastAPI 应用包。"""
 
 from app.api.server import create_app
 

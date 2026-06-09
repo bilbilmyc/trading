@@ -1,8 +1,8 @@
 """
-OKX perpetual swap adapter.
+OKX 永续合约适配器。
 
-This adapter is separated from the spot OKX adapter because contract trading
-requires margin mode, position side, reduce-only handling, and leverage.
+它和 OKX 现货适配器分开，是因为合约交易需要保证金模式、持仓方向、
+reduce-only 和杠杆等额外参数。
 """
 
 from typing import Any, Dict, List, Optional
@@ -16,14 +16,14 @@ from app.models.market import ContractMarket
 
 
 class OKXSwapExchange(OKXExchange, ContractExchangeBase):
-    """OKX USDT-margined swap implementation."""
+    """OKX USDT 保证金永续合约适配器实现。"""
 
     @property
     def name(self) -> str:
         return "okx_swap"
 
     def normalize_symbol(self, symbol: str) -> str:
-        """Normalize to OKX swap instrument format, e.g. BTC-USDT-SWAP."""
+        """标准化为 OKX 永续合约格式，例如 BTC-USDT-SWAP。"""
 
         normalized = super().normalize_symbol(symbol)
         if normalized.endswith("-SWAP"):
@@ -31,13 +31,13 @@ class OKXSwapExchange(OKXExchange, ContractExchangeBase):
         return f"{normalized}-SWAP"
 
     def _inst_family(self, symbol: str) -> str:
-        """Convert BTC-USDT-SWAP to BTC-USDT for OKX fee queries."""
+        """把 BTC-USDT-SWAP 转成 BTC-USDT，用于 OKX 费率查询。"""
 
         normalized = self.normalize_symbol(symbol)
         return normalized.removesuffix("-SWAP")
 
     async def get_contract_markets(self, quote_asset: str = "USDT") -> List[ContractMarket]:
-        """List OKX swap instruments from the public instruments endpoint."""
+        """从公开 instruments 接口列出 OKX 永续合约。"""
 
         path = "/api/v5/public/instruments"
         params = {"instType": "SWAP"}
@@ -80,7 +80,7 @@ class OKXSwapExchange(OKXExchange, ContractExchangeBase):
         return markets
 
     async def get_fee_rate(self, symbol: str) -> FeeRate:
-        """Get OKX swap maker/taker fee rates."""
+        """获取 OKX 永续合约 maker/taker 手续费率。"""
 
         path = "/api/v5/account/trade-fee"
         params = {
@@ -113,7 +113,7 @@ class OKXSwapExchange(OKXExchange, ContractExchangeBase):
         margin_mode: MarginMode = MarginMode.CROSS,
         position_side: PositionSide = PositionSide.NET,
     ) -> Dict[str, Any]:
-        """Set leverage for an OKX swap instrument."""
+        """设置 OKX 永续合约杠杆。"""
 
         path = "/api/v5/account/set-leverage"
         params = {
@@ -137,7 +137,7 @@ class OKXSwapExchange(OKXExchange, ContractExchangeBase):
         return {"success": True, "raw": data}
 
     async def place_contract_order(self, request: ContractOrderRequest) -> Dict[str, Any]:
-        """Place an OKX swap order from the unified request."""
+        """把统一合约请求翻译成 OKX 永续下单请求。"""
 
         path = "/api/v5/trade/order"
         side, inferred_pos_side, inferred_reduce_only = self.resolve_order_intent(request.intent)
@@ -194,7 +194,7 @@ class OKXSwapExchange(OKXExchange, ContractExchangeBase):
         }
 
     async def get_positions(self, symbol: Optional[str] = None) -> List[Dict[str, Any]]:
-        """Get OKX swap positions from the positions API."""
+        """从 positions API 获取 OKX 永续持仓。"""
 
         path = "/api/v5/account/positions"
         params: Dict[str, Any] = {"instType": "SWAP"}
@@ -241,6 +241,6 @@ class OKXSwapExchange(OKXExchange, ContractExchangeBase):
         price: Optional[float] = None,
         **kwargs,
     ) -> Dict[str, Any]:
-        """Compatibility wrapper for the base exchange interface."""
+        """兼容 ExchangeBase 的现货下单接口；OKX 永续请使用 place_contract_order。"""
 
         raise NotImplementedError("Use place_contract_order for OKX swap trading")

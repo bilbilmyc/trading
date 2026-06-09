@@ -1,8 +1,8 @@
 """
-Small SQLite persistence layer for local development and single-node trading.
+SQLite 持久化层。
 
-The store intentionally stays close to the engine's current dict-shaped data so
-we can persist runtime state without introducing an ORM or a migration system.
+当前系统先按“本地单节点量化工作台”设计，所以这里没有引入 ORM 和迁移框架。
+存储接口尽量保持 dict 形状，方便 TradingEngine、API 和前端审计面板直接复用。
 """
 
 from __future__ import annotations
@@ -29,7 +29,7 @@ def _json_loads(value: Optional[str]) -> Dict[str, Any]:
 
 
 class SQLiteStore:
-    """SQLite repository used by the API worker."""
+    """API worker 使用的 SQLite 仓库。"""
 
     def __init__(self, path: str):
         self.path = Path(path)
@@ -252,7 +252,7 @@ class SQLiteStore:
         ]
 
     def append_event(self, event: Dict[str, Any]) -> None:
-        """Append one auditable order/risk/exchange event."""
+        """追加一条可审计事件，比如下单、撤单、风控拒单。"""
 
         with self._lock:
             self._conn.execute(
@@ -284,7 +284,7 @@ class SQLiteStore:
         event_type: Optional[str] = None,
         limit: int = 50,
     ) -> List[Dict[str, Any]]:
-        """Return recent events in chronological order for audit timelines."""
+        """按时间顺序返回最近事件，供 API 和前端审计时间线使用。"""
 
         filters = []
         params: List[Any] = []

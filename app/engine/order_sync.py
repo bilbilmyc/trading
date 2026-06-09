@@ -26,7 +26,7 @@ class OrderSync:
 
     def __init__(self, interval_seconds: int = 10):
         self.interval_seconds = interval_seconds
-        self._local_orders: Dict[str, Order] = {}  # order_id -> Order
+        self._local_orders: Dict[str, Order] = {}  # 订单号 -> 本地订单模型
         self._callbacks: List = []
         self._task: Optional[asyncio.Task] = None
         self._running = False
@@ -34,7 +34,7 @@ class OrderSync:
     # ── 生命周期 ──────────────────────────────────────────────
 
     def start(self) -> None:
-        """Start the background sync loop (caller must await the task loop)."""
+        """启动后台订单同步循环。"""
 
         if self._running:
             return
@@ -43,7 +43,7 @@ class OrderSync:
         logger.info(f"OrderSync started (interval={self.interval_seconds}s)")
 
     async def stop(self) -> None:
-        """Stop the background sync loop."""
+        """停止后台订单同步循环。"""
 
         self._running = False
         if self._task is not None:
@@ -55,20 +55,20 @@ class OrderSync:
     # ── 订单注册 ──────────────────────────────────────────────
 
     def track(self, order: Order) -> None:
-        """Register a locally-placed order for syncing."""
+        """登记本进程提交的订单，后续用于同步状态。"""
 
         if order.order_id:
             self._local_orders[order.order_id] = order
 
     def forget(self, order_id: str) -> None:
-        """Remove a completed order from local tracking."""
+        """从本地跟踪列表移除已结束订单。"""
 
         self._local_orders.pop(order_id, None)
 
     def on_sync(self, callback) -> None:
-        """Register a callback invoked for each order status change.
+        """注册订单状态变化回调。
 
-        Callback signature: ``async def callback(order: Order, changed: bool)``
+        回调签名：``async def callback(order: Order, changed: bool)``
         """
 
         self._callbacks.append(callback)
@@ -76,9 +76,9 @@ class OrderSync:
     # ── 单次同步 ──────────────────────────────────────────────
 
     async def sync(self, exchange: ExchangeBase, symbol: Optional[str] = None) -> int:
-        """Pull open orders from the exchange and update local records.
+        """从交易所拉取挂单并更新本地订单记录。
 
-        Returns the number of orders whose status changed.
+        返回状态发生变化的订单数量。
         """
 
         changed = 0
@@ -88,7 +88,7 @@ class OrderSync:
             logger.warning(f"OrderSync: get_open_orders failed: {exc}")
             return 0
 
-        # Build a set of exchange-side open order IDs
+        # 先收集交易所侧仍处于挂单状态的订单 ID。
         exchange_ids: Set[str] = set()
         for raw in open_orders:
             oid = str(raw.get("order_id") or raw.get("orderId") or "")
@@ -107,18 +107,18 @@ class OrderSync:
                     changed += 1
                     await self._notify(local)
 
-                    # Clean up terminal statuses
+                    # 订单进入终态后就不再继续跟踪。
                     if new_status in (OrderStatus.FILLED, OrderStatus.CANCELLED, OrderStatus.REJECTED, OrderStatus.EXPIRED):
                         self.forget(oid)
 
             elif raw_status in ("filled", "partially_filled", "new", "open"):
-                # Unknown order — created outside this process, track it
+                # 本进程不知道的订单，可能来自手动下单或其他进程，先纳入本地跟踪。
                 parsed = self._parse_exchange_order(raw, exchange.name)
                 if parsed is not None:
                     self._local_orders[oid] = parsed
                     await self._notify(parsed)
 
-        # Mark locally-tracked orders that disappeared on exchange as cancelled
+        # 本地还活跃、但交易所挂单列表里消失的订单，按已撤销处理。
         for oid, local in list(self._local_orders.items()):
             if local.is_active and oid not in exchange_ids:
                 local.status = OrderStatus.CANCELLED
@@ -132,13 +132,13 @@ class OrderSync:
     # ── 内部 ──────────────────────────────────────────────────
 
     async def _sync_loop(self) -> None:
-        """Background sync loop."""
+        """后台同步循环。"""
 
         while self._running:
             await asyncio.sleep(self.interval_seconds)
 
     async def _notify(self, order: Order) -> None:
-        """Fire callbacks for one order."""
+        """触发单个订单的同步回调。"""
 
         for cb in self._callbacks:
             try:
@@ -151,7 +151,7 @@ class OrderSync:
 
     @staticmethod
     def _translate_status(raw: str) -> Optional[OrderStatus]:
-        """Map exchange status strings to OrderStatus enum."""
+        """把交易所状态字符串映射成统一 OrderStatus。"""
 
         mapping = {
             "new": OrderStatus.PENDING,
@@ -168,7 +168,7 @@ class OrderSync:
 
     @staticmethod
     def _parse_exchange_order(raw: Dict[str, Any], exchange_name: str) -> Optional[Order]:
-        """Build an Order model from an exchange's raw order dict."""
+        """把交易所原始订单字典转换成本地 Order 模型。"""
 
         try:
             oid = str(raw.get("order_id") or raw.get("orderId") or "")

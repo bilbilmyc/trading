@@ -39,7 +39,7 @@ BASE_ASSET_PRIORITY = [
 
 
 class BitgetUSDTFuturesExchange(ContractExchangeBase):
-    """Bitget USDT-M perpetual futures implementation."""
+    """Bitget USDT-M 永续合约适配器实现。"""
 
     PRODUCT_TYPE = "USDT-FUTURES"
     MARGIN_COIN = "USDT"
@@ -52,9 +52,9 @@ class BitgetUSDTFuturesExchange(ContractExchangeBase):
         use_testnet: bool = True,
     ):
         super().__init__(api_key, secret_key, passphrase, use_testnet)
-        # Bitget V2 public and production private REST share this domain. Demo
-        # trading uses separate account semantics, so this adapter keeps normal
-        # REST behavior and relies on the app-level live-trading switch.
+        # Bitget V2 公开接口和生产私有 REST 共用这个域名。
+        # Demo 账户语义和普通账户不同，所以这里保持正常 REST 行为，
+        # 是否允许真实下单交给应用层 ENABLE_LIVE_TRADING 控制。
         self._base_url = "https://api.bitget.com"
         self._client: Optional[httpx.AsyncClient] = None
 

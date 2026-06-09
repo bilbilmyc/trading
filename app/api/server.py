@@ -14,6 +14,7 @@ FastAPI HTTP 入口。
 from contextlib import asynccontextmanager
 from datetime import datetime
 from pathlib import Path
+import secrets
 from typing import Any, Awaitable, Callable, Dict, Optional, TypeVar
 
 import httpx
@@ -37,10 +38,10 @@ T = TypeVar("T")
 
 
 class OrderRequest(BaseModel):
-    """Validated payload for order creation.
+    """现货下单请求体。
 
-    The API accepts a unified shape and lets each exchange adapter translate it
-    into its native fields.
+    FastAPI 会根据这个 Pydantic 模型校验前端传入的 JSON。
+    校验通过后，路由函数里拿到的 request 就是一个 OrderRequest 对象。
     """
 
     exchange: str = Field(..., min_length=1)
@@ -53,7 +54,7 @@ class OrderRequest(BaseModel):
 
 
 class SMAStrategyRequest(BaseModel):
-    """Create one configured SMA strategy instance."""
+    """创建 SMA 策略时前端传入的请求体。"""
 
     name: Optional[str] = Field(None, min_length=1, max_length=64)
     exchange: str = Field("binance_usdm", min_length=1)
@@ -67,20 +68,20 @@ class SMAStrategyRequest(BaseModel):
 
 
 class SignalRunnerRequest(BaseModel):
-    """Start or run the signal-only strategy runner."""
+    """启动或手动运行信号运行器的请求体。"""
 
     poll_seconds: int = Field(60, ge=5, le=3600)
     candle_limit: int = Field(80, ge=20, le=500)
 
 
 class PaperResetRequest(BaseModel):
-    """Reset paper trading account."""
+    """重置模拟盘账户的请求体。"""
 
     initial_cash: Optional[float] = Field(None, gt=0)
 
 
 class StrategyModeRequest(BaseModel):
-    """Update strategy execution mode."""
+    """切换策略运行模式的请求体。"""
 
     mode: str = Field(..., pattern="^(signal|paper)$")
 
@@ -281,6 +282,95 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
             return extract_order_id(raw)
         return None
 
+    def generate_client_order_id() -> str:
+        """生成交易所可接受的客户端订单号。
+
+        这个 ID 会写入交易所订单请求，也会进入 SQLite 审计事件。
+        前端先调用 preview 拿到这个 ID，再用同一个 ID 提交订单，方便排查和重试。
+        """
+
+        return f"qt{datetime.utcnow():%y%m%d%H%M%S}{secrets.token_hex(5)}"
+
+    def ensure_contract_client_order_id(request: ContractOrderRequest) -> ContractOrderRequest:
+        """保证合约订单一定带 client_order_id。"""
+
+        if request.client_order_id:
+            return request
+        return request.model_copy(update={"client_order_id": generate_client_order_id()})
+
+    def infer_liquidity(order_type: str) -> LiquidityType:
+        """按订单类型推断预估手续费用 maker 还是 taker 费率。"""
+
+        normalized = order_type.lower()
+        if normalized in {"market", "ioc", "fok"}:
+            return LiquidityType.TAKER
+        return LiquidityType.MAKER
+
+    async def build_contract_order_preview(request: ContractOrderRequest) -> Dict[str, Any]:
+        """构建合约下单预览，不产生任何交易所状态变更。"""
+
+        preview_request = ensure_contract_client_order_id(request)
+        client = state.get_contract_exchange(preview_request.exchange)
+        side, inferred_position_side, inferred_reduce_only = client.resolve_order_intent(preview_request.intent)
+        position_side = (
+            preview_request.position_side
+            if preview_request.position_side != PositionSide.NET
+            else inferred_position_side
+        )
+        reduce_only = inferred_reduce_only if preview_request.reduce_only is None else preview_request.reduce_only
+        liquidity = infer_liquidity(preview_request.order_type)
+        notes = [
+            "这是下单前预览，不会向交易所提交订单。",
+            "强平风险需要结合交易所保证金、仓位和维护保证金率计算，这里只做风险提示。",
+        ]
+
+        preview_price = preview_request.price
+        if preview_price is None:
+            try:
+                ticker = await call_exchange(lambda: client.get_ticker(preview_request.symbol))
+                preview_price = float(ticker.get("last_price") or 0)
+                notes.append("市价单预览使用当前 ticker last_price 估算名义价值。")
+            except HTTPException as exc:
+                notes.append(f"无法获取市价单参考价格：{exc.detail}")
+        if not preview_price or preview_price <= 0:
+            raise HTTPException(status_code=400, detail="price is required for order preview")
+
+        notional = preview_request.quantity * preview_price
+        leverage = preview_request.leverage or 1
+        initial_margin = notional / leverage if leverage > 0 else notional
+        fee_rate = None
+        estimated_fee = None
+        try:
+            fee = await call_exchange(lambda: client.get_fee_rate(preview_request.symbol))
+            fee_rate = fee.maker if liquidity == LiquidityType.MAKER else fee.taker
+            estimated_fee = notional * abs(fee_rate)
+        except HTTPException as exc:
+            notes.append(f"未能获取实时手续费率：{exc.detail}")
+
+        return {
+            "exchange": preview_request.exchange,
+            "symbol": preview_request.symbol,
+            "intent": preview_request.intent.value,
+            "side": side,
+            "quantity": preview_request.quantity,
+            "order_type": preview_request.order_type.lower(),
+            "price": preview_price,
+            "notional": notional,
+            "leverage": leverage,
+            "initial_margin": initial_margin,
+            "margin_mode": preview_request.margin_mode.value,
+            "position_side": position_side.value,
+            "reduce_only": reduce_only,
+            "liquidity": liquidity.value,
+            "fee_rate": fee_rate,
+            "estimated_fee": estimated_fee,
+            "client_order_id": preview_request.client_order_id,
+            "live_trading_enabled": state.settings.enable_live_trading,
+            "liquidation_risk_note": "预览不是强平价计算；高杠杆、全仓和市价单会放大强平与滑点风险。",
+            "notes": notes,
+            "request": preview_request.model_dump(mode="json"),
+        }
+
     def record_event(
         *,
         category: str,
@@ -467,6 +557,30 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
         client = state.get_contract_exchange(exchange)
         return await call_exchange(lambda: client.estimate_order_cost(symbol, quantity, price, liquidity))
 
+    @app.post("/api/v1/contracts/order/preview")
+    async def preview_contract_order(
+        request: ContractOrderRequest,
+        state: AppState = Depends(get_state),
+    ):
+        """合约下单预览。
+
+        调用关系：
+        前端填写订单 -> POST /preview -> 后端补 client_order_id 并估算成本 ->
+        前端展示预览 -> 用户确认 -> POST /api/v1/contracts/order。
+        """
+
+        preview = await build_contract_order_preview(request)
+        record_event(
+            category="order",
+            event_type="contract_order_previewed",
+            exchange=preview["exchange"],
+            symbol=preview["symbol"],
+            order_id=preview["client_order_id"],
+            message=f"Contract order previewed: {preview['intent']} {preview['quantity']} {preview['symbol']}",
+            details=preview,
+        )
+        return preview
+
     @app.post("/api/v1/contracts/{exchange}/{symbol}/leverage")
     async def set_contract_leverage(
         exchange: str,
@@ -507,8 +621,7 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
 
     @app.post("/api/v1/order")
     async def place_order(request: OrderRequest, state: AppState = Depends(get_state)):
-        # This guard makes the API safe by default: read-only endpoints work,
-        # while real order placement must be enabled explicitly in .env.
+        # 默认只允许读操作；真实下单必须在 .env 里显式开启 ENABLE_LIVE_TRADING。
         if not state.settings.enable_live_trading:
             reject_live_disabled(
                 action="place_order",
@@ -545,8 +658,8 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
         request: ContractOrderRequest,
         state: AppState = Depends(get_state),
     ):
-        # Contract orders can open leveraged exposure. Keep them behind the
-        # same explicit live-trading switch as spot orders.
+        request = ensure_contract_client_order_id(request)
+        # 合约订单可能打开杠杆仓位，所以必须和现货下单一样受实盘开关保护。
         if not state.settings.enable_live_trading:
             reject_live_disabled(
                 action="place_contract_order",
@@ -576,8 +689,7 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
         order_id: str,
         state: AppState = Depends(get_state),
     ):
-        # Keep cancel behind the same live-trading flag because cancelling a
-        # real order still changes exchange state.
+        # 撤单也会改变交易所状态，因此同样必须受实盘开关保护。
         if not state.settings.enable_live_trading:
             reject_live_disabled(
                 action="cancel_order",
@@ -804,7 +916,7 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
     # ── AI 大模型分析 API ──────────────────────────────────────
 
     class AIAnalyzeRequest(BaseModel):
-        """Request payload for AI market analysis."""
+        """AI 市场分析请求体。"""
 
         exchange: str = Field("binance_usdm", min_length=1)
         symbol: str = Field("BTCUSDT", min_length=1)
@@ -864,7 +976,7 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
     # ── LLM 策略（D / B / A）管理 API ─────────────────────────
 
     class LLMStrategyCreateRequest(BaseModel):
-        """Create an LLM strategy instance."""
+        """创建 LLM 策略实例的请求体。"""
 
         name: Optional[str] = Field(None, min_length=1, max_length=64)
         exchange: str = Field("binance_usdm", min_length=1)
@@ -1027,8 +1139,8 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
 
     static_dir = Path(settings.frontend_static_dir)
     if static_dir.exists():
-        # The Docker image copies the React build into /app/static. Mount it
-        # last so API and docs routes continue to win over the SPA fallback.
+        # Docker 镜像会把 React 构建产物复制到 /app/static。
+        # 这里最后挂载静态目录，确保 API 和 docs 路由优先于前端 SPA fallback。
         app.mount("/", StaticFiles(directory=static_dir, html=True), name="frontend")
 
     return app

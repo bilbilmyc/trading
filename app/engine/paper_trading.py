@@ -1,9 +1,8 @@
 """
-In-memory paper trading account.
+模拟盘账户。
 
-The paper account is intentionally separate from exchange execution. It consumes
-strategy signals, simulates fills using public ticker prices, and tracks a
-small virtual portfolio for dashboard and later persistence work.
+模拟盘和真实交易所执行完全分离：它消费策略信号，用公开行情价格模拟成交，
+并维护一个虚拟 USDT 账户，供前端验证策略效果和后续持久化使用。
 """
 
 from datetime import datetime
@@ -14,7 +13,7 @@ from app.strategies.base import Signal
 
 
 class PaperTradingAccount:
-    """Simple USDT-margined paper account for signal validation."""
+    """用于验证信号的简化 USDT 模拟账户。"""
 
     def __init__(self, initial_cash: float = 10000.0, fee_rate: float = 0.0005):
         self.initial_cash = initial_cash
@@ -25,7 +24,7 @@ class PaperTradingAccount:
         self.enabled = True
 
     def reset(self, initial_cash: Optional[float] = None) -> None:
-        """Reset account state."""
+        """重置模拟账户状态。"""
 
         if initial_cash is not None:
             self.initial_cash = initial_cash
@@ -39,7 +38,7 @@ class PaperTradingAccount:
         positions: List[Dict[str, Any]],
         orders: List[Dict[str, Any]],
     ) -> None:
-        """Restore account state from persistence."""
+        """从 SQLite 恢复模拟账户状态。"""
 
         if account:
             self.initial_cash = float(account.get("initial_cash", self.initial_cash))
@@ -82,7 +81,7 @@ class PaperTradingAccount:
         return f"{exchange}:{symbol}"
 
     def mark_price(self, exchange: str, symbol: str, price: float) -> None:
-        """Update one paper position mark price."""
+        """更新单个模拟持仓的标记价格。"""
 
         key = self._position_key(exchange, symbol)
         position = self.positions.get(key)
@@ -107,7 +106,7 @@ class PaperTradingAccount:
         fill_price: float,
         default_quantity: float = 0.001,
     ) -> Optional[Dict[str, Any]]:
-        """Simulate a full fill from one actionable signal."""
+        """把一个可执行信号模拟为完全成交。"""
 
         if not self.enabled or not signal.is_actionable or fill_price <= 0:
             return None
@@ -180,7 +179,7 @@ class PaperTradingAccount:
         return order
 
     def summary(self) -> Dict[str, Any]:
-        """Return paper account summary."""
+        """返回模拟账户汇总，供 API 和前端展示。"""
 
         active_positions = [
             position

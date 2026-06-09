@@ -43,9 +43,8 @@ class BinanceExchange(ExchangeBase):
             self._ws_url = "wss://stream.binance.com:9443/ws"
         
         self._client: Optional[httpx.AsyncClient] = None
-        # Keep WebSocket objects and their listener tasks separately:
-        # connection is used for closing the socket, task is used for cancelling
-        # the reconnect loop.
+        # WebSocket 连接对象和监听任务分开保存：
+        # 连接对象用于关闭 socket，任务对象用于取消重连循环。
         self._ws_connections: Dict[str, websockets.WebSocketClientProtocol] = {}
         self._ws_tasks: Dict[str, asyncio.Task] = {}
     
@@ -64,8 +63,7 @@ class BinanceExchange(ExchangeBase):
     async def _get_client(self) -> httpx.AsyncClient:
         """获取或创建 HTTP 客户端"""
         if self._client is None or self._client.is_closed:
-            # Reuse one AsyncClient per exchange adapter. This keeps HTTP
-            # connection pooling effective and avoids reconnecting every request.
+            # 每个交易所适配器复用一个 AsyncClient，保持连接池有效，避免每个请求都重连。
             self._client = httpx.AsyncClient(
                 base_url=self._base_url,
                 headers={
@@ -78,8 +76,8 @@ class BinanceExchange(ExchangeBase):
     
     def _generate_signature(self, params: Dict) -> str:
         """生成 Binance 请求签名"""
-        # Binance signs the exact URL-encoded query string. Do not hand-build
-        # this with string joins; encoding details affect the signature.
+        # Binance 签名基于精确 URL 编码后的 query string。
+        # 不要手写字符串拼接，编码细节会影响签名。
         query_string = urlencode(params)
         signature = hmac.new(
             self.secret_key.encode('utf-8'),
@@ -90,8 +88,7 @@ class BinanceExchange(ExchangeBase):
     
     def _sign_params(self, params: Dict) -> Dict:
         """为请求参数添加签名"""
-        # Private Binance REST endpoints require timestamp + HMAC-SHA256
-        # signature in the request parameters.
+        # Binance 私有 REST 接口要求参数里包含 timestamp 和 HMAC-SHA256 签名。
         params['timestamp'] = self.get_timestamp()
         signature = self._generate_signature(params)
         params['signature'] = signature
@@ -152,10 +149,8 @@ class BinanceExchange(ExchangeBase):
         }
         
         if order_type.lower() == 'market':
-            # Binance market buys can be specified either by base quantity
-            # (`quantity`) or quote amount (`quoteOrderQty`). Keep both paths so
-            # callers can decide whether they want to buy "0.01 BTC" or
-            # "100 USDT worth of BTC".
+            # Binance 市价买入既可以按基础币数量 quantity，也可以按计价币金额 quoteOrderQty。
+            # 两条路径都保留，调用方可以选择“买 0.01 BTC”或“买 100 USDT 的 BTC”。
             if kwargs.get('quote_order_qty') is not None:
                 params['quoteOrderQty'] = kwargs['quote_order_qty']
             else:
@@ -233,8 +228,8 @@ class BinanceExchange(ExchangeBase):
         response.raise_for_status()
         
         data = response.json()
-        # Binance order query does not return avgPrice on spot REST. The average
-        # fill price is cumulative quote quantity divided by executed base qty.
+        # Binance 现货订单查询不直接返回 avgPrice。
+        # 平均成交价用累计成交额 / 已成交基础币数量计算。
         executed_qty = float(data.get('executedQty', 0))
         quote_qty = float(data.get('cummulativeQuoteQty', 0))
         avg_price = quote_qty / executed_qty if executed_qty > 0 else 0.0
@@ -356,7 +351,7 @@ class BinanceExchange(ExchangeBase):
         """订阅实时行情"""
         normalized = self.normalize_symbol(symbol)
         key = normalized.lower()
-        # Ensure only one ticker listener exists per symbol.
+        # 每个 symbol 只保留一个 ticker 监听任务。
         await self.unsubscribe_ticker(normalized)
 
         async def _listen():
@@ -367,9 +362,7 @@ class BinanceExchange(ExchangeBase):
                         self._ws_connections[normalized] = ws
                         async for message in ws:
                             data = orjson.loads(message)
-                            # Binance ticker stream uses compact field names.
-                            # Convert them into the unified ticker dict used by
-                            # the engine and API.
+                            # Binance ticker stream 使用短字段名，这里转换成引擎/API 统一结构。
                             ticker = {
                                 'symbol': symbol,
                                 'exchange': 'binance',
@@ -388,12 +381,10 @@ class BinanceExchange(ExchangeBase):
                             if asyncio.iscoroutine(result):
                                 await result
                 except asyncio.CancelledError:
-                    # Cancellation is intentional during unsubscribe/close.
-                    # Re-raise so the task can finish immediately.
+                    # 取消订阅或关闭连接时，任务取消是预期行为；继续抛出让任务立即结束。
                     raise
                 except Exception:
-                    # Transient network errors should not kill the subscription.
-                    # A short sleep prevents a tight reconnect loop.
+                    # 短暂网络错误不应杀死订阅；短暂 sleep 防止重连死循环。
                     await asyncio.sleep(3)
                 finally:
                     self._ws_connections.pop(normalized, None)
@@ -406,8 +397,7 @@ class BinanceExchange(ExchangeBase):
         task = self._ws_tasks.pop(normalized, None)
         if task:
             task.cancel()
-            # Awaiting a cancelled task raises CancelledError by design; suppress
-            # it because unsubscribe is a normal cleanup path.
+            # 等待已取消任务会抛 CancelledError；取消订阅是正常清理流程，这里吞掉即可。
             with contextlib.suppress(asyncio.CancelledError):
                 await task
 
@@ -432,8 +422,7 @@ class BinanceExchange(ExchangeBase):
         if self._client and not self._client.is_closed:
             await self._client.aclose()
         
-        # Stop listener tasks before closing sockets. Otherwise the listeners may
-        # reconnect while shutdown is in progress.
+        # 关闭 socket 前先停止监听任务，否则关闭过程中监听任务可能再次重连。
         for task in self._ws_tasks.values():
             task.cancel()
         for task in self._ws_tasks.values():

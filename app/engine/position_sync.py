@@ -40,7 +40,7 @@ class PositionSync:
     # ── 生命周期 ──────────────────────────────────────────────
 
     def start(self) -> None:
-        """Start the background sync loop."""
+        """启动后台持仓同步循环。"""
 
         if self._running:
             return
@@ -49,7 +49,7 @@ class PositionSync:
         logger.info(f"PositionSync started (interval={self.interval_seconds}s)")
 
     async def stop(self) -> None:
-        """Stop the background sync loop."""
+        """停止后台持仓同步循环。"""
 
         self._running = False
         if self._task is not None:
@@ -59,9 +59,9 @@ class PositionSync:
         logger.info("PositionSync stopped")
 
     def on_sync(self, callback) -> None:
-        """Register callback invoked after each sync cycle.
+        """注册每轮同步完成后的回调。
 
-        Callback signature: ``async def callback(exchange_name: str, changed: bool)``
+        回调签名：``async def callback(exchange_name: str, changed: bool)``
         """
 
         self._callbacks.append(callback)
@@ -82,7 +82,7 @@ class PositionSync:
         try:
             balances = await exchange.get_account_balance()
             for currency, total in balances.items():
-                # Some exchanges return a dict with total/available
+                # 有些交易所返回 total/available 字典，有些只返回一个总余额数字。
                 available = total
                 if isinstance(total, dict):
                     available = float(total.get("available", total.get("free", 0)))
@@ -137,7 +137,7 @@ class PositionSync:
             except Exception as exc:
                 logger.warning(f"PositionSync [{exchange_name}] contract positions sync failed: {exc}")
 
-        # Notify callbacks
+        # 有更新时通知回调。
         if updated > 0:
             for cb in self._callbacks:
                 try:
@@ -153,13 +153,13 @@ class PositionSync:
     # ── 内部 ──────────────────────────────────────────────────
 
     async def _sync_loop(self) -> None:
-        """Background sync loop — subclasses override to attach exchanges."""
+        """后台同步循环；真正绑定交易所的逻辑由 TradingEngine 负责。"""
 
         while self._running:
             await asyncio.sleep(self.interval_seconds)
 
     async def _upsert_position(self, exchange_name: str, symbol: str, position: Position) -> None:
-        """Direct-position upsert that bypasses the average-price logic in update_position."""
+        """直接写入持仓，绕过 update_position 的成交均价计算逻辑。"""
 
         key = f"{exchange_name}:{symbol}"
         self.position_manager._positions[key] = position

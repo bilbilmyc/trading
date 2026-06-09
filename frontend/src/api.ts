@@ -239,6 +239,31 @@ export interface ContractOrderPayload {
   position_side: PositionSide;
   leverage?: number;
   reduce_only?: boolean;
+  client_order_id?: string;
+}
+
+export interface ContractOrderPreview {
+  exchange: ExchangeName;
+  symbol: string;
+  intent: Intent;
+  side: string;
+  quantity: number;
+  order_type: string;
+  price: number;
+  notional: number;
+  leverage: number;
+  initial_margin: number;
+  margin_mode: MarginMode;
+  position_side: PositionSide;
+  reduce_only: boolean;
+  liquidity: Liquidity;
+  fee_rate?: number | null;
+  estimated_fee?: number | null;
+  client_order_id: string;
+  live_trading_enabled: boolean;
+  liquidation_risk_note: string;
+  notes: string[];
+  request: ContractOrderPayload;
 }
 
 function resolveApiBase() {
@@ -408,6 +433,12 @@ export const api = {
 
   placeContractOrder: (payload: ContractOrderPayload) =>
     request<Record<string, unknown>>("/api/v1/contracts/order", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    }),
+
+  previewContractOrder: (payload: ContractOrderPayload) =>
+    request<ContractOrderPreview>("/api/v1/contracts/order/preview", {
       method: "POST",
       body: JSON.stringify(payload),
     }),
