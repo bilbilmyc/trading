@@ -117,6 +117,23 @@ class SQLiteStore:
                     signal_metadata_json TEXT NOT NULL DEFAULT '{}'
                 );
                 CREATE INDEX IF NOT EXISTS idx_paper_orders_timestamp ON paper_orders(timestamp);
+
+                CREATE TABLE IF NOT EXISTS events (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    category TEXT NOT NULL,
+                    event_type TEXT NOT NULL,
+                    level TEXT NOT NULL,
+                    exchange TEXT,
+                    symbol TEXT,
+                    strategy TEXT,
+                    order_id TEXT,
+                    message TEXT NOT NULL,
+                    details_json TEXT NOT NULL DEFAULT '{}',
+                    timestamp TEXT NOT NULL
+                );
+                CREATE INDEX IF NOT EXISTS idx_events_timestamp ON events(timestamp);
+                CREATE INDEX IF NOT EXISTS idx_events_category ON events(category);
+                CREATE INDEX IF NOT EXISTS idx_events_order_id ON events(order_id);
                 """
             )
             self._conn.commit()
@@ -229,6 +246,75 @@ class SQLiteStore:
                 "take_profit": row["take_profit"],
                 "metadata": _json_loads(row["metadata_json"]),
                 "actionable": bool(row["actionable"]),
+                "timestamp": row["timestamp"],
+            }
+            for row in rows
+        ]
+
+    def append_event(self, event: Dict[str, Any]) -> None:
+        """Append one auditable order/risk/exchange event."""
+
+        with self._lock:
+            self._conn.execute(
+                """
+                INSERT INTO events (
+                    category, event_type, level, exchange, symbol, strategy,
+                    order_id, message, details_json, timestamp
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    event["category"],
+                    event["event_type"],
+                    event.get("level", "info"),
+                    event.get("exchange"),
+                    event.get("symbol"),
+                    event.get("strategy"),
+                    event.get("order_id"),
+                    event["message"],
+                    _json_dumps(event.get("details")),
+                    event["timestamp"],
+                ),
+            )
+            self._conn.commit()
+
+    def recent_events(
+        self,
+        category: Optional[str] = None,
+        event_type: Optional[str] = None,
+        limit: int = 50,
+    ) -> List[Dict[str, Any]]:
+        """Return recent events in chronological order for audit timelines."""
+
+        filters = []
+        params: List[Any] = []
+        if category:
+            filters.append("category = ?")
+            params.append(category)
+        if event_type:
+            filters.append("event_type = ?")
+            params.append(event_type)
+        where = f"WHERE {' AND '.join(filters)}" if filters else ""
+        params.append(limit)
+
+        with self._lock:
+            rows = self._conn.execute(
+                f"SELECT * FROM events {where} ORDER BY id DESC LIMIT ?",
+                tuple(params),
+            ).fetchall()
+        rows = list(reversed(rows))
+        return [
+            {
+                "id": row["id"],
+                "category": row["category"],
+                "event_type": row["event_type"],
+                "level": row["level"],
+                "exchange": row["exchange"],
+                "symbol": row["symbol"],
+                "strategy": row["strategy"],
+                "order_id": row["order_id"],
+                "message": row["message"],
+                "details": _json_loads(row["details_json"]),
                 "timestamp": row["timestamp"],
             }
             for row in rows

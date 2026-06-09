@@ -144,6 +144,20 @@ export interface StrategySignal {
   timestamp: string;
 }
 
+export interface AuditEvent {
+  id: number;
+  category: "order" | "risk" | string;
+  event_type: string;
+  level: "info" | "warning" | "error" | string;
+  exchange?: string | null;
+  symbol?: string | null;
+  strategy?: string | null;
+  order_id?: string | null;
+  message: string;
+  details: Record<string, unknown>;
+  timestamp: string;
+}
+
 export interface FeeRate {
   exchange: string;
   symbol: string;
@@ -334,6 +348,12 @@ export const api = {
   recentSignals: (limit = 20) => {
     const params = new URLSearchParams({ limit: String(limit) });
     return request<{ signals: StrategySignal[] }>(`/api/v1/signals/recent?${params}`);
+  },
+
+  recentEvents: (limit = 20, category?: string) => {
+    const params = new URLSearchParams({ limit: String(limit) });
+    if (category) params.set("category", category);
+    return request<{ events: AuditEvent[] }>(`/api/v1/events/recent?${params}`);
   },
 
   evaluateSignals: (exchange: ExchangeName, symbol: string, interval = "1m", limit = 80) => {

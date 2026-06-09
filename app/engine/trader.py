@@ -322,6 +322,41 @@ class TradingEngine:
         self._recent_signals = self._recent_signals[-200:]
         if self.store:
             self.store.append_signal(row)
+
+    def _record_event(
+        self,
+        *,
+        category: str,
+        event_type: str,
+        message: str,
+        level: str = "info",
+        exchange: Optional[str] = None,
+        symbol: Optional[str] = None,
+        strategy: Optional[str] = None,
+        order_id: Optional[str] = None,
+        details: Optional[Dict[str, Any]] = None,
+    ) -> None:
+        """Persist one audit event without interrupting the trading path."""
+
+        if not self.store:
+            return
+        try:
+            self.store.append_event(
+                {
+                    "category": category,
+                    "event_type": event_type,
+                    "level": level,
+                    "exchange": exchange,
+                    "symbol": symbol,
+                    "strategy": strategy,
+                    "order_id": order_id,
+                    "message": message,
+                    "details": details or {},
+                    "timestamp": datetime.utcnow().isoformat(),
+                }
+            )
+        except Exception as exc:
+            logger.error(f"事件持久化失败：{exc}")
     
     def on_signal(self, callback: Callable):
         """注册信号回调"""
@@ -827,6 +862,12 @@ class TradingEngine:
 
             if not allowed:
                 logger.warning(f"订单被风控拦截：{reason}")
+                risk_details = {
+                    "action": signal.action.value,
+                    "quantity": quantity,
+                    "price": price,
+                    "order_type": signal.order_type,
+                }
                 self.monitor.push(
                     Alert(
                         level=AlertLevel.WARNING,
@@ -835,8 +876,17 @@ class TradingEngine:
                         message=reason,
                         exchange=exchange.name,
                         symbol=signal.symbol,
-                        details={"action": signal.action.value, "quantity": quantity, "price": price},
+                        details=risk_details,
                     )
+                )
+                self._record_event(
+                    category="risk",
+                    event_type="order_rejected_by_risk",
+                    level="warning",
+                    exchange=exchange.name,
+                    symbol=signal.symbol,
+                    message=reason,
+                    details=risk_details,
                 )
                 return
 
@@ -912,6 +962,22 @@ class TradingEngine:
                         },
                     )
                 )
+                self._record_event(
+                    category="order",
+                    event_type="live_order_submitted",
+                    exchange=exchange.name,
+                    symbol=signal.symbol,
+                    order_id=order.order_id or None,
+                    message=f"{signal.action.value.upper()} {quantity} {signal.symbol} @ {price}",
+                    details={
+                        "order_id": order.order_id,
+                        "action": signal.action.value,
+                        "quantity": quantity,
+                        "price": price,
+                        "order_type": signal.order_type,
+                        "response": result,
+                    },
+                )
 
             except Exception as e:
                 logger.error(f"订单执行失败：{e}")
@@ -924,6 +990,21 @@ class TradingEngine:
                         exchange=exchange.name,
                         symbol=signal.symbol,
                     )
+                )
+                self._record_event(
+                    category="order",
+                    event_type="live_order_failed",
+                    level="error",
+                    exchange=exchange.name,
+                    symbol=signal.symbol,
+                    message=f"{signal.action.value.upper()} {signal.symbol}: {e}",
+                    details={
+                        "action": signal.action.value,
+                        "quantity": quantity,
+                        "price": price,
+                        "order_type": signal.order_type,
+                        "error": str(e),
+                    },
                 )
     
     async def sync_positions(self, exchange_name: str):

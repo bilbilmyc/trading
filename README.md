@@ -22,6 +22,7 @@
 | **持仓同步** | 定时同步余额和合约持仓到 PositionManager |
 | **监控告警** | 引擎健康、网络断开、风控触发 → 结构化 Alert |
 | **模拟盘** | 内存 USDT 模拟账户，支持信号模拟执行 |
+| **审计持久化** | SQLite 保存策略、信号、模拟盘状态、订单/风控事件 |
 | **AI 分析** | 接入 OpenAI/Claude/DeepSeek/Ollama 分析市场，辅助决策 |
 | **WebSocket** | Ticker 订阅/取消订阅/断线重连 |
 | **REST API** | FastAPI 服务，查询行情/K 线/余额/挂单/下单/撤单/合约操作/引擎状态 |
@@ -40,6 +41,7 @@
 - [Docker](#docker)
 - [API 参考](#api-参考)
 - [项目结构](#项目结构)
+- [后续开发](#后续开发)
 - [常见问题](#常见问题)
 
 ---
@@ -100,6 +102,29 @@ uv run python main.py trade
 ```text
 http://127.0.0.1:8000/docs
 ```
+
+### FastAPI 调用关系速读
+
+后端 HTTP 层主要在 `app/api/server.py`。先按这条链看，代码会清楚很多：
+
+```text
+main.py api
+  -> uvicorn 启动
+  -> create_app()
+  -> AppState(settings)
+  -> @app.get/post/delete 路由函数
+  -> Depends(get_state) 注入同一个 AppState
+  -> state.get_exchange() / state.engine / state.store
+  -> 交易所适配器、交易引擎、SQLite
+```
+
+几个关键点：
+
+- `create_app()`：装配整个 FastAPI 应用，创建运行时对象、注册中间件和路由。
+- `AppState`：一个 API worker 里的共享上下文，放配置、SQLite、交易引擎和交易所客户端缓存。
+- `Depends(get_state)`：FastAPI 的依赖注入。请求进来时自动把 `AppState` 传给路由函数。
+- `call_exchange(...)`：统一包住交易所网络调用，把交易所错误转成稳定的 HTTP 响应。
+- `reject_live_disabled(...)`：实盘关闭时拦截下单/撤单/改杠杆，同时写入审计事件。
 
 ---
 
@@ -391,6 +416,7 @@ POST  /api/v1/runner/stop
 POST  /api/v1/runner/run-once
 GET   /api/v1/signals/recent?limit=20
 POST  /api/v1/signals/evaluate?exchange=binance_usdm&symbol=BTCUSDT
+GET   /api/v1/events/recent?category=risk&limit=30
 ```
 
 ### 模拟盘
@@ -475,6 +501,10 @@ POST  /api/v1/sync/positions/{exchange}
 └── pyproject.toml
 ```
 
+## 后续开发
+
+后续任务以专业量化系统为目标拆分在 [TODO.md](TODO.md)，包括数据层、回测、组合风控、OMS/EMS、监控运维和测试体系。下次继续开发时优先从 `Next Best Task` 开始。
+
 ---
 
 ## 常见问题
@@ -515,7 +545,8 @@ echo <GITHUB_TOKEN> | docker login ghcr.io -u <USER> --password-stdin
 ## 后续路线
 
 - [ ] 单元测试：交易所签名、symbol 标准化、风控拦截
-- [ ] 订单持久化：SQLite/PostgreSQL
+- [x] 订单/风控事件持久化：SQLite
+- [ ] 完整 OMS 订单状态持久化：PostgreSQL/SQLite migration
 - [ ] 私有 WebSocket：订单成交推送
 - [ ] 多用户认证
 - [ ] 策略回测框架

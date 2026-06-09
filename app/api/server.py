@@ -1,8 +1,18 @@
 """
-FastAPI server for trading operations.
+FastAPI HTTP 入口。
+
+读这层代码时可以按下面的调用链理解：
+
+1. `main.py api` 启动 uvicorn，uvicorn 调用这里的 `create_app()`。
+2. `create_app()` 创建一个 `AppState`，里面放配置、SQLite、交易引擎和交易所客户端缓存。
+3. 每个 `@app.get/post/delete(...)` 都是一个 HTTP 路由处理函数。
+4. 路由参数里的 `state: AppState = Depends(get_state)` 是 FastAPI 依赖注入：
+   请求进来时，FastAPI 先调用 `get_state()`，再把同一个 `AppState` 传给路由函数。
+5. 路由函数通常先从 `state` 取 engine/store/exchange，再调用具体业务方法。
 """
 
 from contextlib import asynccontextmanager
+from datetime import datetime
 from pathlib import Path
 from typing import Any, Awaitable, Callable, Dict, Optional, TypeVar
 
@@ -76,7 +86,16 @@ class StrategyModeRequest(BaseModel):
 
 
 class AppState:
-    """Runtime objects shared by all API handlers in one worker process."""
+    """一个 API worker 内共享的运行时对象。
+
+    你可以把它理解成“后端服务的内存上下文”：
+    - settings：环境配置和交易所开关。
+    - store：SQLite 持久化入口。
+    - engine：策略、风控、模拟盘、订单同步等核心业务。
+    - exchanges：交易所客户端缓存，避免每个请求都重新创建 HTTP 客户端。
+
+    注意：如果 uvicorn 使用多个 worker，每个 worker 都会有自己的 AppState。
+    """
 
     def __init__(self, settings: Settings):
         self.settings = settings
@@ -99,7 +118,14 @@ class AppState:
         self.exchanges: Dict[str, ExchangeBase] = {}
 
     def get_exchange(self, name: str) -> ExchangeBase:
-        """Create exchange clients lazily and reuse them for later requests."""
+        """按需创建交易所客户端。
+
+        API 路由不会直接 new Binance/Bitget/OKX，而是统一走这里：
+        1. 检查该交易所是否启用。
+        2. 第一次请求时通过 ExchangeFactory 创建客户端。
+        3. 缓存在 self.exchanges，后续请求复用。
+        4. 同时注册到 TradingEngine，策略执行时也能找到同一个客户端。
+        """
 
         exchange_name = name.lower()
         if exchange_name in self.exchanges:
@@ -109,8 +135,8 @@ class AppState:
         if exchange_settings is None or not exchange_settings.enabled:
             raise HTTPException(status_code=404, detail=f"Exchange is not enabled: {name}")
 
-        # ExchangeFactory owns adapter construction and keeps one instance per
-        # exchange/API-key pair, so handlers do not recreate HTTP clients.
+        # ExchangeFactory 负责根据名字选择适配器，例如 binance_usdm -> BinanceUSDMExchange。
+        # 这里不写 if/else，是为了让 API 层不关心每家交易所的构造细节。
         exchange = ExchangeFactory.get_or_create(
             exchange_name,
             api_key=exchange_settings.api_key,
@@ -123,7 +149,11 @@ class AppState:
         return exchange
 
     def get_contract_exchange(self, name: str) -> ContractExchangeBase:
-        """Return a contract-capable exchange or reject the request clearly."""
+        """取得“合约交易所”客户端。
+
+        有些适配器只支持现货，有些支持永续合约。合约相关 API 统一走这里，
+        如果客户端不是 ContractExchangeBase，就直接返回 400。
+        """
 
         exchange = self.get_exchange(name)
         if not isinstance(exchange, ContractExchangeBase):
@@ -131,7 +161,7 @@ class AppState:
         return exchange
 
     def ensure_strategy_exchanges(self) -> None:
-        """Create exchange clients required by configured strategy instances."""
+        """策略运行前，先把策略配置里需要的交易所客户端创建好。"""
 
         for strategy in self.engine.list_strategies():
             exchange_name = strategy.get("exchange")
@@ -139,7 +169,7 @@ class AppState:
                 self.get_exchange(str(exchange_name))
 
     async def close(self) -> None:
-        """Close HTTP/WebSocket connections when the API worker shuts down."""
+        """API worker 关闭时释放交易所连接和 SQLite 连接。"""
 
         for exchange in self.exchanges.values():
             await exchange.close()
@@ -152,10 +182,10 @@ def get_settings() -> Settings:
 
 
 def create_app(settings: Optional[Settings] = None) -> FastAPI:
-    """Create the FastAPI app.
+    """创建 FastAPI 应用实例。
 
-    Uvicorn workers import this function independently, so each worker gets its
-    own AppState and exchange clients.
+    这是整个 HTTP 服务的装配点：配置日志、创建 AppState、注册中间件、
+    定义路由，然后把 app 返回给 uvicorn。
     """
 
     settings = settings or load_settings()
@@ -164,7 +194,8 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
-        # Store the runtime state on app.state for debugging or future routes.
+        # lifespan 是 FastAPI 的启动/关闭钩子。
+        # 启动时把 state 挂到 app.state，便于调试；关闭时统一释放资源。
         app.state.trading = state
         yield
         await state.close()
@@ -175,9 +206,8 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
         lifespan=lifespan,
     )
 
-    # Frontend development runs on Vite's local port. Keep CORS explicit so a
-    # browser dashboard can call the API without opening the service to every
-    # origin by default.
+    # 前端开发时 Vite 跑在 5173，浏览器会跨端口调用 8000 的 API。
+    # CORS 只放开本地前端地址，不把 API 暴露给任意网站。
     app.add_middleware(
         CORSMiddleware,
         allow_origins=[
@@ -190,10 +220,20 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
     )
 
     def get_state() -> AppState:
+        # FastAPI 的 Depends(get_state) 会调用这个函数，并把返回值注入到路由参数。
+        # 因为这里闭包捕获了 create_app() 里创建的 state，所以所有路由拿到的是同一个对象。
         return state
 
     async def call_exchange(operation: Callable[[], Awaitable[T]]) -> T:
-        """Convert adapter/network failures into predictable API responses."""
+        """统一包装交易所调用，把网络/交易所异常转换成 HTTP 响应。
+
+        路由里常见写法：
+
+            client = state.get_exchange(exchange)
+            return await call_exchange(lambda: client.get_ticker(symbol))
+
+        这样每个路由不用重复 try/except，前端也能收到稳定的错误格式。
+        """
 
         try:
             return await operation()
@@ -222,6 +262,75 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
             ) from exc
         except Exception as exc:
             raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+    def extract_order_id(result: Any) -> Optional[str]:
+        """尽量从不同交易所返回里取订单号。
+
+        Binance、OKX、Bitget 的字段名不完全一样，所以这里做一层兼容。
+        后续引入正式 OMS 后，订单号抽取应该下沉到各交易所适配器。
+        """
+
+        if not isinstance(result, dict):
+            return None
+        for key in ("order_id", "orderId", "ordId", "clientOid", "clOrdId"):
+            value = result.get(key)
+            if value:
+                return str(value)
+        raw = result.get("raw")
+        if isinstance(raw, dict):
+            return extract_order_id(raw)
+        return None
+
+    def record_event(
+        *,
+        category: str,
+        event_type: str,
+        message: str,
+        level: str = "info",
+        exchange: Optional[str] = None,
+        symbol: Optional[str] = None,
+        strategy: Optional[str] = None,
+        order_id: Optional[str] = None,
+        details: Optional[Dict[str, Any]] = None,
+    ) -> None:
+        # 订单/风控事件统一写 SQLite。前端右侧“审计事件”面板读取的就是这张表。
+        state.store.append_event(
+            {
+                "category": category,
+                "event_type": event_type,
+                "level": level,
+                "exchange": exchange,
+                "symbol": symbol,
+                "strategy": strategy,
+                "order_id": order_id,
+                "message": message,
+                "details": details or {},
+                "timestamp": datetime.utcnow().isoformat(),
+            }
+        )
+
+    def reject_live_disabled(
+        *,
+        action: str,
+        detail: str,
+        exchange: Optional[str] = None,
+        symbol: Optional[str] = None,
+        order_id: Optional[str] = None,
+        details: Optional[Dict[str, Any]] = None,
+    ) -> None:
+        # 实盘关闭时，不能只返回 403；量化系统要留下“谁、对哪个交易所/币对、试图做什么”的审计记录。
+        payload = {"action": action, **(details or {})}
+        record_event(
+            category="risk",
+            event_type="live_trading_blocked",
+            level="warning",
+            exchange=exchange,
+            symbol=symbol,
+            order_id=order_id,
+            message=detail,
+            details=payload,
+        )
+        raise HTTPException(status_code=403, detail=detail)
 
     @app.get("/health")
     async def health() -> Dict[str, Any]:
@@ -368,25 +477,49 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
         state: AppState = Depends(get_state),
     ):
         if not state.settings.enable_live_trading:
-            raise HTTPException(
-                status_code=403,
+            reject_live_disabled(
+                action="set_leverage",
                 detail="Live trading is disabled. Set ENABLE_LIVE_TRADING=true to change leverage.",
+                exchange=exchange,
+                symbol=symbol,
+                details={
+                    "leverage": leverage,
+                    "margin_mode": margin_mode.value,
+                    "position_side": position_side.value,
+                },
             )
         client = state.get_contract_exchange(exchange)
-        return await call_exchange(lambda: client.set_leverage(symbol, leverage, margin_mode, position_side))
+        result = await call_exchange(lambda: client.set_leverage(symbol, leverage, margin_mode, position_side))
+        record_event(
+            category="order",
+            event_type="leverage_changed",
+            exchange=exchange,
+            symbol=symbol,
+            message=f"Leverage set to {leverage}x for {symbol}",
+            details={
+                "leverage": leverage,
+                "margin_mode": margin_mode.value,
+                "position_side": position_side.value,
+                "response": result,
+            },
+        )
+        return result
 
     @app.post("/api/v1/order")
     async def place_order(request: OrderRequest, state: AppState = Depends(get_state)):
         # This guard makes the API safe by default: read-only endpoints work,
         # while real order placement must be enabled explicitly in .env.
         if not state.settings.enable_live_trading:
-            raise HTTPException(
-                status_code=403,
+            reject_live_disabled(
+                action="place_order",
                 detail="Live trading is disabled. Set ENABLE_LIVE_TRADING=true to place orders.",
+                exchange=request.exchange,
+                symbol=request.symbol,
+                details=request.model_dump(),
             )
 
         client = state.get_exchange(request.exchange)
-        return await call_exchange(
+        result = await call_exchange(
             lambda: client.place_order(
                 symbol=request.symbol,
                 side=request.side,
@@ -396,6 +529,16 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
                 quote_order_qty=request.quote_order_qty,
             )
         )
+        record_event(
+            category="order",
+            event_type="spot_order_submitted",
+            exchange=request.exchange,
+            symbol=request.symbol,
+            order_id=extract_order_id(result),
+            message=f"Spot order submitted: {request.side.upper()} {request.quantity} {request.symbol}",
+            details={"request": request.model_dump(), "response": result},
+        )
+        return result
 
     @app.post("/api/v1/contracts/order")
     async def place_contract_order(
@@ -405,13 +548,26 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
         # Contract orders can open leveraged exposure. Keep them behind the
         # same explicit live-trading switch as spot orders.
         if not state.settings.enable_live_trading:
-            raise HTTPException(
-                status_code=403,
+            reject_live_disabled(
+                action="place_contract_order",
                 detail="Live trading is disabled. Set ENABLE_LIVE_TRADING=true to place contract orders.",
+                exchange=request.exchange,
+                symbol=request.symbol,
+                details=request.model_dump(mode="json"),
             )
 
         client = state.get_contract_exchange(request.exchange)
-        return await call_exchange(lambda: client.place_contract_order(request))
+        result = await call_exchange(lambda: client.place_contract_order(request))
+        record_event(
+            category="order",
+            event_type="contract_order_submitted",
+            exchange=request.exchange,
+            symbol=request.symbol,
+            order_id=extract_order_id(result),
+            message=f"Contract order submitted: {request.intent.value} {request.quantity} {request.symbol}",
+            details={"request": request.model_dump(mode="json"), "response": result},
+        )
+        return result
 
     @app.delete("/api/v1/order/{exchange}/{symbol}/{order_id}")
     async def cancel_order(
@@ -423,12 +579,25 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
         # Keep cancel behind the same live-trading flag because cancelling a
         # real order still changes exchange state.
         if not state.settings.enable_live_trading:
-            raise HTTPException(
-                status_code=403,
+            reject_live_disabled(
+                action="cancel_order",
                 detail="Live trading is disabled. Set ENABLE_LIVE_TRADING=true to cancel orders.",
+                exchange=exchange,
+                symbol=symbol,
+                order_id=order_id,
             )
         client = state.get_exchange(exchange)
-        return await call_exchange(lambda: client.cancel_order(symbol, order_id))
+        result = await call_exchange(lambda: client.cancel_order(symbol, order_id))
+        record_event(
+            category="order",
+            event_type="order_cancel_requested",
+            exchange=exchange,
+            symbol=symbol,
+            order_id=order_id,
+            message=f"Cancel requested for {symbol} order {order_id}",
+            details={"response": result},
+        )
+        return result
 
     @app.delete("/api/v1/orders/{exchange}/open")
     async def cancel_all_orders(
@@ -437,12 +606,22 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
         state: AppState = Depends(get_state),
     ):
         if not state.settings.enable_live_trading:
-            raise HTTPException(
-                status_code=403,
+            reject_live_disabled(
+                action="cancel_all_orders",
                 detail="Live trading is disabled. Set ENABLE_LIVE_TRADING=true to cancel orders.",
+                exchange=exchange,
+                symbol=symbol,
             )
         client = state.get_exchange(exchange)
         cancelled = await call_exchange(lambda: client.cancel_all_orders(symbol))
+        record_event(
+            category="order",
+            event_type="cancel_all_requested",
+            exchange=exchange,
+            symbol=symbol,
+            message=f"Cancel-all requested on {exchange}{f' for {symbol}' if symbol else ''}",
+            details={"cancelled": cancelled},
+        )
         return {"cancelled": cancelled}
 
     @app.get("/api/v1/engine/status")
@@ -497,6 +676,7 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
             "size_bytes": db_path.stat().st_size if db_path.exists() else 0,
             "strategies": len(state.store.list_strategies()),
             "recent_signals": len(state.store.recent_signals(limit=200)),
+            "recent_events": len(state.store.recent_events(limit=200)),
         }
 
     @app.get("/api/v1/strategies")
@@ -573,6 +753,21 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
         state: AppState = Depends(get_state),
     ):
         return {"signals": state.engine.get_recent_signals(limit=limit)}
+
+    @app.get("/api/v1/events/recent")
+    async def recent_events(
+        category: Optional[str] = Query(None, min_length=1, max_length=32),
+        event_type: Optional[str] = Query(None, min_length=1, max_length=64),
+        limit: int = Query(30, ge=1, le=200),
+        state: AppState = Depends(get_state),
+    ):
+        return {
+            "events": state.store.recent_events(
+                category=category,
+                event_type=event_type,
+                limit=limit,
+            )
+        }
 
     @app.post("/api/v1/signals/evaluate")
     async def evaluate_strategy_signals(

@@ -18,6 +18,7 @@ import {
 import {
   api,
   AppConfig,
+  AuditEvent,
   ContractMarket,
   ContractOrderPayload,
   CostEstimate,
@@ -50,6 +51,18 @@ const INTENTS: Array<{ value: Intent; label: string; tone: "buy" | "sell" }> = [
   { value: "close_short", label: "买入平空", tone: "buy" },
 ];
 
+const EVENT_LABELS: Record<string, string> = {
+  live_trading_blocked: "实盘守卫拦截",
+  order_rejected_by_risk: "风控拒单",
+  live_order_submitted: "策略实盘下单",
+  live_order_failed: "策略下单失败",
+  spot_order_submitted: "现货订单提交",
+  contract_order_submitted: "合约订单提交",
+  order_cancel_requested: "撤单请求",
+  cancel_all_requested: "批量撤单请求",
+  leverage_changed: "杠杆调整",
+};
+
 function formatNumber(value: number | undefined, digits = 4) {
   if (value === undefined || Number.isNaN(value)) return "--";
   return new Intl.NumberFormat("en-US", {
@@ -61,6 +74,10 @@ function formatNumber(value: number | undefined, digits = 4) {
 function formatPercent(value: number | undefined) {
   if (value === undefined || Number.isNaN(value)) return "--";
   return `${(value * 100).toFixed(4)}%`;
+}
+
+function formatEventType(eventType: string) {
+  return EVENT_LABELS[eventType] ?? eventType.replaceAll("_", " ");
 }
 
 function initialPositionSide(intent: Intent): PositionSide {
@@ -103,6 +120,7 @@ export default function App() {
   const [engine, setEngine] = useState<EngineStatus | null>(null);
   const [strategies, setStrategies] = useState<StrategyInfo[]>([]);
   const [signals, setSignals] = useState<StrategySignal[]>([]);
+  const [events, setEvents] = useState<AuditEvent[]>([]);
   const [runner, setRunner] = useState<SignalRunnerStatus | null>(null);
   const [paper, setPaper] = useState<PaperSummary | null>(null);
   const [ticker, setTicker] = useState<Ticker | null>(null);
@@ -144,13 +162,24 @@ export default function App() {
 
   const refreshStatus = useCallback(async () => {
     try {
-      const [health, exchanges, status, runtimeConfig, strategyResult, signalResult, runnerStatus, paperStatus] = await Promise.all([
+      const [
+        health,
+        exchanges,
+        status,
+        runtimeConfig,
+        strategyResult,
+        signalResult,
+        eventResult,
+        runnerStatus,
+        paperStatus,
+      ] = await Promise.all([
         api.health(),
         api.exchanges(),
         api.engineStatus(),
         api.config(),
         api.strategies(),
         api.recentSignals(10),
+        api.recentEvents(12),
         api.runnerStatus(),
         api.paper(),
       ]);
@@ -162,6 +191,7 @@ export default function App() {
       setEngine(status);
       setStrategies(strategyResult.strategies);
       setSignals(signalResult.signals);
+      setEvents(eventResult.events);
       setRunner(runnerStatus);
       setPaper(paperStatus);
       setError("");
@@ -790,6 +820,33 @@ export default function App() {
             <Metric label="当日 PnL" value={`$${formatNumber(engine?.risk.daily_pnl ?? 0, 2)}`} />
             <Metric label="当前回撤" value={`${formatNumber((engine?.risk.current_drawdown ?? 0) * 100, 2)}%`} />
             <Metric label="活跃仓位" value={String(engine?.positions.active_positions ?? 0)} />
+          </div>
+
+          <div className="audit-panel">
+            <div className="section-title">
+              <span>审计事件</span>
+              <small>{events.length}</small>
+            </div>
+            {events.length ? (
+              events
+                .slice()
+                .reverse()
+                .map((event) => (
+                  <div className={`event-row ${event.level}`} key={event.id}>
+                    <div className="event-marker" />
+                    <div>
+                      <strong>{formatEventType(event.event_type)}</strong>
+                      <span>
+                        {event.exchange ?? "--"} · {event.symbol ?? "--"} ·{" "}
+                        {new Date(event.timestamp).toLocaleTimeString()}
+                      </span>
+                      <p>{event.message}</p>
+                    </div>
+                  </div>
+                ))
+            ) : (
+              <div className="empty-state">暂无订单或风控审计事件</div>
+            )}
           </div>
 
           <div className="strategies">

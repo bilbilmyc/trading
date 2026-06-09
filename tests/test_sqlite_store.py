@@ -52,6 +52,23 @@ def test_sqlite_store_persists_strategy_signal_and_paper_state(tmp_path):
     store.append_signal(signal)
     assert store.recent_signals(limit=1) == [signal]
 
+    event = {
+        "category": "risk",
+        "event_type": "order_rejected_by_risk",
+        "level": "warning",
+        "exchange": "binance_usdm",
+        "symbol": "BTCUSDT",
+        "strategy": "sma_test",
+        "order_id": None,
+        "message": "Order value exceeds max position value",
+        "details": {"action": "buy", "quantity": 1, "price": 62500.0},
+        "timestamp": "2026-06-09T00:00:02.500000",
+    }
+    store.append_event(event)
+    assert store.recent_events(limit=1) == [{**event, "id": 1}]
+    assert store.recent_events(category="risk", limit=1)[0]["event_type"] == "order_rejected_by_risk"
+    assert store.recent_events(category="order", limit=1) == []
+
     order = {
         "order_id": "paper_1",
         "exchange": "binance_usdm",
