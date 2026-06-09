@@ -154,6 +154,7 @@ High-end quant stacks usually separate these responsibilities:
 
 ## Next Best Task
 
-Add a global kill switch API and UI control. It should block strategy live
-execution and manual order endpoints, persist kill-switch events, and be visible
-in the frontend risk panel.
+Split public market errors from private account/order errors in API responses.
+Public ticker/contract queries should stay usable when API keys are missing,
+while private balance/order failures should return clearer credential, exchange,
+and risk-guard categories for the frontend.

@@ -54,6 +54,12 @@ export interface EngineStatus {
   timestamp: string;
 }
 
+export interface KillSwitchStatus {
+  enabled: boolean;
+  trading_enabled: boolean;
+  risk: EngineStatus["risk"];
+}
+
 export interface SignalRunnerStatus {
   running: boolean;
   poll_seconds?: number | null;
@@ -380,6 +386,14 @@ export const api = {
     if (category) params.set("category", category);
     return request<{ events: AuditEvent[] }>(`/api/v1/events/recent?${params}`);
   },
+
+  killSwitchStatus: () => request<KillSwitchStatus>("/api/v1/risk/kill-switch"),
+
+  setKillSwitch: (enabled: boolean, reason: string) =>
+    request<KillSwitchStatus>("/api/v1/risk/kill-switch", {
+      method: "POST",
+      body: JSON.stringify({ enabled, reason }),
+    }),
 
   evaluateSignals: (exchange: ExchangeName, symbol: string, interval = "1m", limit = 80) => {
     const params = new URLSearchParams({ exchange, symbol, interval, limit: String(limit) });

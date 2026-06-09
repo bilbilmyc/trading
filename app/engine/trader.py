@@ -861,6 +861,7 @@ class TradingEngine:
 
             if not allowed:
                 logger.warning(f"订单被风控拦截：{reason}")
+                kill_switch_blocked = reason == "交易已禁用"
                 risk_details = {
                     "action": signal.action.value,
                     "quantity": quantity,
@@ -869,7 +870,7 @@ class TradingEngine:
                 }
                 self.monitor.push(
                     Alert(
-                        level=AlertLevel.WARNING,
+                        level=AlertLevel.CRITICAL if kill_switch_blocked else AlertLevel.WARNING,
                         category=AlertCategory.RISK,
                         title="Order rejected by risk",
                         message=reason,
@@ -880,8 +881,8 @@ class TradingEngine:
                 )
                 self._record_event(
                     category="risk",
-                    event_type="order_rejected_by_risk",
-                    level="warning",
+                    event_type="kill_switch_blocked" if kill_switch_blocked else "order_rejected_by_risk",
+                    level="critical" if kill_switch_blocked else "warning",
                     exchange=exchange.name,
                     symbol=signal.symbol,
                     message=reason,

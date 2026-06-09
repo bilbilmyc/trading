@@ -86,6 +86,17 @@ class StrategyModeRequest(BaseModel):
     mode: str = Field(..., pattern="^(signal|paper)$")
 
 
+class KillSwitchRequest(BaseModel):
+    """全局 Kill Switch 切换请求体。
+
+    enabled=true 表示立即熔断全部真实交易；enabled=false 表示恢复交易权限。
+    reason 会写入 SQLite 审计事件，方便复盘是谁因为什么原因切换了风控状态。
+    """
+
+    enabled: bool
+    reason: str = Field("manual", min_length=1, max_length=200)
+
+
 class AppState:
     """一个 API worker 内共享的运行时对象。
 
@@ -422,6 +433,46 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
         )
         raise HTTPException(status_code=403, detail=detail)
 
+    def reject_kill_switch_enabled(
+        *,
+        action: str,
+        exchange: Optional[str] = None,
+        symbol: Optional[str] = None,
+        order_id: Optional[str] = None,
+        details: Optional[Dict[str, Any]] = None,
+    ) -> None:
+        # Kill Switch 是运行时紧急熔断。触发后，所有会改变交易所状态的接口都必须先被挡住并留审计。
+        detail = "Global kill switch is active. Disable it before trading."
+        record_event(
+            category="risk",
+            event_type="kill_switch_blocked",
+            level="critical",
+            exchange=exchange,
+            symbol=symbol,
+            order_id=order_id,
+            message=detail,
+            details={"action": action, **(details or {})},
+        )
+        raise HTTPException(status_code=423, detail=detail)
+
+    def ensure_trading_not_killed(
+        *,
+        action: str,
+        exchange: Optional[str] = None,
+        symbol: Optional[str] = None,
+        order_id: Optional[str] = None,
+        details: Optional[Dict[str, Any]] = None,
+    ) -> None:
+        # RiskManager.trading_enabled 是引擎层风控总闸；API 层在创建交易所客户端前先检查它。
+        if not state.engine.risk_manager.is_trading_enabled:
+            reject_kill_switch_enabled(
+                action=action,
+                exchange=exchange,
+                symbol=symbol,
+                order_id=order_id,
+                details=details,
+            )
+
     @app.get("/health")
     async def health() -> Dict[str, Any]:
         return {"status": "ok", "env": settings.app_env}
@@ -461,6 +512,58 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
             if (exchange_settings := settings.exchange(name)) is not None and exchange_settings.enabled
         ]
         return {"exchanges": supported, "enabled": enabled}
+
+    @app.get("/api/v1/risk/kill-switch")
+    async def get_kill_switch_status(state: AppState = Depends(get_state)) -> Dict[str, Any]:
+        """读取全局 Kill Switch 状态。
+
+        前端风控面板用这个接口判断是否允许真实下单。这里同时返回 risk 快照，
+        是为了让 UI 能把“是否熔断”和“当前风控指标”放在同一个区域展示。
+        """
+
+        risk = await state.engine.risk_manager.get_risk_status()
+        trading_enabled = bool(risk["trading_enabled"])
+        return {
+            "enabled": not trading_enabled,
+            "trading_enabled": trading_enabled,
+            "risk": risk,
+        }
+
+    @app.post("/api/v1/risk/kill-switch")
+    async def set_kill_switch(
+        request: KillSwitchRequest,
+        state: AppState = Depends(get_state),
+    ) -> Dict[str, Any]:
+        """切换全局 Kill Switch。
+
+        enabled=true 会调用 RiskManager.disable_trading()；策略实盘执行和手动下单都会被同一状态拦截。
+        """
+
+        if request.enabled:
+            state.engine.risk_manager.disable_trading()
+            event_type = "kill_switch_enabled"
+            level = "critical"
+            message = "Global kill switch enabled"
+        else:
+            state.engine.risk_manager.enable_trading()
+            event_type = "kill_switch_disabled"
+            level = "info"
+            message = "Global kill switch disabled"
+
+        record_event(
+            category="risk",
+            event_type=event_type,
+            level=level,
+            message=message,
+            details={"reason": request.reason, "enabled": request.enabled},
+        )
+        risk = await state.engine.risk_manager.get_risk_status()
+        trading_enabled = bool(risk["trading_enabled"])
+        return {
+            "enabled": not trading_enabled,
+            "trading_enabled": trading_enabled,
+            "risk": risk,
+        }
 
     @app.get("/api/v1/ticker/{exchange}/{symbol}")
     async def get_ticker(exchange: str, symbol: str, state: AppState = Depends(get_state)):
@@ -602,6 +705,16 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
                     "position_side": position_side.value,
                 },
             )
+        ensure_trading_not_killed(
+            action="set_leverage",
+            exchange=exchange,
+            symbol=symbol,
+            details={
+                "leverage": leverage,
+                "margin_mode": margin_mode.value,
+                "position_side": position_side.value,
+            },
+        )
         client = state.get_contract_exchange(exchange)
         result = await call_exchange(lambda: client.set_leverage(symbol, leverage, margin_mode, position_side))
         record_event(
@@ -630,6 +743,12 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
                 symbol=request.symbol,
                 details=request.model_dump(),
             )
+        ensure_trading_not_killed(
+            action="place_order",
+            exchange=request.exchange,
+            symbol=request.symbol,
+            details=request.model_dump(),
+        )
 
         client = state.get_exchange(request.exchange)
         result = await call_exchange(
@@ -668,6 +787,12 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
                 symbol=request.symbol,
                 details=request.model_dump(mode="json"),
             )
+        ensure_trading_not_killed(
+            action="place_contract_order",
+            exchange=request.exchange,
+            symbol=request.symbol,
+            details=request.model_dump(mode="json"),
+        )
 
         client = state.get_contract_exchange(request.exchange)
         result = await call_exchange(lambda: client.place_contract_order(request))
@@ -698,6 +823,12 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
                 symbol=symbol,
                 order_id=order_id,
             )
+        ensure_trading_not_killed(
+            action="cancel_order",
+            exchange=exchange,
+            symbol=symbol,
+            order_id=order_id,
+        )
         client = state.get_exchange(exchange)
         result = await call_exchange(lambda: client.cancel_order(symbol, order_id))
         record_event(
@@ -724,6 +855,11 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
                 exchange=exchange,
                 symbol=symbol,
             )
+        ensure_trading_not_killed(
+            action="cancel_all_orders",
+            exchange=exchange,
+            symbol=symbol,
+        )
         client = state.get_exchange(exchange)
         cancelled = await call_exchange(lambda: client.cancel_all_orders(symbol))
         record_event(

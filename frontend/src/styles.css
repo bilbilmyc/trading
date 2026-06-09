@@ -480,6 +480,12 @@ h2 {
   color: var(--cyan);
 }
 
+.state-button.danger {
+  border-color: rgba(255, 107, 95, 0.58);
+  background: rgba(255, 107, 95, 0.1);
+  color: var(--sell);
+}
+
 .strategy-actions {
   display: flex;
   gap: 7px;
@@ -647,6 +653,40 @@ h2 {
   gap: 10px;
 }
 
+.kill-switch {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-height: 72px;
+  margin-bottom: 14px;
+  padding: 12px;
+  border: 1px solid rgba(56, 215, 137, 0.28);
+  background: rgba(56, 215, 137, 0.06);
+}
+
+.kill-switch.active {
+  border-color: rgba(255, 107, 95, 0.64);
+  background: rgba(255, 107, 95, 0.1);
+}
+
+.kill-switch strong,
+.kill-switch span {
+  display: block;
+}
+
+.kill-switch strong {
+  color: var(--text);
+  font-size: 14px;
+}
+
+.kill-switch span {
+  margin-top: 5px;
+  color: var(--quiet);
+  font-size: 12px;
+  line-height: 1.35;
+}
+
 .audit-panel {
   margin-top: 16px;
   padding-top: 14px;
@@ -677,6 +717,12 @@ h2 {
 .event-row.error .event-marker {
   border-color: rgba(255, 107, 95, 0.9);
   background: rgba(255, 107, 95, 0.35);
+}
+
+.event-row.critical .event-marker {
+  border-color: rgba(255, 107, 95, 1);
+  background: rgba(255, 107, 95, 0.55);
+  box-shadow: 0 0 0 4px rgba(255, 107, 95, 0.1);
 }
 
 .event-row strong {

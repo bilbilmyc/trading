@@ -27,6 +27,7 @@ import {
   ExchangeName,
   FeeRate,
   Intent,
+  KillSwitchStatus,
   Liquidity,
   MarginMode,
   OpenOrder,
@@ -54,6 +55,9 @@ const INTENTS: Array<{ value: Intent; label: string; tone: "buy" | "sell" }> = [
 
 const EVENT_LABELS: Record<string, string> = {
   live_trading_blocked: "实盘守卫拦截",
+  kill_switch_enabled: "Kill Switch 开启",
+  kill_switch_disabled: "Kill Switch 解除",
+  kill_switch_blocked: "Kill Switch 拦截",
   order_rejected_by_risk: "风控拒单",
   live_order_submitted: "策略实盘下单",
   live_order_failed: "策略下单失败",
@@ -119,6 +123,7 @@ export default function App() {
   const [enabledExchanges, setEnabledExchanges] = useState<string[]>([]);
   const [config, setConfig] = useState<AppConfig | null>(null);
   const [engine, setEngine] = useState<EngineStatus | null>(null);
+  const [killSwitch, setKillSwitch] = useState<KillSwitchStatus | null>(null);
   const [strategies, setStrategies] = useState<StrategyInfo[]>([]);
   const [signals, setSignals] = useState<StrategySignal[]>([]);
   const [events, setEvents] = useState<AuditEvent[]>([]);
@@ -132,6 +137,7 @@ export default function App() {
   const [orderPreview, setOrderPreview] = useState<ContractOrderPreview | null>(null);
   const [busy, setBusy] = useState(false);
   const [previewBusy, setPreviewBusy] = useState(false);
+  const [killBusy, setKillBusy] = useState(false);
   const [evaluating, setEvaluating] = useState(false);
   const [strategyBusy, setStrategyBusy] = useState("");
   const [runnerBusy, setRunnerBusy] = useState("");
@@ -148,7 +154,9 @@ export default function App() {
   const numericQuantity = Number(quantity);
   const numericPrice = Number(price);
   const liveEnabled = config?.live_trading_enabled ?? false;
-  const orderBlocked = !liveEnabled || !apiOnline;
+  const killSwitchEnabled = killSwitch?.enabled ?? !(engine?.risk.trading_enabled ?? true);
+  const orderBlockedReason = !apiOnline ? "后端离线" : killSwitchEnabled ? "Kill Switch 已开启" : !liveEnabled ? "实盘未开启" : "";
+  const orderBlocked = Boolean(orderBlockedReason);
   const notional = numericQuantity * numericPrice;
 
   const selectedExchangeLabel = useMemo(
@@ -173,6 +181,7 @@ export default function App() {
         strategyResult,
         signalResult,
         eventResult,
+        killSwitchResult,
         runnerStatus,
         paperStatus,
       ] = await Promise.all([
@@ -183,6 +192,7 @@ export default function App() {
         api.strategies(),
         api.recentSignals(10),
         api.recentEvents(12),
+        api.killSwitchStatus(),
         api.runnerStatus(),
         api.paper(),
       ]);
@@ -195,6 +205,7 @@ export default function App() {
       setStrategies(strategyResult.strategies);
       setSignals(signalResult.signals);
       setEvents(eventResult.events);
+      setKillSwitch(killSwitchResult);
       setRunner(runnerStatus);
       setPaper(paperStatus);
       setError("");
@@ -371,7 +382,7 @@ export default function App() {
     setError("");
     try {
       if (orderBlocked) {
-        throw new Error("当前未允许真实交易，后端会拒绝下单。");
+        throw new Error(`${orderBlockedReason}，后端会拒绝真实下单。`);
       }
       const payload = buildContractOrderPayload(orderPreview?.client_order_id);
       const preview = await previewCurrentOrder(payload);
@@ -394,6 +405,30 @@ export default function App() {
       setError(err instanceof Error ? err.message : "下单失败");
     } finally {
       setBusy(false);
+    }
+  }
+
+  async function toggleKillSwitch() {
+    const nextEnabled = !killSwitchEnabled;
+    if (nextEnabled) {
+      const confirmed = window.confirm("确认开启全局 Kill Switch？开启后手动下单、撤单、调杠杆和策略实盘下单都会被拦截。");
+      if (!confirmed) return;
+    }
+
+    setKillBusy(true);
+    setError("");
+    try {
+      const next = await api.setKillSwitch(
+        nextEnabled,
+        nextEnabled ? "manual_frontend_enable" : "manual_frontend_disable",
+      );
+      setKillSwitch(next);
+      await refreshStatus();
+      setMessage(nextEnabled ? "全局 Kill Switch 已开启" : "全局 Kill Switch 已解除");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "切换 Kill Switch 失败");
+    } finally {
+      setKillBusy(false);
     }
   }
 
@@ -701,7 +736,7 @@ export default function App() {
 
           <button className="primary-action" onClick={submitOrder} disabled={busy || orderBlocked}>
             <Send size={18} />
-            {busy ? "提交中" : orderBlocked ? "实盘未开启" : "预览后提交"}
+            {busy ? "提交中" : orderBlocked ? orderBlockedReason : "预览后提交"}
           </button>
 
           <div className={`notice ${error ? "error" : "info"}`}>
@@ -878,6 +913,23 @@ export default function App() {
               <h2>账户状态</h2>
             </div>
             <Gauge size={22} />
+          </div>
+
+          <div className={`kill-switch ${killSwitchEnabled ? "active" : ""}`}>
+            <div>
+              <strong>全局 Kill Switch</strong>
+              <span>{killSwitchEnabled ? "已熔断全部真实交易" : "真实交易风控闸门正常"}</span>
+            </div>
+            <button
+              className={`state-button ${killSwitchEnabled ? "running" : "danger"}`}
+              onClick={toggleKillSwitch}
+              disabled={killBusy || !apiOnline}
+              title={killSwitchEnabled ? "解除全局 Kill Switch" : "开启全局 Kill Switch"}
+              type="button"
+            >
+              <Power size={15} />
+              {killBusy ? "处理中" : killSwitchEnabled ? "解除" : "熔断"}
+            </button>
           </div>
 
           <div className="risk-stack">
