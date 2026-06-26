@@ -48,7 +48,8 @@ class LLMAnalyzerConfig:
     default_limit: int = 30
     cache_ttl_seconds: float = 30.0
     cache_max_entries: int = 1024
-    prompt_version: str = "v1"
+    prompt_version: str = "v2"  # bumped: compact k-line + system/user split
+    max_compact_rows: int = 30  # rows shipped in prompt body
 
 
 # ── Backward-compatible result ──────────────────────────────────────
@@ -109,7 +110,7 @@ PROMPT_TEMPLATE = """你是一位专业的加密货币永续合约交易分析�
 ### 持仓状态
 {position_info}
 
-### 最近 K 线数据（倒序，最新在前）
+### 最近 K 线数据（紧凑编码：t=时间, o=开, h=高, l=低, c=收, v=量）
 ```
 {candle_data}
 ```
@@ -251,20 +252,7 @@ class LLMAnalyzer:
         klines: List[Dict[str, Any]],
         position_context: Optional[Dict[str, Any]] = None,
     ) -> str:
-        candle_lines = [
-            "open_time    open      high      low       close     volume"
-        ]
-        for k in sorted(klines, key=lambda x: x.get("open_time", ""), reverse=True)[: self.config.max_candles]:
-            ot = k.get("open_time", "")
-            if isinstance(ot, datetime):
-                ot = ot.strftime("%m-%d %H:%M")
-            else:
-                ot = str(ot)[-16:]
-            candle_lines.append(
-                f"{ot}  {float(k.get('open', 0)):>8.2f} {float(k.get('high', 0)):>8.2f} "
-                f"{float(k.get('low', 0)):>8.2f} {float(k.get('close', 0)):>8.2f} "
-                f"{float(k.get('volume', 0)):>10.4f}"
-            )
+        candle_data = self._render_klines_compact(klines)
         if position_context:
             pos_lines = [
                 f"- 持仓方向: {position_context.get('side', '无')}",
@@ -288,8 +276,78 @@ class LLMAnalyzer:
             volume_24h=volume_24h,
             quote_volume_24h=quote_volume_24h,
             position_info=pos_info,
-            candle_data="\n".join(candle_lines),
+            candle_data=candle_data,
         )
+
+    # ── Compact K-line encoding ──────────────────────────────────
+
+    @staticmethod
+    def _kline_summary(klines: List[Dict[str, Any]]) -> Dict[str, float]:
+        """Aggregate stats — gives the LLM orientation in 1 line."""
+        if not klines:
+            return {"count": 0}
+        ordered = sorted(klines, key=lambda k: k.get("open_time", ""))
+        closes = [float(k.get("close", 0)) for k in ordered]
+        highs = [float(k.get("high", 0)) for k in ordered]
+        lows = [float(k.get("low", 0)) for k in ordered]
+        n = len(ordered)
+        # Average True Range (rough)
+        trs = []
+        for k in ordered:
+            tr = max(
+                float(k.get("high", 0)) - float(k.get("low", 0)),
+                abs(float(k.get("high", 0)) - float(k.get("close", 0))),
+                abs(float(k.get("low", 0)) - float(k.get("close", 0))),
+            )
+            trs.append(tr)
+        return {
+            "count": n,
+            "first_close": closes[0],
+            "last_close": closes[-1],
+            "max_high": max(highs),
+            "min_low": min(lows),
+            "atr": sum(trs) / n if n else 0.0,
+        }
+
+    def _render_klines_compact(self, klines: List[Dict[str, Any]]) -> str:
+        """Render K-lines as compact text.
+
+        Output format (newest first):
+          #K n=30 first=100.5 last=129.5 hi=130.0 lo=99.0 atr=2.0
+          06-26-14:00 o:129 h:130 l:128 c:129.5 v:39.0
+          ...
+
+        Summary header + up to max_compact_rows body lines. Roughly half the
+        size of the old aligned-table format.
+        """
+        if not klines:
+            return ""
+        ordered = sorted(klines, key=lambda k: k.get("open_time", ""), reverse=True)
+        rows = ordered[: self.config.max_compact_rows]
+        summary = self._kline_summary(klines)
+        header = (
+            f"#K n={summary['count']} "
+            f"first={summary['first_close']:.2f} "
+            f"last={summary['last_close']:.2f} "
+            f"hi={summary['max_high']:.2f} "
+            f"lo={summary['min_low']:.2f} "
+            f"atr={summary['atr']:.2f}"
+        )
+        body = []
+        for k in rows:
+            ot = k.get("open_time", "")
+            if isinstance(ot, datetime):
+                ot = ot.strftime("%m-%d %H:%M")
+            else:
+                ot = str(ot)[-11:]
+            body.append(
+                f"{ot} o:{float(k.get('open', 0)):.2f} "
+                f"h:{float(k.get('high', 0)):.2f} "
+                f"l:{float(k.get('low', 0)):.2f} "
+                f"c:{float(k.get('close', 0)):.2f} "
+                f"v:{float(k.get('volume', 0)):.2f}"
+            )
+        return "\n".join([header, *body])
 
     @staticmethod
     def _position_signature(position_context: Optional[Dict[str, Any]]) -> str:
