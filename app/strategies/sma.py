@@ -27,9 +27,13 @@ class SMAStrategy(StrategyBase):
         self,
         short_window: int = 5,
         long_window: int = 20,
-        min_data_points: int = 20
+        min_data_points: int = 20,
+        max_data_points: int = 200,
+        name: Optional[str] = None,
     ):
-        super().__init__(name=f'SMA_{short_window}_{long_window}')
+        if name is None:
+            name = f"SMA_{short_window}_{long_window}"
+        super().__init__(name=name)
         
         if short_window >= long_window:
             raise ValueError("短期均线周期必须小于长期均线周期")

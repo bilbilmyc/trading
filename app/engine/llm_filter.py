@@ -12,12 +12,14 @@ LLM 信号过滤器（B 方案）
     engine.add_signal_filter(filter_.check)
 """
 
-from typing import Any, Dict, Optional
+from typing import TYPE_CHECKING, Any, Dict, Optional
 
 from loguru import logger
 
 from app.strategies.base import Signal
-from app.strategies.llm_analyzer import LLMAnalyzer, LLMAnalyzerConfig
+
+if TYPE_CHECKING:
+    from app.strategies.llm_analyzer import LLMAnalyzer, LLMAnalyzerConfig
 
 
 class LLMSignalFilter:
@@ -29,7 +31,7 @@ class LLMSignalFilter:
 
     def __init__(
         self,
-        analyzer: LLMAnalyzer,
+        analyzer,  # LLMAnalyzer — annotation deferred to avoid circular import
         default_order_amount_usdt: float = 50.0,
         min_confidence: float = 0.5,
     ):
