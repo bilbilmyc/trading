@@ -20,13 +20,14 @@ def recommend_strategy(
     llm_rationale: Optional[str] = None,
     llm_decision: Optional[str] = None,
     llm_confidence: Optional[float] = None,
+    prefer: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Combine heuristic suggestion with optional LLM insights.
 
     Returns a JSON-serializable dict with `kind`, `params`, and
     `rationale` (LLM rationale preferred when present and confident).
     """
-    suggestion = heuristic_suggest(candles)
+    suggestion = heuristic_suggest(candles, prefer=prefer)
 
     rationale = suggestion.rationale
     if llm_rationale and llm_confidence is not None and llm_confidence >= 0.5:
