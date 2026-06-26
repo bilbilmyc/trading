@@ -1,6 +1,8 @@
 import { useState } from "react";
 import { useEngine } from "../contexts/EngineContext";
 import { api } from "../api";
+import type { LLMAnalysisResult } from "../api";
+import { AIReport } from "../components/AIReport";
 import { EmptyState, Metric, SectionTitle } from "../components/atoms";
 
 export function StrategiesPage() {
@@ -9,6 +11,31 @@ export function StrategiesPage() {
   const [name, setName] = useState("");
   const [shortWindow, setShortWindow] = useState("5");
   const [longWindow, setLongWindow] = useState("20");
+
+  const [aiSymbol, setAiSymbol] = useState("BTCUSDT");
+  const [aiInterval, setAiInterval] = useState("1h");
+  const [aiExchange, setAiExchange] = useState("binance_usdm");
+  const [aiReport, setAiReport] = useState<LLMAnalysisResult | null>(null);
+  const [aiBusy, setAiBusy] = useState(false);
+  const [aiError, setAiError] = useState("");
+
+  async function runAiAnalyze() {
+    setAiBusy(true);
+    setAiError("");
+    try {
+      const result = await api.aiAnalyze({
+        exchange: aiExchange,
+        symbol: aiSymbol,
+        interval: aiInterval,
+        limit: 30,
+      });
+      setAiReport(result);
+    } catch (err) {
+      setAiError(err instanceof Error ? err.message : "AI 分析失败");
+    } finally {
+      setAiBusy(false);
+    }
+  }
 
   async function createSma() {
     setBusy("create");
@@ -66,6 +93,47 @@ export function StrategiesPage() {
         <Metric label="运行中" value={String(strategies.filter((s) => s.running).length)} tone="positive" />
         <Metric label="最近信号" value={String(signals.length)} tone="muted" />
       </div>
+
+      <section className="panel">
+        <SectionTitle
+          title="AI 分析"
+          subtitle="一次性大模型市场分析（不自动下单）"
+        />
+        <div className="form-grid">
+          <label className="field">
+            <span>交易所</span>
+            <select value={aiExchange} onChange={(e) => setAiExchange(e.target.value)}>
+              <option value="binance_usdm">Binance USDⓈ-M</option>
+              <option value="okx_swap">OKX 永续</option>
+              <option value="bitget_usdt_futures">Bitget USDT 永续</option>
+            </select>
+          </label>
+          <label className="field">
+            <span>合约</span>
+            <input value={aiSymbol} onChange={(e) => setAiSymbol(e.target.value)} />
+          </label>
+          <label className="field">
+            <span>周期</span>
+            <select value={aiInterval} onChange={(e) => setAiInterval(e.target.value)}>
+              <option value="15m">15m</option>
+              <option value="1h">1h</option>
+              <option value="4h">4h</option>
+              <option value="1d">1d</option>
+            </select>
+          </label>
+          <div className="field">
+            <button
+              className="action action--primary"
+              onClick={runAiAnalyze}
+              disabled={aiBusy || !aiSymbol}
+            >
+              {aiBusy ? "分析中..." : "运行 AI 分析"}
+            </button>
+          </div>
+        </div>
+        {aiError && <div className="notice notice--error">{aiError}</div>}
+        <AIReport data={aiReport as any} loading={aiBusy} />
+      </section>
 
       <section className="panel">
         <SectionTitle title="新建 SMA 策略" subtitle="simple moving average crossover" />

@@ -1138,6 +1138,117 @@ input, select, button, textarea {
   font-size: 13px;
 }
 
+/* ===== AI report card ================================================ */
+
+.ai-report {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  padding: 20px;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  border-left: 4px solid var(--decision-color, var(--border));
+}
+
+.ai-report--loading,
+.ai-report--empty {
+  align-items: center;
+  text-align: center;
+  color: var(--text-muted);
+}
+
+.ai-report--config {
+  border-left-color: var(--warning);
+  background: rgba(245, 158, 11, 0.06);
+}
+
+.ai-report--error {
+  border-left-color: var(--negative);
+}
+
+.ai-report__decision {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-end;
+  padding-bottom: 12px;
+  border-bottom: 1px solid var(--border);
+}
+
+.ai-report__decision > div {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.ai-report__decision strong {
+  font-size: 20px;
+  font-weight: 600;
+  color: var(--decision-color);
+}
+
+.ai-report__confidence {
+  text-align: right;
+}
+
+.ai-report__confidence strong {
+  font-size: 20px;
+  font-variant-numeric: tabular-nums;
+}
+
+.ai-report__label {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-muted);
+  font-weight: 500;
+}
+
+.ai-report__section h4 {
+  margin: 0 0 6px;
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-muted);
+  font-weight: 500;
+}
+
+.ai-report__section p {
+  margin: 0;
+  color: var(--text-secondary);
+  line-height: 1.6;
+}
+
+.ai-report__metrics {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  gap: 10px;
+}
+
+.ai-report__risk-note strong {
+  font-size: 13px;
+  font-weight: 500;
+}
+
+.ai-report__footer {
+  font-size: 11px;
+  color: var(--text-muted);
+  padding-top: 8px;
+  border-top: 1px solid var(--border);
+}
+
+.ai-report__skeleton {
+  height: 60px;
+  background: linear-gradient(90deg, var(--bg-card) 0%, var(--bg-hover) 50%, var(--bg-card) 100%);
+  background-size: 200% 100%;
+  border-radius: var(--radius-md);
+  animation: skeleton-shimmer 1.4s ease-in-out infinite;
+}
+
+.ai-report__skeleton--short {
+  height: 20px;
+}
+
 /* ===== Loading fallback / skeletons ================================= */
 
 .topbar--secondary {

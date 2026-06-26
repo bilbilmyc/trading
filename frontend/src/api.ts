@@ -182,6 +182,21 @@ export interface FeeRate {
   raw: Record<string, unknown>;
 }
 
+export interface LLMAnalysisResult {
+  decision: string;
+  confidence: number;
+  reason: string;
+  stop_loss?: number | null;
+  take_profit?: number | null;
+  risk_level: string;
+  risk_note: string;
+  model?: string;
+  analysis_time?: string;
+  candle_count?: number;
+  cache_hit?: boolean;
+  error_kind?: string | null;
+}
+
 export interface CostEstimate {
   exchange: string;
   symbol: string;
@@ -472,6 +487,12 @@ export const api = {
       `/api/v1/contracts/${exchange}/${encodeURIComponent(symbol)}/cost-estimate?${params}`,
     );
   },
+
+  aiAnalyze: (payload: { exchange: string; symbol: string; interval: string; limit: number }) =>
+    request<LLMAnalysisResult>("/api/v1/ai/analyze", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    }),
 
   placeContractOrder: (payload: ContractOrderPayload) =>
     request<Record<string, unknown>>("/api/v1/contracts/order", {
