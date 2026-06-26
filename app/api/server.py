@@ -31,6 +31,7 @@ from app.engine.live_trading_guard import LiveTradingGuard
 from app.exchanges.base import ExchangeBase
 from app.exchanges.contract_base import ContractExchangeBase
 from app.exchanges.factory import ExchangeFactory
+from app.data_sources.generic_http import GenericHttpDataSource
 from app.models.contract import ContractOrderRequest, LiquidityType, MarginMode, PositionSide
 from app.strategies.sma import SMAStrategy
 from app.core.logging import setup_logger
@@ -139,6 +140,8 @@ class AppState:
         self.exchanges: Dict[str, ExchangeBase] = {}
         self.data_sources: Dict[str, ExchangeBase] = {}
         self.trading_exchanges: Dict[str, ExchangeBase] = {}
+        # User-registered custom data sources (any HTTP API via GenericHttpDataSource).
+        self.custom_sources: Dict[str, Any] = {}
         self._register_data_sources()
         self._register_trading_exchanges()
 
@@ -1498,6 +1501,54 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
                 "interval_seconds": state.engine.position_sync.interval_seconds,
             },
         }
+
+    class CustomSourceRequest(BaseModel):
+        name: str = Field(..., min_length=1, max_length=64)
+        base_url: str = Field(..., min_length=1)
+        ticker_path: str = "/ticker/{symbol}"
+        klines_path: str = "/klines"
+        trades_path: str = "/trades"
+        klines_array_key: Optional[str] = None
+
+    @app.get("/api/v1/sources")
+    async def list_sources(state: AppState = Depends(get_state)):
+        return {
+            "sources": [
+                {"name": name, "base_url": src._base_url}
+                for name, src in state.custom_sources.items()
+            ]
+            + [
+                {"name": name, "base_url": "builtin"}
+                for name in state.data_sources
+                if name not in state.custom_sources
+            ]
+        }
+
+    @app.post("/api/v1/sources")
+    async def register_source(request: CustomSourceRequest, state: AppState = Depends(get_state)):
+        if request.name in state.custom_sources or request.name in state.data_sources:
+            raise HTTPException(status_code=409, detail=f"Source already registered: {request.name}")
+        src = GenericHttpDataSource(
+            name=request.name,
+            base_url=request.base_url,
+            ticker_path=request.ticker_path,
+            klines_path=request.klines_path,
+            trades_path=request.trades_path,
+            klines_array_key=request.klines_array_key,
+        )
+        state.custom_sources[request.name] = src
+        state.data_sources[request.name] = src
+        return {"name": request.name, "registered": True}
+
+    @app.delete("/api/v1/sources/{name}")
+    async def remove_source(name: str, state: AppState = Depends(get_state)):
+        if name not in state.custom_sources:
+            raise HTTPException(status_code=404, detail=f"Custom source not found: {name}")
+        del state.custom_sources[name]
+        # Also drop from data_sources (only if it was custom — builtins are kept).
+        if name in state.data_sources and isinstance(state.data_sources.get(name), GenericHttpDataSource):
+            del state.data_sources[name]
+        return {"name": name, "removed": True}
 
     @app.get("/api/v1/stream/events")
     async def stream_events(
