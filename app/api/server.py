@@ -1198,6 +1198,47 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
         interval: str = Field("1h", min_length=1, max_length=8)
         limit: int = Field(30, ge=10, le=100)
 
+    class SizingRequest(BaseModel):
+        account_equity: float = Field(..., gt=0)
+        entry_price: float = Field(..., gt=0)
+        stop_loss_price: float = Field(..., gt=0)
+        take_profit_price: Optional[float] = Field(None, gt=0)
+        leverage: float = Field(1.0, gt=0)
+        risk_pct: float = Field(0.02, gt=0, lt=1)
+        contract_size: float = Field(1.0, gt=0)
+        min_quantity: float = Field(0.001, gt=0)
+
+    @app.post("/api/v1/sizing")
+    async def sizing(request: SizingRequest):
+        """Compute recommended contract quantity sized to a target risk %.
+
+        Used by the frontend position-sizing panel and by automated risk
+        checks before order placement.
+        """
+        from app.engine.position_sizer import calculate_position_size
+
+        try:
+            r = calculate_position_size(
+                account_equity=request.account_equity,
+                entry_price=request.entry_price,
+                stop_loss_price=request.stop_loss_price,
+                take_profit_price=request.take_profit_price,
+                leverage=request.leverage,
+                risk_pct=request.risk_pct,
+                contract_size=request.contract_size,
+                min_quantity=request.min_quantity,
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc))
+        return {
+            "quantity": r.quantity,
+            "notional": r.notional,
+            "margin": r.margin,
+            "risk_amount": r.risk_amount,
+            "risk_pct": r.risk_pct,
+            "risk_reward_ratio": r.risk_reward_ratio,
+        }
+
     @app.post("/api/v1/ai/analyze")
     async def ai_analyze(
         request: AIAnalyzeRequest,
