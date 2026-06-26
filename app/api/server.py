@@ -1247,6 +1247,17 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
         short_window: int = Field(5, gt=0)
         long_window: int = Field(20, gt=0)
         initial_capital: float = Field(10_000.0, gt=0)
+
+
+class SuggestRequest(BaseModel):
+        klines: List[Dict[str, Any]] = Field(..., min_length=1)
+        prefer: Optional[str] = None
+
+
+class ClosePositionRequest(BaseModel):
+        symbol: str
+        exchange: str
+        exit_quantity: Optional[float] = None
         position_size_pct: float = Field(1.0, gt=0, le=1.0)
 
     @app.post("/api/v1/backtest")
