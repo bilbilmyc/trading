@@ -15,7 +15,7 @@ from contextlib import asynccontextmanager
 from datetime import datetime
 from pathlib import Path
 import secrets
-from typing import Any, Awaitable, Callable, Dict, Optional, TypeVar
+from typing import Any, Awaitable, Callable, Dict, List, Optional, TypeVar
 
 import httpx
 from fastapi import Depends, FastAPI, HTTPException, Query, Request
@@ -1237,6 +1237,59 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
             "risk_amount": r.risk_amount,
             "risk_pct": r.risk_pct,
             "risk_reward_ratio": r.risk_reward_ratio,
+        }
+
+    class BacktestRequest(BaseModel):
+        klines: List[Dict[str, Any]] = Field(..., min_length=1)
+        short_window: int = Field(5, gt=0)
+        long_window: int = Field(20, gt=0)
+        initial_capital: float = Field(10_000.0, gt=0)
+        position_size_pct: float = Field(1.0, gt=0, le=1.0)
+
+    @app.post("/api/v1/backtest")
+    async def backtest(request: BacktestRequest):
+        """Run SMA crossover backtest on supplied klines (no exchange call).
+
+        Useful for testing strategy ideas against data sourced from any
+        registered data source before turning them on for live execution.
+        """
+        from app.engine.backtest import run_sma_backtest
+
+        if request.short_window >= request.long_window:
+            raise HTTPException(
+                status_code=400,
+                detail="short_window must be smaller than long_window",
+            )
+        try:
+            r = run_sma_backtest(
+                candles=request.klines,
+                short_window=request.short_window,
+                long_window=request.long_window,
+                initial_capital=request.initial_capital,
+                position_size_pct=request.position_size_pct,
+            )
+        except (KeyError, ValueError, TypeError) as exc:
+            raise HTTPException(status_code=400, detail=f"Invalid kline data: {exc}")
+
+        def _serialize_kline(k: dict) -> dict:
+            out = {}
+            for key, val in k.items():
+                if isinstance(val, datetime):
+                    out[key] = val.isoformat()
+                else:
+                    out[key] = val
+            return out
+
+        # Caller may want to see what klines we used (with timestamps). Echo back.
+        return {
+            "initial_capital": r.initial_capital,
+            "final_equity": r.final_equity,
+            "total_pnl": r.total_pnl,
+            "trades": r.trades,
+            "win_rate": r.win_rate,
+            "max_drawdown": r.max_drawdown,
+            "equity_curve": r.equity_curve,
+            "klines_used": [_serialize_kline(k) for k in request.klines],
         }
 
     @app.post("/api/v1/ai/analyze")
