@@ -131,7 +131,57 @@ class AppState:
                 enabled=False,
                 mode="signal",
             )
+        # Two-layer exchange registry (ADR-0003):
+        # - data_sources: public market data only, no auth required.
+        # - trading_exchanges: private + order operations, require keys + flag.
+        # ExchangeBase already implements the DataSource surface, so existing
+        # adapters serve both roles once registered.
         self.exchanges: Dict[str, ExchangeBase] = {}
+        self.data_sources: Dict[str, ExchangeBase] = {}
+        self.trading_exchanges: Dict[str, ExchangeBase] = {}
+        self._register_data_sources()
+        self._register_trading_exchanges()
+
+    def _register_data_sources(self) -> None:
+        """Register every enabled exchange as a data source.
+
+        Public endpoints (ticker, klines, trades, contracts) work without
+        any API key, so we register the client regardless of credentials.
+        """
+        for name in ExchangeFactory.list_supported_exchanges():
+            exchange_settings = self.settings.exchange(name)
+            if exchange_settings is None or not exchange_settings.enabled:
+                continue
+            try:
+                exchange = ExchangeFactory.get_or_create(
+                    name,
+                    api_key=exchange_settings.api_key,
+                    secret_key=exchange_settings.secret_key,
+                    passphrase=exchange_settings.passphrase,
+                    use_testnet=exchange_settings.use_testnet,
+                )
+            except Exception:
+                # Don't let a single bad adapter prevent the app from booting.
+                continue
+            self.data_sources[name] = exchange
+            self.engine.add_exchange(name, exchange)
+            # Also cache for the legacy get_exchange() path used by trading routes.
+            self.exchanges[name] = exchange
+
+    def _register_trading_exchanges(self) -> None:
+        """Promote data sources that have keys + flag to trading exchanges.
+
+        Trading requires BOTH `enable_live_trading=true` AND a non-empty
+        API key. The promotion is one-way: removing keys later does not
+        demote, but a restart resets state.
+        """
+        if not self.settings.enable_live_trading:
+            return
+        for name, exchange in list(self.data_sources.items()):
+            exchange_settings = self.settings.exchange(name)
+            if exchange_settings is None or not exchange_settings.api_key:
+                continue
+            self.trading_exchanges[name] = exchange
 
     def get_exchange(self, name: str) -> ExchangeBase:
         """按需创建交易所客户端。
