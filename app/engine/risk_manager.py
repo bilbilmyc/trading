@@ -25,6 +25,12 @@ class RiskConfig(BaseModel):
     max_drawdown_pct: float = Field(0.20, gt=0, le=1, description="最大回撤百分比")
     max_orders_per_minute: int = Field(10, gt=0, description="每分钟最大订单数")
 
+    # Per-symbol overrides. Format: {symbol: {"max_leverage": float, "max_position_value": float}}
+    symbol_overrides: Dict[str, Dict[str, float]] = Field(
+        default_factory=dict,
+        description="Per-symbol risk overrides.",
+    )
+
 
 class RiskManager:
     """风险管理器
@@ -128,6 +134,44 @@ class RiskManager:
         sl = self.calculate_stop_loss(price, signal.action.value)
         tp = self.calculate_take_profit(price, signal.action.value)
         return RiskDecision(allowed=True, reason=reason, stop_loss=sl, take_profit=tp)
+
+    async def check_with_leverage(
+        self,
+        signal: Signal,
+        price: float,
+        leverage: Optional[float] = None,
+    ) -> RiskDecision:
+        """Risk check that also enforces per-symbol leverage cap and position cap.
+
+        Adds two checks on top of `check()`:
+        - Per-symbol max_leverage (when `leverage` is provided)
+        - Per-symbol max_position_value (overrides global)
+        """
+        # First the global checks via check() — includes position value cap.
+        base = await self.check(signal, price)
+        if not base.allowed:
+            return base
+
+        overrides = self.config.symbol_overrides.get(signal.symbol.upper(), {})
+        per_symbol_value_cap = overrides.get("max_position_value")
+        if per_symbol_value_cap is not None:
+            quantity = signal.quantity or 0.001
+            notional = quantity * price
+            if notional > per_symbol_value_cap:
+                return RiskDecision(
+                    allowed=False,
+                    reason=f"per-symbol max position value {per_symbol_value_cap} exceeded ({notional:.2f})",
+                )
+
+        if leverage is not None:
+            max_lev = overrides.get("max_leverage")
+            if max_lev is not None and leverage > max_lev:
+                return RiskDecision(
+                    allowed=False,
+                    reason=f"per-symbol max leverage {max_lev}x exceeded ({leverage}x)",
+                )
+
+        return base
     
     def _check_rate_limit(self) -> bool:
         """检查交易频率限制"""
