@@ -26,6 +26,7 @@ from pydantic import BaseModel, Field
 from app.core.sqlite_store import SQLiteStore
 from app.engine.risk_manager import RiskConfig
 from app.engine.trader import TradingEngine
+from app.engine.live_trading_guard import LiveTradingGuard
 from app.exchanges.base import ExchangeBase
 from app.exchanges.contract_base import ContractExchangeBase
 from app.exchanges.factory import ExchangeFactory
@@ -112,8 +113,10 @@ class AppState:
     def __init__(self, settings: Settings):
         self.settings = settings
         self.store = SQLiteStore(settings.sqlite_path)
+        self.trading_guard = LiveTradingGuard(live_trading_enabled=settings.enable_live_trading)
         self.engine = TradingEngine(
             risk_config=RiskConfig(**settings.risk.model_dump()),
+            trading_guard=self.trading_guard,
             max_concurrent_orders=5,
             store=self.store,
         )
@@ -1336,12 +1339,12 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
     async def sync_status(state: AppState = Depends(get_state)):
         return {
             "order_sync": {
-                "running": state.engine.order_sync._running,
+                "running": state.engine._running,
                 "tracked_orders": state.engine.order_sync.tracked_count,
                 "interval_seconds": state.engine.order_sync.interval_seconds,
             },
             "position_sync": {
-                "running": state.engine.position_sync.is_running,
+                "running": state.engine._running,
                 "interval_seconds": state.engine.position_sync.interval_seconds,
             },
         }

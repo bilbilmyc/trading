@@ -19,7 +19,24 @@ from app.engine.paper_trading import PaperTradingAccount
 from app.engine.order_sync import OrderSync
 from app.engine.position_sync import PositionSync
 from app.engine.monitor import Monitor, Alert, AlertLevel, AlertCategory, build_engine_checkers
+from app.engine.live_order_pipeline import LiveOrderPipeline
+from app.engine.order_tracker import OrderTrackerAdapter
+from app.engine.position_recorder import PositionRecorderAdapter
+from app.engine.composite_observer import CompositeObserver
+from app.engine.live_trading_guard import LiveTradingGuard
+from app.engine.strategy_registry import StrategyRegistry
 from app.models.order import Order, OrderSide, OrderType, OrderStatus
+
+
+class _NoOpGuard:
+    """Fallback TradingGuard when no guard was injected (legacy callers)."""
+
+    async def is_open(self) -> bool:
+        return True
+
+    @property
+    def kill_switch_enabled(self) -> bool:
+        return False
 
 
 class TradingEngine:
@@ -43,16 +60,19 @@ class TradingEngine:
         monitor_check_interval: int = 30,
         monitor_max_alerts: int = 100,
         store: Optional[SQLiteStore] = None,
+        trading_guard: Optional["LiveTradingGuard"] = None,
     ):
         self._exchanges: Dict[str, ExchangeBase] = {}
+        self._pipelines: Dict[str, LiveOrderPipeline] = {}
         self._strategies: Dict[str, StrategyBase] = {}
         self._strategy_configs: Dict[str, Dict[str, Any]] = {}
         self._recent_signals: List[Dict[str, Any]] = []
         self._running = False
         self.store = store
-        
+        self.trading_guard = trading_guard
+
         # 核心组件
-        self.risk_manager = RiskManager(risk_config)
+        self.risk_manager = RiskManager(risk_config, trading_guard=trading_guard)
         self.position_manager = PositionManager()
         self.paper_account = PaperTradingAccount()
         
@@ -95,10 +115,99 @@ class TradingEngine:
         if self.store:
             self._recent_signals = self.store.recent_signals(limit=200)
             self.paper_account.load_state(**self.store.load_paper_state())
+
+        # ── Phase D: LiveOrderPipeline (deep module + 6 ports) ──
+        self._order_tracker = OrderTrackerAdapter(self.order_sync)
+        self._position_recorder = PositionRecorderAdapter(self.position_manager)
+        self._observer = CompositeObserver(self.monitor, self.store)
+        self._pipeline_semaphore = asyncio.Semaphore(max_concurrent_orders)
+        # Pipeline is per-exchange (created on demand in add_exchange)
+
+        # ── Phase G: StrategyRegistry — round-trip persistence ──
+        self.strategy_registry = StrategyRegistry()
+        self._register_default_strategies()
+
+    def _register_default_strategies(self) -> None:
+        """Register built-in strategy snapshot/restore pairs."""
+        from app.strategies.sma import SMAStrategy
+
+        def _sma_snap(s: SMAStrategy) -> dict:
+            return {
+                "short_window": s.short_window,
+                "long_window": s.long_window,
+            }
+
+        def _sma_restore(data: dict) -> SMAStrategy:
+            return SMAStrategy(
+                short_window=int(data.get("short_window", 5)),
+                long_window=int(data.get("long_window", 20)),
+            )
+
+        self.strategy_registry.register(
+            cls=SMAStrategy, snapshot=_sma_snap, restore=_sma_restore
+        )
+
+        # LLM strategy: round-trip non-primitive config (model, analyzer, prompt).
+        try:
+            from app.strategies.llm_strategy import LLMStrategy
+
+            def _llm_snap(s: LLMStrategy) -> dict:
+                state: dict = {
+                    "symbol": s.symbol,
+                    "interval": s.interval,
+                }
+                cfg = getattr(s, "_config", None)
+                if cfg is not None:
+                    state["llm"] = {
+                        "model": getattr(cfg, "model", ""),
+                        "base_url": getattr(cfg, "base_url", ""),
+                        "temperature": getattr(cfg, "temperature", 0.0),
+                        "max_tokens": getattr(cfg, "max_tokens", 0),
+                        "system_prompt": getattr(cfg, "system_prompt", ""),
+                        "decision_prompt": getattr(cfg, "decision_prompt", ""),
+                    }
+                return state
+
+            def _llm_restore(data: dict) -> LLMStrategy:
+                strategy = LLMStrategy(
+                    symbol=data.get("symbol"),
+                    interval=data.get("interval", "1m"),
+                )
+                llm = data.get("llm") or {}
+                if llm:
+                    from app.strategies.llm_strategy import LLMConfig
+
+                    cfg = LLMConfig(
+                        model=llm.get("model", ""),
+                        base_url=llm.get("base_url", "") or None,
+                        temperature=float(llm.get("temperature", 0.0) or 0.0),
+                        max_tokens=int(llm.get("max_tokens", 0) or 0),
+                        system_prompt=llm.get("system_prompt", ""),
+                        decision_prompt=llm.get("decision_prompt", ""),
+                    )
+                    strategy._config = cfg
+                return strategy
+
+            self.strategy_registry.register(
+                cls=LLMStrategy, snapshot=_llm_snap, restore=_llm_restore
+            )
+        except ImportError:
+            logger.info("LLMStrategy not importable — skipping registration")
     
     def add_exchange(self, name: str, exchange: ExchangeBase):
         """添加交易所"""
         self._exchanges[name.lower()] = exchange
+        # Build per-exchange LiveOrderPipeline (deep module + 6 ports).
+        self._pipelines[name.lower()] = LiveOrderPipeline(
+            exchange=exchange,
+            trading_guard=self.trading_guard or _NoOpGuard(),
+            risk_gate=self.risk_manager,
+            order_tracker=self._order_tracker,
+            position_recorder=self._position_recorder,
+            observer=self._observer,
+            semaphore=self._pipeline_semaphore,
+            signal_filters=tuple(self._signal_filters),
+        )
         logger.info(f"添加交易所：{name}")
     
     def add_strategy(
@@ -269,27 +378,25 @@ class TradingEngine:
             self.store.upsert_strategy(snapshot)
 
     def restore_persisted_strategies(self) -> int:
-        """从 SQLite 恢复支持的策略定义。
+        """从 SQLite 恢复已注册的策略定义。
 
-        当前阶段只恢复 SMA 策略，因为它的构造参数少且确定。
-        其他策略类先忽略，避免凭空猜测构造参数导致恢复出错误策略。
+        通过 StrategyRegistry 调度：每个策略类自带 snapshot/restore，
+        round-trip 任意可序列化的字段（不再过滤到 primitives）。
+        未注册的 class_name 静默跳过（forward-compat）。
         """
 
         if not self.store:
             return 0
 
-        from app.strategies.sma import SMAStrategy
-
         restored = 0
         for item in self.store.list_strategies():
-            if item.get("class_name") != "SMAStrategy":
+            snapshot = {
+                "class_name": item.get("class_name"),
+                "state": item.get("parameters") or {},
+            }
+            strategy = self.strategy_registry.restore(snapshot)
+            if strategy is None:
                 continue
-            params = item.get("parameters") or {}
-            strategy = SMAStrategy(
-                short_window=int(params.get("short_window", 5)),
-                long_window=int(params.get("long_window", 20)),
-                min_data_points=int(params.get("min_data_points", params.get("long_window", 20))),
-            )
             try:
                 strategy._initialized_at = datetime.fromisoformat(str(item["initialized_at"]))
             except (KeyError, ValueError):
@@ -395,14 +502,12 @@ class TradingEngine:
             await strategy.start()
             logger.info(f"策略 {name} 已启动")
         
-        # ── 阶段 5：启动订单同步 ──
-        self.order_sync.start()
+        # ── 阶段 5：启动订单同步循环（由引擎驱动；OrderSync 不再自管循环） ──
         self._sync_tasks.append(
             asyncio.create_task(self._order_sync_loop())
         )
-        
-        # ── 阶段 5：启动持仓同步 ──
-        self.position_sync.start()
+
+        # ── 阶段 5：启动持仓同步循环（同上） ──
         self._sync_tasks.append(
             asyncio.create_task(self._position_sync_loop())
         )
@@ -446,9 +551,7 @@ class TradingEngine:
         # 停止信号运行器
         await self.stop_signal_runner()
         
-        # ── 阶段 5：停止实盘子系统 ──
-        await self.order_sync.stop()
-        await self.position_sync.stop()
+        # ── 阶段 5：停止实盘子系统（OrderSync/PositionSync 不再自管循环；引擎统一取消） ──
         await self.monitor.stop()
         
         # 取消同步循环
@@ -763,9 +866,29 @@ class TradingEngine:
             ticker = await exchange.get_ticker(signal.symbol)
             price = float(ticker.get("last_price", 0))
         order = self.paper_account.apply_signal(exchange_name, strategy_name, signal, price)
-        if order and self.store:
-            self.store.save_paper_order(order)
-            self.store.save_paper_state(self.paper_account.summary())
+        if order:
+            if self.store:
+                self.store.save_paper_order(order)
+                self.store.save_paper_state(self.paper_account.summary())
+                # 审计事件：纸盘成交（独立于实盘路径，按 ADR-0001 保持分离）。
+                self.store.append_event({
+                    "category": "paper",
+                    "event_type": "paper_order_filled",
+                    "level": "info",
+                    "exchange": exchange_name,
+                    "symbol": signal.symbol,
+                    "strategy": strategy_name,
+                    "order_id": str(order.get("order_id", "")) or None,
+                    "message": f"{signal.action.value.upper()} {signal.symbol} @ {price} (paper)",
+                    "details": {
+                        "side": signal.action.value,
+                        "quantity": order.get("quantity"),
+                        "price": price,
+                        "fee": order.get("fee"),
+                        "realized_pnl": order.get("realized_pnl"),
+                    },
+                    "timestamp": datetime.utcnow().isoformat(),
+                })
         return order
 
     def _strategy_matches(
@@ -801,211 +924,31 @@ class TradingEngine:
             return None
     
     async def _execute_signal(self, exchange: ExchangeBase, signal: Signal):
-        """执行交易信号"""
+        """Execute one Signal end-to-end via LiveOrderPipeline.
 
-        # ── B 方案：信号过滤器链 ──
-        exchange_name = exchange.name
-        strategy_name = signal.metadata.get("strategy_name", "unknown") if signal.metadata else "unknown"
-        for filter_fn in self._signal_filters:
-            try:
-                if asyncio.iscoroutinefunction(filter_fn):
-                    allowed = await filter_fn(exchange_name, strategy_name, signal)
-                else:
-                    allowed = filter_fn(exchange_name, strategy_name, signal)
-                if not allowed:
-                    logger.info(f"信号被过滤器拦截: {signal.action.value} {signal.symbol} by {filter_fn.__name__}")
-                    self._signal_filter_rejects.append({
-                        "exchange": exchange_name,
-                        "strategy": strategy_name,
-                        "symbol": signal.symbol,
-                        "action": signal.action.value,
-                        "reason": f"Rejected by filter: {filter_fn.__name__}",
-                        "timestamp": datetime.utcnow().isoformat(),
-                    })
-                    self._signal_filter_rejects = self._signal_filter_rejects[-50:]
-                    return
-            except Exception as exc:
-                logger.warning(f"信号过滤器异常: {exc}")
-                # 过滤器异常时默认放行，避免阻塞交易
+        The pipeline owns gating, filtering, risk, placement, tracking,
+        position update, and observer emission — see app/engine/live_order_pipeline.py.
+        This wrapper is kept for backward compatibility with callers that
+        hold an ExchangeBase reference directly.
+        """
+        pipeline = self._pipelines.get(exchange.name.lower())
+        if pipeline is None:
+            logger.error(f"未找到 {exchange.name} 的 LiveOrderPipeline，请先 add_exchange")
+            return
+        result = await pipeline.execute(signal)
 
-        async with self._order_semaphore:
-            # ── 获取价格 ──
-            price = signal.price or 0
-            if price <= 0:
+        # 订单回调仍然由引擎调度（pipeline 不拥有引擎级回调注册表）。
+        from app.core.result import Ok
+        if isinstance(result, Ok):
+            receipt = result.unwrap()
+            for callback in self._on_order_callbacks:
                 try:
-                    ticker = await exchange.get_ticker(signal.symbol)
-                    price = float(ticker.get('last_price', 0))
+                    if asyncio.iscoroutinefunction(callback):
+                        await callback(receipt)
+                    else:
+                        callback(receipt)
                 except Exception as e:
-                    logger.error(f"获取价格失败：{e}")
-                    self.monitor.push(
-                        Alert(
-                            level=AlertLevel.ERROR,
-                            category=AlertCategory.ORDER,
-                            title="Price fetch failed",
-                            message=f"Cannot get price for {signal.symbol}: {e}",
-                            exchange=exchange.name,
-                            symbol=signal.symbol,
-                        )
-                    )
-                    return
-
-            quantity = signal.quantity or 0.001
-
-            # ── 风控检查 ──
-            allowed, reason = await self.risk_manager.check_order(
-                signal.symbol,
-                signal.action.value,
-                quantity,
-                price,
-            )
-
-            if not allowed:
-                logger.warning(f"订单被风控拦截：{reason}")
-                kill_switch_blocked = reason == "交易已禁用"
-                risk_details = {
-                    "action": signal.action.value,
-                    "quantity": quantity,
-                    "price": price,
-                    "order_type": signal.order_type,
-                }
-                self.monitor.push(
-                    Alert(
-                        level=AlertLevel.CRITICAL if kill_switch_blocked else AlertLevel.WARNING,
-                        category=AlertCategory.RISK,
-                        title="Order rejected by risk",
-                        message=reason,
-                        exchange=exchange.name,
-                        symbol=signal.symbol,
-                        details=risk_details,
-                    )
-                )
-                self._record_event(
-                    category="risk",
-                    event_type="kill_switch_blocked" if kill_switch_blocked else "order_rejected_by_risk",
-                    level="critical" if kill_switch_blocked else "warning",
-                    exchange=exchange.name,
-                    symbol=signal.symbol,
-                    message=reason,
-                    details=risk_details,
-                )
-                return
-
-            # ── 计算止损止盈 ──
-            stop_loss = signal.stop_loss or self.risk_manager.calculate_stop_loss(
-                price, signal.action.value
-            )
-            take_profit = signal.take_profit or self.risk_manager.calculate_take_profit(
-                price, signal.action.value
-            )
-
-            # ── 下单 ──
-            try:
-                result = await exchange.place_order(
-                    symbol=signal.symbol,
-                    side=signal.action.value,
-                    order_type=signal.order_type,
-                    quantity=quantity,
-                    price=signal.price,
-                )
-
-                logger.info(
-                    f"订单执行成功："
-                    f"{signal.action.value.upper()} {signal.symbol} "
-                    f"qty={quantity} @ {price}"
-                )
-
-                # 阶段 5：注册到订单同步器
-                order = Order(
-                    symbol=signal.symbol,
-                    exchange=exchange.name,
-                    side=OrderSide.BUY if signal.action.value == "buy" else OrderSide.SELL,
-                    order_type=OrderType.MARKET if signal.order_type == "market" else OrderType.LIMIT,
-                    quantity=quantity,
-                    price=signal.price,
-                    order_id=str(result.get("order_id", "")),
-                )
-                self.order_sync.track(order)
-
-                # 更新持仓
-                await self.position_manager.update_position(
-                    exchange.name,
-                    signal.symbol,
-                    quantity,
-                    price,
-                    signal.action.value,
-                )
-
-                # 通知订单回调
-                for callback in self._on_order_callbacks:
-                    try:
-                        if asyncio.iscoroutinefunction(callback):
-                            await callback(result)
-                        else:
-                            callback(result)
-                    except Exception as e:
-                        logger.error(f"订单回调错误：{e}")
-
-                # 监控告警：订单已提交
-                self.monitor.push(
-                    Alert(
-                        level=AlertLevel.INFO,
-                        category=AlertCategory.ORDER,
-                        title="Order placed",
-                        message=f"{signal.action.value.upper()} {quantity} {signal.symbol} @ {price}",
-                        exchange=exchange.name,
-                        symbol=signal.symbol,
-                        details={
-                            "order_id": order.order_id,
-                            "action": signal.action.value,
-                            "quantity": quantity,
-                            "price": price,
-                        },
-                    )
-                )
-                self._record_event(
-                    category="order",
-                    event_type="live_order_submitted",
-                    exchange=exchange.name,
-                    symbol=signal.symbol,
-                    order_id=order.order_id or None,
-                    message=f"{signal.action.value.upper()} {quantity} {signal.symbol} @ {price}",
-                    details={
-                        "order_id": order.order_id,
-                        "action": signal.action.value,
-                        "quantity": quantity,
-                        "price": price,
-                        "order_type": signal.order_type,
-                        "response": result,
-                    },
-                )
-
-            except Exception as e:
-                logger.error(f"订单执行失败：{e}")
-                self.monitor.push(
-                    Alert(
-                        level=AlertLevel.ERROR,
-                        category=AlertCategory.ORDER,
-                        title="Order execution failed",
-                        message=f"{signal.action.value.upper()} {signal.symbol}: {e}",
-                        exchange=exchange.name,
-                        symbol=signal.symbol,
-                    )
-                )
-                self._record_event(
-                    category="order",
-                    event_type="live_order_failed",
-                    level="error",
-                    exchange=exchange.name,
-                    symbol=signal.symbol,
-                    message=f"{signal.action.value.upper()} {signal.symbol}: {e}",
-                    details={
-                        "action": signal.action.value,
-                        "quantity": quantity,
-                        "price": price,
-                        "order_type": signal.order_type,
-                        "error": str(e),
-                    },
-                )
+                    logger.error(f"订单回调错误：{e}")
     
     async def sync_positions(self, exchange_name: str):
         """同步交易所持仓 (单次调用版本，建议使用 PositionSync)"""
@@ -1044,13 +987,13 @@ class TradingEngine:
             'paper': self.get_paper_summary(),
             'risk': risk_status,
             'positions': position_summary,
-            # 阶段 5：实盘同步 + 监控状态
+            # 阶段 5：实盘同步 + 监控状态（loop 状态由引擎统一报告）
             'order_sync': {
-                'running': self.order_sync._running,
+                'running': self._running,
                 'tracked_orders': self.order_sync.tracked_count,
             },
             'position_sync': {
-                'running': self.position_sync.is_running,
+                'running': self._running,
             },
             'monitor': self.monitor.summary(),
             'timestamp': datetime.utcnow().isoformat(),

@@ -226,7 +226,7 @@ class Monitor:
             self._alerts.pop(0)
 
         # 按告警级别选择对应日志方法。
-            log_levels = {
+        log_levels = {
             AlertLevel.INFO: logger.info,
             AlertLevel.WARNING: logger.warning,
             AlertLevel.ERROR: logger.error,

@@ -33,30 +33,9 @@ class PositionSync:
     ):
         self.position_manager = position_manager
         self.interval_seconds = interval_seconds
-        self._task: Optional[asyncio.Task] = None
-        self._running = False
         self._callbacks: List = []
 
     # ── 生命周期 ──────────────────────────────────────────────
-
-    def start(self) -> None:
-        """启动后台持仓同步循环。"""
-
-        if self._running:
-            return
-        self._running = True
-        self._task = asyncio.create_task(self._sync_loop())
-        logger.info(f"PositionSync started (interval={self.interval_seconds}s)")
-
-    async def stop(self) -> None:
-        """停止后台持仓同步循环。"""
-
-        self._running = False
-        if self._task is not None:
-            self._task.cancel()
-            await asyncio.gather(self._task, return_exceptions=True)
-            self._task = None
-        logger.info("PositionSync stopped")
 
     def on_sync(self, callback) -> None:
         """注册每轮同步完成后的回调。
@@ -152,18 +131,8 @@ class PositionSync:
 
     # ── 内部 ──────────────────────────────────────────────────
 
-    async def _sync_loop(self) -> None:
-        """后台同步循环；真正绑定交易所的逻辑由 TradingEngine 负责。"""
-
-        while self._running:
-            await asyncio.sleep(self.interval_seconds)
-
     async def _upsert_position(self, exchange_name: str, symbol: str, position: Position) -> None:
         """直接写入持仓，绕过 update_position 的成交均价计算逻辑。"""
 
         key = f"{exchange_name}:{symbol}"
         self.position_manager._positions[key] = position
-
-    @property
-    def is_running(self) -> bool:
-        return self._running

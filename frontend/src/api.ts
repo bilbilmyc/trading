@@ -399,9 +399,14 @@ export const api = {
   killSwitchStatus: () => request<KillSwitchStatus>("/api/v1/risk/kill-switch"),
 
   setKillSwitch: (enabled: boolean, reason: string) =>
-    request<KillSwitchStatus>("/api/v1/risk/kill-switch", {
+    request<{ enabled: boolean; trading_enabled: boolean }>("/api/v1/risk/kill-switch", {
       method: "POST",
       body: JSON.stringify({ enabled, reason }),
+    }),
+  toggleLiveTrading: (enabled: boolean) =>
+    request<{ live_trading_enabled: boolean }>("/api/v1/settings/live-trading", {
+      method: "POST",
+      body: JSON.stringify({ enabled }),
     }),
 
   evaluateSignals: (exchange: ExchangeName, symbol: string, interval = "1m", limit = 80) => {

@@ -28,29 +28,6 @@ class OrderSync:
         self.interval_seconds = interval_seconds
         self._local_orders: Dict[str, Order] = {}  # 订单号 -> 本地订单模型
         self._callbacks: List = []
-        self._task: Optional[asyncio.Task] = None
-        self._running = False
-
-    # ── 生命周期 ──────────────────────────────────────────────
-
-    def start(self) -> None:
-        """启动后台订单同步循环。"""
-
-        if self._running:
-            return
-        self._running = True
-        self._task = asyncio.create_task(self._sync_loop())
-        logger.info(f"OrderSync started (interval={self.interval_seconds}s)")
-
-    async def stop(self) -> None:
-        """停止后台订单同步循环。"""
-
-        self._running = False
-        if self._task is not None:
-            self._task.cancel()
-            await asyncio.gather(self._task, return_exceptions=True)
-            self._task = None
-        logger.info("OrderSync stopped")
 
     # ── 订单注册 ──────────────────────────────────────────────
 
@@ -130,12 +107,6 @@ class OrderSync:
         return changed
 
     # ── 内部 ──────────────────────────────────────────────────
-
-    async def _sync_loop(self) -> None:
-        """后台同步循环。"""
-
-        while self._running:
-            await asyncio.sleep(self.interval_seconds)
 
     async def _notify(self, order: Order) -> None:
         """触发单个订单的同步回调。"""
