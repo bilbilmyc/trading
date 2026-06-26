@@ -1247,26 +1247,24 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
         short_window: int = Field(5, gt=0)
         long_window: int = Field(20, gt=0)
         initial_capital: float = Field(10_000.0, gt=0)
+        position_size_pct: float = Field(1.0, gt=0, le=1.0)
 
 
-class SuggestRequest(BaseModel):
+    class SuggestRequest(BaseModel):
         klines: List[Dict[str, Any]] = Field(..., min_length=1)
         prefer: Optional[str] = None
 
 
-class ClosePositionRequest(BaseModel):
+    class ClosePositionRequest(BaseModel):
         symbol: str
         exchange: str
         exit_quantity: Optional[float] = None
         position_size_pct: float = Field(1.0, gt=0, le=1.0)
 
-    @app.post("/api/v1/backtest")
-    async def backtest(request: BacktestRequest):
-        """Run SMA crossover backtest on supplied klines (no exchange call).
 
-        Useful for testing strategy ideas against data sourced from any
-        registered data source before turning them on for live execution.
-        """
+    @app.post("/api/v1/backtest")
+    async def backtest_endpoint(request: BacktestRequest):
+        """Run SMA crossover backtest on supplied klines (no exchange call)."""
         from app.engine.backtest import run_sma_backtest
 
         if request.short_window >= request.long_window:
@@ -1294,7 +1292,6 @@ class ClosePositionRequest(BaseModel):
                     out[key] = val
             return out
 
-        # Caller may want to see what klines we used (with timestamps). Echo back.
         return {
             "initial_capital": r.initial_capital,
             "final_equity": r.final_equity,
@@ -1305,6 +1302,18 @@ class ClosePositionRequest(BaseModel):
             "equity_curve": r.equity_curve,
             "klines_used": [_serialize_kline(k) for k in request.klines],
         }
+
+
+    @app.post("/api/v1/strategies/suggest")
+    async def suggest_strategy_endpoint(request: SuggestRequest):
+        """Suggest a strategy (kind + params + rationale) from klines."""
+        from app.engine.strategy_recommender import recommend_strategy
+
+        return recommend_strategy(
+            candles=request.klines,
+            prefer=request.prefer,
+        )
+
 
     @app.post("/api/v1/ai/analyze")
     async def ai_analyze(
