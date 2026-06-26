@@ -1218,7 +1218,12 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
             max_candles=state.settings.llm_max_candles,
         )
 
-        client = state.get_exchange(request.exchange)
+        client = state.data_sources.get(request.exchange.lower())
+        if client is None:
+            raise HTTPException(
+                status_code=404,
+                detail=f"Data source not configured: {request.exchange}",
+            )
 
         # 获取持仓上下文（如果有）
         position_ctx = None
