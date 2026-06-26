@@ -517,6 +517,7 @@ class TradingEngine:
         checkers = build_engine_checkers(self._exchanges, self)
         for checker in checkers:
             self.monitor.add_checker(checker)
+        self._observer.start()
         self.monitor.start()
 
         self.monitor.push(
@@ -552,6 +553,7 @@ class TradingEngine:
         await self.stop_signal_runner()
         
         # ── 阶段 5：停止实盘子系统（OrderSync/PositionSync 不再自管循环；引擎统一取消） ──
+        await self._observer.stop()
         await self.monitor.stop()
         
         # 取消同步循环

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import sqlite3
 from pathlib import Path
 
@@ -13,14 +14,17 @@ from app.engine.monitor import Monitor
 from app.engine.pipeline_types import TradeEvent
 
 
-def _make_observer(tmp_path: Path) -> tuple[CompositeObserver, SQLiteStore, Monitor]:
+async def _make_observer(tmp_path: Path) -> tuple:
     store = SQLiteStore(str(tmp_path / "obs.sqlite3"))
     monitor = Monitor()
-    return CompositeObserver(monitor, store), store, monitor
+    obs = CompositeObserver(monitor, store, flush_interval=0.05)
+    await obs.start()
+    return obs, store, monitor
 
 
-def test_order_placed_emits_alert_and_event(tmp_path: Path) -> None:
-    obs, store, monitor = _make_observer(tmp_path)
+@pytest.mark.asyncio
+async def test_order_placed_emits_alert_and_event(tmp_path: Path) -> None:
+    obs, store, monitor = await _make_observer(tmp_path)
     obs.record(TradeEvent(
         kind="order_placed",
         payload={
@@ -32,6 +36,8 @@ def test_order_placed_emits_alert_and_event(tmp_path: Path) -> None:
             "price": 100000.0,
         },
     ))
+    await asyncio.sleep(0.1)
+    await obs.stop()
 
     alerts = monitor.summary()
     assert alerts["total_alerts"] >= 1
@@ -41,8 +47,9 @@ def test_order_placed_emits_alert_and_event(tmp_path: Path) -> None:
     assert "live_order_submitted" in kinds
 
 
-def test_risk_rejected_emits_warning_alert_and_audit_event(tmp_path: Path) -> None:
-    obs, store, monitor = _make_observer(tmp_path)
+@pytest.mark.asyncio
+async def test_risk_rejected_emits_warning_alert_and_audit_event(tmp_path: Path) -> None:
+    obs, store, monitor = await _make_observer(tmp_path)
     obs.record(TradeEvent(
         kind="risk_rejected",
         payload={
@@ -51,30 +58,38 @@ def test_risk_rejected_emits_warning_alert_and_audit_event(tmp_path: Path) -> No
             "symbol": "BTCUSDT",
         },
     ))
+    await asyncio.sleep(0.1)
+    await obs.stop()
 
     events = store.recent_events(limit=10)
     kinds = [e["event_type"] for e in events]
     assert "order_rejected_by_risk" in kinds
 
 
-def test_order_failed_emits_error_alert(tmp_path: Path) -> None:
-    obs, store, monitor = _make_observer(tmp_path)
+@pytest.mark.asyncio
+async def test_order_failed_emits_error_alert(tmp_path: Path) -> None:
+    obs, store, monitor = await _make_observer(tmp_path)
     obs.record(TradeEvent(
         kind="order_failed",
         payload={"error": "exchange down", "symbol": "BTCUSDT", "exchange": "binance_usdm"},
     ))
+    await asyncio.sleep(0.1)
+    await obs.stop()
 
     events = store.recent_events(limit=10)
     kinds = [e["event_type"] for e in events]
     assert "live_order_failed" in kinds
 
 
-def test_gate_blocked_emits_critical_event(tmp_path: Path) -> None:
-    obs, store, _ = _make_observer(tmp_path)
+@pytest.mark.asyncio
+async def test_gate_blocked_emits_critical_event(tmp_path: Path) -> None:
+    obs, store, _ = await _make_observer(tmp_path)
     obs.record(TradeEvent(
         kind="gate_blocked",
         payload={"exchange": "binance_usdm", "symbol": "BTCUSDT"},
     ))
+    await asyncio.sleep(0.1)
+    await obs.stop()
 
     events = store.recent_events(limit=10)
     kinds = [e["event_type"] for e in events]
@@ -83,10 +98,12 @@ def test_gate_blocked_emits_critical_event(tmp_path: Path) -> None:
     assert "critical" in levels
 
 
-def test_observer_works_without_store() -> None:
+@pytest.mark.asyncio
+async def test_observer_works_without_store() -> None:
     """A None store should still allow alerts but skip audit events."""
     monitor = Monitor()
-    obs = CompositeObserver(monitor, store=None)
+    obs = CompositeObserver(monitor, store=None, flush_interval=0.05)
+    await obs.start()
     obs.record(TradeEvent(
         kind="order_placed",
         payload={
@@ -99,3 +116,4 @@ def test_observer_works_without_store() -> None:
         },
     ))
     assert monitor.summary()["total_alerts"] >= 1
+    await obs.stop()
