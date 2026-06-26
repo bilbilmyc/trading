@@ -14,11 +14,44 @@ import type {
   PositionSide,
   Ticker,
 } from "../api";
+import { ErrorPanel } from "../components/ErrorPanel";
 import { OrderPanel } from "../components/OrderPanel";
 import { MarketPanel } from "../components/MarketPanel";
 
 export function TradePage() {
   const { apiOnline } = useStatus();
+  const [tradingReady, setTradingReady] = useState<boolean | null>(null);
+
+  useEffect(() => {
+    if (!apiOnline) return;
+    api
+      .exchanges()
+      .then((r) => {
+        // Trading ready if any enabled exchange has API key + enable_live_trading.
+        const ok = (r.enabled?.length ?? 0) > 0;
+        setTradingReady(ok);
+      })
+      .catch(() => setTradingReady(false));
+  }, [apiOnline]);
+
+  if (tradingReady === false) {
+    return (
+      <div className="page page--trade">
+        <header className="page__header">
+          <div>
+            <p className="eyebrow">合约下单</p>
+            <h1>Trade</h1>
+            <span className="page__subtitle">人工下单 / 合约预览 / 风险闸门</span>
+          </div>
+        </header>
+        <ErrorPanel
+          title="未配置交易交易所"
+          message="要执行真实下单，需要在 .env 中配置至少一个交易所的 API Key 并启用 ENABLE_LIVE_TRADING=true。公开市场数据无需 Key，可在「行情」和「数据源」页面查询。"
+          action={{ label: "去数据源页", href: "/data" }}
+        />
+      </div>
+    );
+  }
 
   const [exchange, setExchange] = useState<ExchangeName>("binance_usdm");
   const [symbol, setSymbol] = useState("BTCUSDT");

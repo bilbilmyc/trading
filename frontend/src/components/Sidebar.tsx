@@ -12,8 +12,9 @@ interface NavItem {
 }
 
 const NAV_ITEMS: NavItem[] = [
+  { href: "/data", label: "数据源", icon: "≣", description: "公开行情 · 数据分析" },
+  { href: "/markets", label: "行情", icon: "↗", description: "Ticker · 成交 · 挂单" },
   { href: "/trade", label: "下单单", icon: "→", description: "人工下单 / 合约预览" },
-  { href: "/markets", label: "行情", icon: "≣", description: "Ticker · 成交 · 挂单" },
   { href: "/strategies", label: "策略", icon: "◊", description: "策略配置 · 信号流" },
   { href: "/risk", label: "风控", icon: "!", description: "Kill switch · 风险指标" },
   { href: "/audit", label: "审计", icon: "≡", description: "事件流 · 按级别过滤" },

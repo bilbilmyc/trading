@@ -10,6 +10,7 @@ import { Topbar } from "./components/Topbar";
 // Code-split each page — initial bundle only ships the shell + first page.
 const TradePage = lazy(() => import("./pages/TradePage").then((m) => ({ default: m.TradePage })));
 const MarketsPage = lazy(() => import("./pages/MarketsPage").then((m) => ({ default: m.MarketsPage })));
+const DataPage = lazy(() => import("./pages/DataPage").then((m) => ({ default: m.DataPage })));
 const StrategiesPage = lazy(() => import("./pages/StrategiesPage").then((m) => ({ default: m.StrategiesPage })));
 const RiskPage = lazy(() => import("./pages/RiskPage").then((m) => ({ default: m.RiskPage })));
 const AuditPage = lazy(() => import("./pages/AuditPage").then((m) => ({ default: m.AuditPage })));
@@ -35,7 +36,8 @@ export default function App() {
             <Topbar />
             <Suspense fallback={<LoadingFallback title="加载中" hint="请稍候" />}>
               <Switch>
-                <Route path="/" component={() => <Redirect to="/trade" />} />
+                <Route path="/" component={() => <Redirect to="/data" />} />
+                <Route path="/data" component={DataPage} />
                 <Route path="/trade" component={TradePage} />
                 <Route path="/markets" component={MarketsPage} />
                 <Route path="/strategies" component={StrategiesPage} />
@@ -43,7 +45,7 @@ export default function App() {
                 <Route path="/audit" component={AuditPage} />
                 <Route path="/settings" component={SettingsPage} />
                 <Route>
-                  <Redirect to="/trade" />
+                  <Redirect to="/data" />
                 </Route>
               </Switch>
             </Suspense>

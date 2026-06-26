@@ -1042,6 +1042,76 @@ input, select, button, textarea {
   border-color: var(--accent);
 }
 
+/* ===== Data Sources page ============================================= */
+
+.source-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+  gap: 12px;
+}
+
+.source-card {
+  padding: 16px;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.source-card__head {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 8px;
+}
+
+.source-card__head strong {
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.source-card__id {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+.source-card__url {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--text-muted);
+  word-break: break-all;
+}
+
+.source-card__actions {
+  display: flex;
+  gap: 6px;
+  margin-top: 4px;
+}
+
+/* ===== Error panel =================================================== */
+
+.panel--error {
+  border-color: rgba(245, 158, 11, 0.3);
+}
+
+.error-body {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  padding: 16px;
+  background: rgba(245, 158, 11, 0.06);
+  border-radius: var(--radius-md);
+}
+
+.error-body p {
+  margin: 0;
+  color: var(--text-secondary);
+  line-height: 1.6;
+}
+
 /* ===== Loading fallback / skeletons ================================= */
 
 .topbar--secondary {
