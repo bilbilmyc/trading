@@ -11,6 +11,7 @@ import type {
   RecentTrade,
   Ticker,
 } from "../api";
+import { CandleChart, type Candle } from "../components/CandleChart";
 import { EmptyState, Metric, SectionTitle } from "../components/atoms";
 
 function formatNumber(value: number | undefined, digits = 4): string {
@@ -35,6 +36,29 @@ export function MarketsPage() {
   const [feeRate, setFeeRate] = useState<FeeRate | null>(null);
   const [estimate, setEstimate] = useState<CostEstimate | null>(null);
   const [liquidity, setLiquidity] = useState<Liquidity>("maker");
+  const [candles, setCandles] = useState<Candle[]>([]);
+  const [interval, setInterval] = useState("1h");
+
+  const refreshKlines = useCallback(async () => {
+    if (!apiOnline || !symbol) return;
+    try {
+      const klines = await api.klines(exchange, symbol, interval, 80);
+      setCandles(
+        klines.map((k: any) => ({
+          open_time: k.open_time ?? k.openTime ?? 0,
+          open: Number(k.open ?? 0),
+          high: Number(k.high ?? 0),
+          low: Number(k.low ?? 0),
+          close: Number(k.close ?? 0),
+          volume: k.volume != null ? Number(k.volume) : undefined,
+        })),
+      );
+    } catch {
+      setCandles([]);
+    }
+  }, [apiOnline, exchange, symbol, interval]);
+
+  useEffect(() => { refreshKlines(); }, [refreshKlines]);
 
   const refreshContracts = useCallback(async () => {
     if (!apiOnline) return;
@@ -105,6 +129,23 @@ export function MarketsPage() {
           </button>
         </div>
       </div>
+
+      <div className="form-grid form-grid--inline">
+        <label className="field">
+          <span>周期</span>
+          <select value={interval} onChange={(e) => setInterval(e.target.value)}>
+            <option value="1m">1m</option>
+            <option value="5m">5m</option>
+            <option value="15m">15m</option>
+            <option value="1h">1h</option>
+            <option value="4h">4h</option>
+            <option value="1d">1d</option>
+          </select>
+        </label>
+      </div>
+
+      <SectionTitle title={`${symbol} K 线`} subtitle={`${interval} · 最近 80 根`} />
+      <CandleChart candles={candles} />
 
       <div className="metric-grid">
         <Metric label="最新价" value={`$${formatNumber(ticker?.last_price, 2)}`} />

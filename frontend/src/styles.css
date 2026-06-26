@@ -1112,6 +1112,32 @@ input, select, button, textarea {
   line-height: 1.6;
 }
 
+/* ===== Candle chart ================================================== */
+
+.candle-chart {
+  width: 100%;
+  height: auto;
+  max-height: 320px;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+}
+
+.candle-chart__label {
+  font-size: 10px;
+  font-family: var(--font-mono);
+  fill: var(--text-muted);
+}
+
+.candle-chart--empty {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 240px;
+  color: var(--text-muted);
+  font-size: 13px;
+}
+
 /* ===== Loading fallback / skeletons ================================= */
 
 .topbar--secondary {

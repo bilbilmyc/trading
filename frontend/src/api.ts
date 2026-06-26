@@ -231,6 +231,15 @@ export interface RecentTrade {
   timestamp: string;
 }
 
+export interface Candle {
+  open_time: string | number;
+  open: number;
+  high: number;
+  low: number;
+  close: number;
+  volume?: number;
+}
+
 export interface OpenOrder {
   order_id?: string;
   orderId?: string | number;
@@ -423,6 +432,11 @@ export const api = {
 
   ticker: (exchange: ExchangeName, symbol: string) =>
     request<Ticker>(`/api/v1/ticker/${exchange}/${encodeURIComponent(symbol)}`),
+
+  klines: (exchange: ExchangeName, symbol: string, interval = "1h", limit = 80) => {
+    const params = new URLSearchParams({ interval, limit: String(limit) });
+    return request<Candle[]>(`/api/v1/klines/${exchange}/${encodeURIComponent(symbol)}?${params}`);
+  },
 
   contracts: (exchange: ExchangeName, search = "", limit = 200) => {
     const params = new URLSearchParams({ quote_asset: "USDT", search, limit: String(limit) });
