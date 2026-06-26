@@ -1,0 +1,73 @@
+# =====================================================================
+# Quant Trader — fully self-contained local stack
+#
+# One service: api (Python + bundled frontend static).
+# No external services. SQLite as a file on a named volume.
+#
+# Usage:
+#   cp .env.example .env       # fill in exchange / LLM keys if you want
+#   docker compose up --build
+#   open http://localhost:8000
+# =====================================================================
+
+services:
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: quant-trader:local
+    container_name: quant-trader
+    restart: unless-stopped
+
+    ports:
+      - "8000:8000"
+
+    # SQLite + persistent data lives in a named volume so it survives
+    # `docker compose down`. To wipe state: `docker volume rm trading_data`.
+    volumes:
+      - trading_data:/app/data
+      # Optional dev hot-reload: uncomment to bind-mount source.
+      # - ./app:/app/app
+      # - ./config:/app/config
+      # - ./main.py:/app/main.py
+
+    environment:
+      # ── API server ─────────────────────────────────────────
+      APP_ENV: ${APP_ENV:-development}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      PYTHONUNBUFFERED: "1"
+
+      # ── Trading ─────────────────────────────────────────────
+      ENABLE_LIVE_TRADING: ${ENABLE_LIVE_TRADING:-false}
+
+      # ── Exchanges (optional — leave blank for offline demo) ─
+      BINANCE_API_KEY: ${BINANCE_API_KEY:-}
+      BINANCE_SECRET_KEY: ${BINANCE_SECRET_KEY:-}
+      BINANCE_TESTNET: ${BINANCE_TESTNET:-true}
+
+      OKX_API_KEY: ${OKX_API_KEY:-}
+      OKX_SECRET_KEY: ${OKX_SECRET_KEY:-}
+      OKX_PASSPHRASE: ${OKX_PASSPHRASE:-}
+
+      BITGET_API_KEY: ${BITGET_API_KEY:-}
+      BITGET_SECRET_KEY: ${BITGET_SECRET_KEY:-}
+      BITGET_PASSPHRASE: ${BITGET_PASSPHRASE:-}
+
+      # ── LLM (optional) ──────────────────────────────────────
+      LLM_API_KEY: ${LLM_API_KEY:-}
+      LLM_BASE_URL: ${LLM_BASE_URL:-https://api.openai.com/v1}
+      LLM_MODEL: ${LLM_MODEL:-gpt-4o-mini}
+
+      # ── SQLite (file-backed; do not change path) ───────────
+      SQLITE_PATH: /app/data/trading.sqlite3
+
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+volumes:
+  trading_data:
+    name: quant-trader-data

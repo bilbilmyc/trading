@@ -254,8 +254,34 @@ class SQLiteStore:
     def append_event(self, event: Dict[str, Any]) -> None:
         """追加一条可审计事件，比如下单、撤单、风控拒单。"""
 
+        self.append_events([event])
+
+    def append_events(self, events: List[Dict[str, Any]]) -> None:
+        """Batched event writes — N rows in one transaction.
+
+        Use this when emitting multiple audit events from a single logical
+        operation (e.g. signal veto + risk reject + observer push). One
+        commit replaces N commits, cutting SQLite fsync overhead.
+        """
+        if not events:
+            return
+        rows = [
+            (
+                e["category"],
+                e["event_type"],
+                e.get("level", "info"),
+                e.get("exchange"),
+                e.get("symbol"),
+                e.get("strategy"),
+                e.get("order_id"),
+                e["message"],
+                _json_dumps(e.get("details")),
+                e["timestamp"],
+            )
+            for e in events
+        ]
         with self._lock:
-            self._conn.execute(
+            self._conn.executemany(
                 """
                 INSERT INTO events (
                     category, event_type, level, exchange, symbol, strategy,
@@ -263,18 +289,7 @@ class SQLiteStore:
                 )
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
-                (
-                    event["category"],
-                    event["event_type"],
-                    event.get("level", "info"),
-                    event.get("exchange"),
-                    event.get("symbol"),
-                    event.get("strategy"),
-                    event.get("order_id"),
-                    event["message"],
-                    _json_dumps(event.get("details")),
-                    event["timestamp"],
-                ),
+                rows,
             )
             self._conn.commit()
 
