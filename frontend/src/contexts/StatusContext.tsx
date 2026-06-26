@@ -4,6 +4,7 @@ import {
   useContext,
   useEffect,
   useMemo,
+  useRef,
   useState,
   type ReactNode,
 } from "react";
@@ -23,7 +24,8 @@ interface StatusContextValue {
 
 const StatusContext = createContext<StatusContextValue | null>(null);
 
-const POLL_INTERVAL_MS = 5_000;
+// Polling remains as a fallback in case SSE is blocked (proxies, dev tools).
+const POLL_INTERVAL_MS = 15_000;
 
 export function StatusProvider({ children }: { children: ReactNode }) {
   const [apiOnline, setApiOnline] = useState(false);
@@ -31,6 +33,7 @@ export function StatusProvider({ children }: { children: ReactNode }) {
   const [config, setConfig] = useState<AppConfig | null>(null);
   const [killSwitch, setKillSwitch] = useState<KillSwitchStatus | null>(null);
   const [liveTradingEnabled, setLiveTradingEnabled] = useState(false);
+  const esRef = useRef<EventSource | null>(null);
 
   const refresh = useCallback(async () => {
     try {
@@ -49,10 +52,30 @@ export function StatusProvider({ children }: { children: ReactNode }) {
     }
   }, []);
 
+  // Subscribe to SSE for server-pushed updates. EventSource auto-reconnects
+  // on transient failures; polling remains as a long-interval fallback.
   useEffect(() => {
-    refresh();
+    const es = new EventSource("/api/v1/stream/events?heartbeat_seconds=10");
+    esRef.current = es;
+    es.onmessage = () => {
+      // Any server event means state may have changed.
+      void refresh();
+    };
+    es.onerror = () => {
+      // EventSource will auto-reconnect; mark offline only when readyState is CLOSED.
+      if (es.readyState === EventSource.CLOSED) {
+        setApiOnline(false);
+      }
+    };
+
+    void refresh();
     const id = window.setInterval(refresh, POLL_INTERVAL_MS);
-    return () => window.clearInterval(id);
+
+    return () => {
+      window.clearInterval(id);
+      es.close();
+      esRef.current = null;
+    };
   }, [refresh]);
 
   const value = useMemo<StatusContextValue>(

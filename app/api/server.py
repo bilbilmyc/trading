@@ -18,8 +18,9 @@ import secrets
 from typing import Any, Awaitable, Callable, Dict, Optional, TypeVar
 
 import httpx
-from fastapi import Depends, FastAPI, HTTPException, Query
+from fastapi import Depends, FastAPI, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
@@ -1348,6 +1349,57 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
                 "interval_seconds": state.engine.position_sync.interval_seconds,
             },
         }
+
+    @app.get("/api/v1/stream/events")
+    async def stream_events(
+        request: Request,
+        state: AppState = Depends(get_state),
+        max_events: int = 360,
+        heartbeat_seconds: float = 10.0,
+    ):
+        """SSE endpoint: status snapshot + heartbeats.
+
+        Replaces 5s polling from the frontend. First event is a snapshot;
+        subsequent events are heartbeats. When audit-event push is wired
+        in, audit events will arrive between heartbeats.
+        """
+        import asyncio as _asyncio
+        import json as _json
+
+        async def gen():
+            # Initial snapshot.
+            try:
+                risk = await state.engine.risk_manager.get_risk_status()
+                snapshot = {
+                    "kind": "snapshot",
+                    "api_online": True,
+                    "kill_switch_enabled": state.trading_guard.kill_switch_enabled,
+                    "live_trading": state.settings.enable_live_trading,
+                    "engine_running": state.engine._running,
+                    "strategies": state.engine.list_strategies(),
+                    "risk": risk,
+                    "timestamp": datetime.utcnow().isoformat(),
+                }
+                yield f"data: {_json.dumps(snapshot, ensure_ascii=False)}\n\n"
+            except Exception as exc:  # noqa: BLE001
+                yield f"data: {_json.dumps({'kind': 'error', 'message': str(exc)})}\n\n"
+
+            # Heartbeat loop — exit cleanly when client disconnects.
+            for _ in range(max_events):
+                if await request.is_disconnected():
+                    return
+                await _asyncio.sleep(heartbeat_seconds)
+                yield f"data: {_json.dumps({'kind': 'heartbeat', 'timestamp': datetime.utcnow().isoformat()})}\n\n"
+
+        return StreamingResponse(
+            gen(),
+            media_type="text/event-stream",
+            headers={
+                "Cache-Control": "no-cache",
+                "X-Accel-Buffering": "no",  # disable nginx buffering
+                "Connection": "keep-alive",
+            },
+        )
 
     @app.post("/api/v1/sync/orders/{exchange}")
     async def sync_orders_manual(exchange: str, state: AppState = Depends(get_state)):
