@@ -32,20 +32,26 @@ def build_engine(settings: Settings):
         monitor_max_alerts=monitor_cfg.max_alerts,
     )
 
-    for name in ExchangeFactory.list_supported_exchanges():
-        exchange_settings = settings.exchange(name)
-        if exchange_settings is None or not exchange_settings.enabled:
-            continue
-
-        # One adapter instance owns its HTTP client and WebSocket tasks.
-        exchange = ExchangeFactory.get_or_create(
-            name,
-            api_key=exchange_settings.api_key,
-            secret_key=exchange_settings.secret_key,
-            passphrase=exchange_settings.passphrase,
-            use_testnet=exchange_settings.use_testnet,
-        )
-        engine.add_exchange(name, exchange)
+    # Trading exchanges require BOTH `enabled=true` AND a non-empty API key
+    # AND global `enable_live_trading=true`. Public market data still works
+    # via data sources registered in AppState, even when no trading
+    # exchanges are present here.
+    if settings.enable_live_trading:
+        for name in ExchangeFactory.list_supported_exchanges():
+            exchange_settings = settings.exchange(name)
+            if exchange_settings is None or not exchange_settings.enabled:
+                continue
+            if not exchange_settings.api_key:
+                # Data-source-only mode: skip trading registration.
+                continue
+            exchange = ExchangeFactory.get_or_create(
+                name,
+                api_key=exchange_settings.api_key,
+                secret_key=exchange_settings.secret_key,
+                passphrase=exchange_settings.passphrase,
+                use_testnet=exchange_settings.use_testnet,
+            )
+            engine.add_exchange(name, exchange)
 
     engine.add_strategy("sma", SMAStrategy())
     return engine
