@@ -1,4 +1,4 @@
-import { useMemo } from "react";
+import { memo, useMemo } from "react";
 
 export interface Candle {
   open_time: string | number;
@@ -17,21 +17,13 @@ interface CandleChartProps {
   bearColor?: string;
 }
 
-/**
- * Lightweight SVG candlestick chart. No chart library dependency.
- * Auto-scales price axis to the candle range.
- */
-export function CandleChart({
-  candles,
-  width = 720,
-  height = 240,
-  bullColor = "#22c55e",
-  bearColor = "#ef4444",
-}: CandleChartProps) {
-  const layout = useMemo(() => {
-    if (candles.length === 0) {
-      return null;
-    }
+function useMemoLayout(
+  candles: Candle[],
+  width: number,
+  height: number,
+) {
+  return useMemo(() => {
+    if (candles.length === 0) return null;
     const padTop = 16;
     const padBottom = 24;
     const padLeft = 8;
@@ -55,25 +47,35 @@ export function CandleChart({
     const bodyW = Math.max(2, candleW * 0.6);
     return { padTop, padBottom, padLeft, padRight, plotW, plotH, lo, hi, candleW, bodyW };
   }, [candles, width, height]);
+}
 
+interface ChartSvgProps {
+  candles: Candle[];
+  layout: ReturnType<typeof useMemoLayout>;
+  width: number;
+  height: number;
+  bullColor: string;
+  bearColor: string;
+}
+
+const ChartSvg = memo(function ChartSvg({
+  candles,
+  layout,
+  width,
+  height,
+  bullColor,
+  bearColor,
+}: ChartSvgProps) {
   if (!layout) {
-    return (
-      <div className="candle-chart candle-chart--empty">
-        暂无 K 线数据
-      </div>
-    );
+    return <div className="candle-chart candle-chart--empty">暂无 K 线数据</div>;
   }
-
-  const yFor = (price: number) =>
-    layout.padTop + (layout.plotH * (layout.hi - price)) / (layout.hi - layout.lo);
-  const xFor = (i: number) => layout.padLeft + i * layout.candleW + layout.candleW / 2;
-
-  // Y-axis ticks (5 levels)
+  const { padTop, padBottom, padLeft, padRight, plotH, lo, hi, candleW, bodyW } = layout;
+  const xFor = (i: number) => padLeft + i * candleW + candleW / 2;
+  const yFor = (price: number) => padTop + (plotH * (hi - price)) / (hi - lo);
   const yTicks = Array.from({ length: 5 }).map((_, k) => {
-    const price = layout.lo + ((layout.hi - layout.lo) * k) / 4;
+    const price = lo + ((hi - lo) * k) / 4;
     return { price, y: yFor(price) };
   });
-
   return (
     <svg
       className="candle-chart"
@@ -82,12 +84,11 @@ export function CandleChart({
       role="img"
       aria-label="K 线图"
     >
-      {/* Gridlines */}
       {yTicks.map((t, i) => (
         <line
           key={i}
-          x1={layout.padLeft}
-          x2={layout.padLeft + layout.plotW}
+          x1={padLeft}
+          x2={width - 8}
           y1={t.y}
           y2={t.y}
           stroke="#25305a"
@@ -95,7 +96,6 @@ export function CandleChart({
           strokeDasharray="2 4"
         />
       ))}
-      {/* Candles */}
       {candles.map((c, i) => {
         const x = xFor(i);
         const isBull = c.close >= c.open;
@@ -110,21 +110,20 @@ export function CandleChart({
           <g key={i}>
             <line x1={x} x2={x} y1={yHigh} y2={yLow} stroke={color} strokeWidth={1} />
             <rect
-              x={x - layout.bodyW / 2}
+              x={x - bodyW / 2}
               y={bodyTop}
-              width={layout.bodyW}
+              width={bodyW}
               height={bodyH}
               fill={color}
-              opacity={isBull ? 0.85 : 0.85}
+              opacity={0.85}
             />
           </g>
         );
       })}
-      {/* Y-axis labels */}
       {yTicks.map((t, i) => (
         <text
           key={`label-${i}`}
-          x={width - layout.padRight + 6}
+          x={width - 6}
           y={t.y + 3}
           className="candle-chart__label"
         >
@@ -132,5 +131,25 @@ export function CandleChart({
         </text>
       ))}
     </svg>
+  );
+});
+
+export function CandleChart({
+  candles,
+  width = 720,
+  height = 240,
+  bullColor = "#22c55e",
+  bearColor = "#ef4444",
+}: CandleChartProps) {
+  const layout = useMemoLayout(candles, width, height);
+  return (
+    <ChartSvg
+      candles={candles}
+      layout={layout}
+      width={width}
+      height={height}
+      bullColor={bullColor}
+      bearColor={bearColor}
+    />
   );
 }

@@ -24,6 +24,7 @@ from fastapi.responses import StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
+from app.api.cache import TTLCache
 from app.core.sqlite_store import SQLiteStore
 from app.engine.risk_manager import RiskConfig
 from app.engine.trader import TradingEngine
@@ -142,6 +143,8 @@ class AppState:
         self.trading_exchanges: Dict[str, ExchangeBase] = {}
         # User-registered custom data sources (any HTTP API via GenericHttpDataSource).
         self.custom_sources: Dict[str, Any] = {}
+        # In-process TTL cache for slow endpoints (config / capabilities / venues).
+        self.cache = TTLCache(default_ttl=30.0)
         self._register_data_sources()
         self._register_trading_exchanges()
 
@@ -274,6 +277,12 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
         version="0.1.0",
         lifespan=lifespan,
     )
+
+    # GZip compression for JSON responses — large payloads (klines, audit
+    # events, portfolio metrics) shrink dramatically. Free perf win.
+    from starlette.middleware.gzip import GZipMiddleware
+
+    app.add_middleware(GZipMiddleware, minimum_size=512)
 
     # 前端开发时 Vite 跑在 5173，浏览器会跨端口调用 8000 的 API。
     # CORS 只放开本地前端地址，不把 API 暴露给任意网站。
@@ -616,33 +625,34 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
         return {"venues": venues, "timestamp": datetime.utcnow().isoformat()}
 
     @app.get("/api/v1/config")
-    async def get_config() -> Dict[str, Any]:
-        configured = {}
-        capabilities = {}
-        for name in ExchangeFactory.list_supported_exchanges():
-            exchange_settings = settings.exchange(name)
-            configured[name] = {
-                "enabled": bool(exchange_settings and exchange_settings.enabled),
-                "use_testnet": bool(exchange_settings and exchange_settings.use_testnet),
-                "has_api_key": bool(exchange_settings and exchange_settings.api_key),
+    async def get_config(state: AppState = Depends(get_state)) -> Dict[str, Any]:
+        async def build():
+            configured = {}
+            capabilities = {}
+            for name in ExchangeFactory.list_supported_exchanges():
+                exchange_settings = settings.exchange(name)
+                configured[name] = {
+                    "enabled": bool(exchange_settings and exchange_settings.enabled),
+                    "use_testnet": bool(exchange_settings and exchange_settings.use_testnet),
+                    "has_api_key": bool(exchange_settings and exchange_settings.api_key),
+                }
+                capabilities[name] = ExchangeFactory.get_capabilities(name)
+            return {
+                "app_name": settings.app_name,
+                "app_env": settings.app_env,
+                "default_exchange": settings.default_exchange,
+                "default_symbol": settings.default_symbol,
+                "live_trading_enabled": settings.enable_live_trading,
+                "frontend_static_dir": settings.frontend_static_dir,
+                "persistence": {
+                    "driver": "sqlite",
+                    "path": str(Path(settings.sqlite_path)),
+                },
+                "exchanges": configured,
+                "exchange_capabilities": capabilities,
+                "risk": settings.risk.model_dump(),
             }
-            capabilities[name] = ExchangeFactory.get_capabilities(name)
-
-        return {
-            "app_name": settings.app_name,
-            "app_env": settings.app_env,
-            "default_exchange": settings.default_exchange,
-            "default_symbol": settings.default_symbol,
-            "live_trading_enabled": settings.enable_live_trading,
-            "frontend_static_dir": settings.frontend_static_dir,
-            "persistence": {
-                "driver": "sqlite",
-                "path": str(Path(settings.sqlite_path)),
-            },
-            "exchanges": configured,
-            "exchange_capabilities": capabilities,
-            "risk": settings.risk.model_dump(),
-        }
+        return await state.cache.get_or_set("config", build, ttl=30.0)
 
     @app.get("/api/v1/exchanges")
     async def list_exchanges() -> Dict[str, Any]:

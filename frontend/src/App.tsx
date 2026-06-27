@@ -16,6 +16,7 @@ const StrategiesPage = lazy(() => import("./pages/StrategiesPage").then((m) => (
 const RiskPage = lazy(() => import("./pages/RiskPage").then((m) => ({ default: m.RiskPage })));
 const AuditPage = lazy(() => import("./pages/AuditPage").then((m) => ({ default: m.AuditPage })));
 const SettingsPage = lazy(() => import("./pages/SettingsPage").then((m) => ({ default: m.SettingsPage })));
+const NotFoundPage = lazy(() => import("./pages/NotFoundPage").then((m) => ({ default: m.NotFoundPage })));
 
 export default function App() {
   const [sidebarOpen, setSidebarOpen] = useState(false);
@@ -46,8 +47,9 @@ export default function App() {
                 <Route path="/risk" component={RiskPage} />
                 <Route path="/audit" component={AuditPage} />
                 <Route path="/settings" component={SettingsPage} />
+                <Route path="/404" component={NotFoundPage} />
                 <Route>
-                  <Redirect to="/data" />
+                  <NotFoundPage />
                 </Route>
               </Switch>
             </Suspense>
