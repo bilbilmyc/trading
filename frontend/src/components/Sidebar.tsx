@@ -13,6 +13,7 @@ interface NavItem {
 
 const NAV_ITEMS: NavItem[] = [
   { href: "/data", label: "数据源", icon: "≣", description: "公开行情 · 数据分析" },
+  { href: "/portfolio", label: "投资组合", icon: "∑", description: "Sharpe · Sortino · 排行榜" },
   { href: "/markets", label: "行情", icon: "↗", description: "Ticker · 成交 · 挂单" },
   { href: "/trade", label: "下单单", icon: "→", description: "人工下单 / 合约预览" },
   { href: "/strategies", label: "策略", icon: "◊", description: "策略配置 · 信号流" },

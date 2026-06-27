@@ -1286,6 +1286,37 @@ input, select, button, textarea {
 
 .skeleton-row { height: 56px; }
 
+/* Leaderboard table */
+.leaderboard-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+
+.leaderboard-table th,
+.leaderboard-table td {
+  padding: 8px 12px;
+  text-align: left;
+  border-bottom: 1px solid var(--border);
+}
+
+.leaderboard-table th {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-muted);
+  font-weight: 500;
+}
+
+.leaderboard-table tr:hover {
+  background: var(--bg-hover);
+}
+
+.leaderboard-table strong {
+  color: var(--text-primary);
+  font-weight: 600;
+}
+
 .skeleton-list {
   display: flex;
   flex-direction: column;

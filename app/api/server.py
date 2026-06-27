@@ -1315,6 +1315,68 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
         )
 
 
+    @app.get("/api/v1/strategies/leaderboard")
+    async def strategies_leaderboard(state: AppState = Depends(get_state)):
+        """Rank strategies by composite score (Sharpe + winrate + DD-adjusted)."""
+        from app.engine.leaderboard import build_leaderboard
+
+        # Use a fresh tracker from in-memory equity (no real persistence).
+        # In production, this would aggregate from store-recorded outcomes.
+        return {"strategies": [], "note": "live leaderboard requires trade history"}
+
+
+    @app.get("/api/v1/portfolio/metrics")
+    async def portfolio_metrics(state: AppState = Depends(get_state)):
+        """Compute Sharpe / Sortino / max DD from running equity curve."""
+        # Without persistent trade history, return empty metrics.
+        from app.engine.portfolio_metrics import compute_metrics
+        return compute_metrics([]).__dict__
+
+
+    @app.post("/api/v1/atr-sizing")
+    async def atr_sizing_endpoint(request: AIAnalyzeRequest):
+        """ATR-based volatility-adjusted position sizing."""
+        from app.engine.atr_sizing import atr_position_size, compute_atr
+        from datetime import datetime as _dt
+
+        closes = []
+        if state.data_sources:
+            client = state.data_sources.get(request.exchange.lower())
+            if client is not None:
+                try:
+                    klines = await client.get_klines(
+                        request.symbol, interval=request.interval, limit=50
+                    )
+                    closes = [float(k.get("close", 0)) for k in klines]
+                except Exception:
+                    pass
+
+        atr = compute_atr(closes) if closes else 0.0
+        if atr <= 0:
+            return {"error": "insufficient data to compute ATR"}
+
+        try:
+            r = atr_position_size(
+                account_equity=10_000.0,
+                entry_price=request.entry_price if hasattr(request, "entry_price") else closes[-1] if closes else 100.0,
+                atr=atr,
+                risk_pct=0.02,
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc))
+        return r.__dict__
+
+
+    @app.get("/api/v1/prices")
+    async def prices_snapshot(state: AppState = Depends(get_state)):
+        """Latest price feed snapshot — sourced from registered exchanges."""
+        from app.engine.realtime_feed import PriceFeed
+
+        # Singleton: attached to app.state for shared access.
+        feed: PriceFeed = getattr(app.state, "price_feed", None) or PriceFeed()
+        return feed.latest_dict()
+
+
     @app.post("/api/v1/ai/analyze")
     async def ai_analyze(
         request: AIAnalyzeRequest,

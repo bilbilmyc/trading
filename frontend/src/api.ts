@@ -488,6 +488,23 @@ export const api = {
     );
   },
 
+  portfolioMetrics: () =>
+    request<{
+      sharpe_ratio: number;
+      sortino_ratio: number;
+      max_drawdown: number;
+      profit_factor: number;
+      expectancy: number;
+      win_rate: number;
+      total_trades: number;
+      annualized_return: number;
+    }>("/api/v1/portfolio/metrics"),
+
+  strategiesLeaderboard: () =>
+    request<{ strategies: Array<{ rank: number; strategy: string; score: number }> }>(
+      "/api/v1/strategies/leaderboard"
+    ),
+
   aiAnalyze: (payload: { exchange: string; symbol: string; interval: string; limit: number }) =>
     request<LLMAnalysisResult>("/api/v1/ai/analyze", {
       method: "POST",

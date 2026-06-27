@@ -11,6 +11,7 @@ import { Topbar } from "./components/Topbar";
 const TradePage = lazy(() => import("./pages/TradePage").then((m) => ({ default: m.TradePage })));
 const MarketsPage = lazy(() => import("./pages/MarketsPage").then((m) => ({ default: m.MarketsPage })));
 const DataPage = lazy(() => import("./pages/DataPage").then((m) => ({ default: m.DataPage })));
+const PortfolioPage = lazy(() => import("./pages/PortfolioPage").then((m) => ({ default: m.PortfolioPage })));
 const StrategiesPage = lazy(() => import("./pages/StrategiesPage").then((m) => ({ default: m.StrategiesPage })));
 const RiskPage = lazy(() => import("./pages/RiskPage").then((m) => ({ default: m.RiskPage })));
 const AuditPage = lazy(() => import("./pages/AuditPage").then((m) => ({ default: m.AuditPage })));
@@ -38,6 +39,7 @@ export default function App() {
               <Switch>
                 <Route path="/" component={() => <Redirect to="/data" />} />
                 <Route path="/data" component={DataPage} />
+                <Route path="/portfolio" component={PortfolioPage} />
                 <Route path="/trade" component={TradePage} />
                 <Route path="/markets" component={MarketsPage} />
                 <Route path="/strategies" component={StrategiesPage} />
