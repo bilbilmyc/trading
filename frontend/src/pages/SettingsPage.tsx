@@ -8,6 +8,13 @@ export function SettingsPage() {
   const [error, setError] = useState("");
   const [message, setMessage] = useState("");
 
+  // Webhook config (local state — could be persisted to localStorage).
+  const [webhookUrl, setWebhookUrl] = useState(localStorage.getItem("webhook_url") ?? "");
+  const [webhookEnabled, setWebhookEnabled] = useState(
+    localStorage.getItem("webhook_enabled") === "true"
+  );
+  const [testBusy, setTestBusy] = useState(false);
+
   async function toggleLiveTrading() {
     if (!config) return;
     try {
@@ -21,13 +28,51 @@ export function SettingsPage() {
     }
   }
 
+  function saveWebhook() {
+    localStorage.setItem("webhook_url", webhookUrl);
+    localStorage.setItem("webhook_enabled", String(webhookEnabled));
+    setMessage("Webhook 配置已保存");
+  }
+
+  async function testWebhook() {
+    if (!webhookUrl) {
+      setError("请先填写 Webhook URL");
+      return
+    }
+    setTestBusy(true)
+    setError("")
+    try {
+      // Send a test notification to the configured URL.
+      const response = await fetch(webhookUrl, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          title: "Quant Trader Test",
+          message: "This is a test notification",
+          severity: "info",
+          timestamp: new Date().toISOString(),
+          extra: { source: "settings-page" },
+        }),
+      })
+      if (response.ok) {
+        setMessage(`测试成功 · HTTP ${response.status}`)
+      } else {
+        setError(`Webhook 返回 ${response.status}`)
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Webhook 测试失败")
+    } finally {
+      setTestBusy(false)
+    }
+  }
+
   return (
     <div className="page page--settings">
       <header className="page__header">
         <div>
           <p className="eyebrow">系统配置</p>
           <h1>设置</h1>
-          <span className="page__subtitle">实盘开关 · 交易所能力 · 运行时配置</span>
+          <span className="page__subtitle">实盘开关 · 交易所能力 · 运行时配置 · 通知 webhook</span>
         </div>
       </header>
 
@@ -45,6 +90,50 @@ export function SettingsPage() {
               onClick={toggleLiveTrading}
             >
               {config?.live_trading_enabled ? "关闭实盘" : "开启实盘"}
+            </button>
+          </div>
+        </section>
+
+        <section className="panel">
+          <SectionTitle title="通知 Webhook" subtitle="telegram / discord / slack / 自定义" />
+          <p className="page__note">
+            告警、下单、风险事件会 POST 到此 URL。Payload 为 JSON：
+            <code>{"{title, message, severity, timestamp, extra}"}</code>。
+          </p>
+          <div className="form-grid">
+            <label className="field">
+              <span>Webhook URL</span>
+              <input
+                value={webhookUrl}
+                onChange={(e) => setWebhookUrl(e.target.value)}
+                placeholder="https://api.telegram.org/bot.../sendMessage 或 https://hooks.slack.com/..."
+              />
+            </label>
+            <label className="field">
+              <span>启用</span>
+              <select
+                value={webhookEnabled ? "true" : "false"}
+                onChange={(e) => setWebhookEnabled(e.target.value === "true")}
+              >
+                <option value="false">关闭</option>
+                <option value="true">开启</option>
+              </select>
+            </label>
+          </div>
+          <div className="action-row">
+            <button
+              className="action action--secondary"
+              onClick={saveWebhook}
+              disabled={!webhookUrl}
+            >
+              保存
+            </button>
+            <button
+              className="action action--primary"
+              onClick={testWebhook}
+              disabled={!webhookUrl || testBusy}
+            >
+              {testBusy ? "测试中..." : "测试"}
             </button>
           </div>
           {error && <div className="notice notice--error">{error}</div>}

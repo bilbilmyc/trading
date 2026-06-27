@@ -1,0 +1,23 @@
+.depth-chart {
+  width: 100%;
+  height: auto;
+  max-height: 280px;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+}
+
+.depth-chart--empty {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 200px;
+  color: var(--text-muted);
+  font-size: 13px;
+}
+
+.depth-chart__label {
+  font-size: 10px;
+  font-family: var(--font-mono);
+  fill: var(--text-secondary);
+}
