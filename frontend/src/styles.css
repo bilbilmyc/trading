@@ -4,33 +4,46 @@
    ===================================================================== */
 
 :root {
-  --bg-base: #0b1020;
-  --bg-elevated: #121831;
-  --bg-card: #161d3a;
-  --bg-input: #0e1430;
-  --bg-hover: #1b244a;
-  --border: #25305a;
-  --border-strong: #344080;
+  --bg-base: #0a0e1a;
+  --bg-elevated: #0f1530;
+  --bg-card: #14193a;
+  --bg-input: #0a0f24;
+  --bg-hover: #1a2148;
+  --border: #1f2a55;
+  --border-strong: #2d3a78;
+  --border-glow: rgba(99, 102, 241, 0.4);
 
-  --text-primary: #e8ecf8;
-  --text-secondary: #a8b1d6;
-  --text-muted: #6a7299;
+  --text-primary: #f0f2fa;
+  --text-secondary: #b8c0db;
+  --text-muted: #6e7699;
   --text-faint: #4a527a;
 
   --accent: #6366f1;
   --accent-hover: #818cf8;
+  --accent-soft: rgba(99, 102, 241, 0.12);
+
   --positive: #22c55e;
+  --positive-soft: rgba(34, 197, 94, 0.12);
   --negative: #ef4444;
+  --negative-soft: rgba(239, 68, 68, 0.12);
   --warning: #f59e0b;
+  --warning-soft: rgba(245, 158, 11, 0.12);
   --danger: #dc2626;
   --safe: #16a34a;
 
   --radius-sm: 6px;
-  --radius-md: 10px;
-  --radius-lg: 14px;
+  --radius-md: 12px;
+  --radius-lg: 16px;
+  --radius-xl: 20px;
 
-  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.2);
-  --shadow-md: 0 4px 16px rgba(0, 0, 0, 0.3);
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.3);
+  --shadow-md: 0 4px 16px rgba(0, 0, 0, 0.4);
+  --shadow-lg: 0 10px 40px rgba(0, 0, 0, 0.5);
+  --shadow-glow: 0 0 24px rgba(99, 102, 241, 0.25);
+
+  --transition-fast: 0.12s cubic-bezier(0.4, 0, 0.2, 1);
+  --transition-med: 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+  --transition-slow: 0.4s cubic-bezier(0.4, 0, 0.2, 1);
 
   --font-sans: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
   --font-mono: "JetBrains Mono", "SF Mono", Menlo, Monaco, Consolas, monospace;
@@ -1498,4 +1511,96 @@ input, select, button, textarea {
   background: var(--bg-input);
   border-radius: 3px;
   color: var(--accent-hover);
+}
+
+/* ===== Visual polish: animations + glows ===== */
+
+@keyframes metric-pulse {
+  0% { transform: scale(1); }
+  50% { transform: scale(1.02); }
+  100% { transform: scale(1); }
+}
+
+.metric--updating {
+  animation: metric-pulse 0.4s var(--transition-med);
+  border-color: var(--accent) !important;
+  box-shadow: var(--shadow-glow);
+}
+
+.metric {
+  transition: border-color var(--transition-fast), background var(--transition-fast);
+}
+
+.metric:hover {
+  border-color: var(--border-strong);
+  background: var(--bg-hover);
+}
+
+.action {
+  transition: all var(--transition-fast);
+  position: relative;
+  overflow: hidden;
+}
+
+.action::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(135deg, transparent 0%, rgba(255, 255, 255, 0.08) 50%, transparent 100%);
+  transform: translateX(-100%);
+  transition: transform 0.5s;
+}
+
+.action:hover::before {
+  transform: translateX(100%);
+}
+
+.panel {
+  transition: border-color var(--transition-fast), box-shadow var(--transition-fast);
+}
+
+.panel:hover {
+  border-color: var(--border-strong);
+}
+
+/* Number flash on metric update */
+@keyframes number-flash {
+  0% { color: var(--text-primary); }
+  30% { color: var(--accent-hover); }
+  100% { color: var(--text-primary); }
+}
+
+.metric__value--flashing {
+  animation: number-flash 0.6s var(--transition-med);
+}
+
+/* Animated gradient borders for active panels */
+.panel--featured {
+  background: linear-gradient(135deg, var(--bg-elevated), var(--bg-card));
+  border-color: var(--border-glow);
+  position: relative;
+}
+
+.panel--featured::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: var(--radius-lg);
+  padding: 1px;
+  background: linear-gradient(135deg, var(--accent), var(--positive), var(--accent));
+  -webkit-mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
+  -webkit-mask-composite: xor;
+  mask-composite: exclude;
+  pointer-events: none;
+  opacity: 0.5;
+}
+
+/* Hover lift effect on cards */
+.lift-hover {
+  transition: transform var(--transition-fast), box-shadow var(--transition-fast);
+}
+
+.lift-hover:hover {
+  transform: translateY(-2px);
+  box-shadow: var(--shadow-md);
 }
