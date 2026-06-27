@@ -1,5 +1,7 @@
 import type { CSSProperties } from "react";
 
+import { Markdown } from "../utils/markdown";
+
 export interface AIReportData {
   decision?: string;
   confidence?: number;
@@ -37,6 +39,7 @@ const RISK_TONE: Record<string, "default" | "positive" | "negative" | "warning" 
 /**
  * Render an LLM analyze result as a structured card.
  * Decision banner uses traffic-light color; risk + SL/TP in metric grid.
+ * The `reason` field is rendered as Markdown.
  */
 export function AIReport({ data, loading }: AIReportProps) {
   if (loading) {
@@ -99,7 +102,7 @@ export function AIReport({ data, loading }: AIReportProps) {
       {data.reason && (
         <div className="ai-report__section">
           <h4>分析推理</h4>
-          <p>{data.reason}</p>
+          <Markdown text={data.reason} />
         </div>
       )}
 
