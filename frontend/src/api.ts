@@ -488,6 +488,12 @@ export const api = {
     );
   },
 
+  closePosition: (payload: { exchange: string; symbol: string; exit_quantity?: number }) =>
+    request<{ closed_quantity: number; order: Record<string, unknown> }>(
+      "/api/v1/positions/close",
+      { method: "POST", body: JSON.stringify(payload) }
+    ),
+
   portfolioMetrics: () =>
     request<{
       sharpe_ratio: number;

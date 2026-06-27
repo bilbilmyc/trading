@@ -1632,6 +1632,67 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
             del state.data_sources[name]
         return {"name": name, "removed": True}
 
+    @app.post("/api/v1/positions/close")
+    async def close_position_endpoint(
+        request: ClosePositionRequest,
+        state: AppState = Depends(get_state),
+    ):
+        """Close (or partially close) a position at market.
+
+        Sends a closing order to the configured trading exchange.
+        For a partial close, `exit_quantity` controls how much to close.
+        """
+        client = state.trading_exchanges.get(request.exchange.lower())
+        if client is None:
+            raise HTTPException(
+                status_code=400,
+                detail=f"No trading exchange configured: {request.exchange}",
+            )
+        try:
+            pos = await state.engine.position_manager.get_position(
+                request.exchange, request.symbol
+            )
+        except Exception:
+            pos = None
+
+        side = "sell" if (pos and pos.quantity > 0) else "buy"
+        order_type = "market"
+        qty = request.exit_quantity if request.exit_quantity is not None else (
+            abs(pos.quantity) if pos else 0.0
+        )
+        if qty <= 0:
+            raise HTTPException(status_code=400, detail="No position to close")
+
+        try:
+            result = await client.place_order(
+                symbol=request.symbol,
+                side=side,
+                order_type=order_type,
+                quantity=qty,
+                price=None,
+            )
+        except Exception as exc:
+            raise HTTPException(status_code=502, detail=f"Exchange error: {exc}")
+
+        # Audit event.
+        try:
+            state.engine._record_event(
+                category="order",
+                event_type="position_closed",
+                level="info",
+                exchange=request.exchange,
+                symbol=request.symbol,
+                message=f"Closed {qty} {request.symbol} via market order",
+                details={"order_id": str(result.get("order_id", ""))},
+            )
+        except Exception:
+            pass
+
+        return {
+            "closed_quantity": qty,
+            "order": result,
+        }
+
     @app.get("/api/v1/stream/events")
     async def stream_events(
         request: Request,

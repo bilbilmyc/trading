@@ -13,6 +13,8 @@ export function RiskPage() {
   const { engine, paper, refresh } = useEngine();
   const { killSwitch, refresh: refreshStatus } = useStatus();
   const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  const [message, setMessage] = useState("");
 
   const risk = engine?.risk;
   const positions = engine?.positions;
@@ -33,6 +35,20 @@ export function RiskPage() {
     if (!window.confirm("重置模拟盘？所有 paper 仓位和成交会被清空。")) return;
     await api.resetPaper();
     await refresh();
+  }
+
+  async function closePosition(exchange: string, symbol: string) {
+    if (!window.confirm(`确认平仓 ${symbol}（${exchange}）？`)) return;
+    setBusy(true);
+    try {
+      await api.closePosition({ exchange, symbol });
+      setMessage(`已平仓 ${symbol}`);
+      await refresh();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "平仓失败");
+    } finally {
+      setBusy(false);
+    }
   }
 
   return (
@@ -90,6 +106,14 @@ export function RiskPage() {
                   <span className={(p.unrealized_pnl ?? 0) >= 0 ? "text-positive" : "text-negative"}>
                     ${formatNumber(p.unrealized_pnl)}
                   </span>
+                  <button
+                    className="action action--ghost"
+                    style={{ marginTop: 4, fontSize: 11 }}
+                    onClick={() => closePosition(p.exchange, p.symbol)}
+                    disabled={busy}
+                  >
+                    平仓
+                  </button>
                 </div>
               </div>
             ))
