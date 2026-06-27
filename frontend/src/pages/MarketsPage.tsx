@@ -1,4 +1,5 @@
 import { useEffect, useState, useCallback } from "react";
+import { useLocation } from "wouter";
 import { useStatus } from "../contexts/StatusContext";
 import { api } from "../api";
 import type {
@@ -25,11 +26,20 @@ function formatPercent(value: number | undefined): string {
 }
 
 export function MarketsPage() {
+  const [location] = useLocation();
+  const urlParams = new URLSearchParams(location.split("?")[1] || "");
   const { apiOnline } = useStatus();
-  const [exchange, setExchange] = useState<ExchangeName>("binance_usdm");
-  const [symbol, setSymbol] = useState("BTCUSDT");
+  const [exchange, setExchange] = useState<ExchangeName>(() => {
+    const q = (urlParams.get("source") as ExchangeName) || "binance_usdm";
+    return q;
+  });
+  const [symbol, setSymbol] = useState(() => urlParams.get("symbol") || "BTCUSDT");
   const [search, setSearch] = useState("");
   const [contracts, setContracts] = useState<ContractMarket[]>([]);
+  const [interval, setInterval] = useState(() => {
+    const saved = localStorage.getItem("markets_interval");
+    return saved || "1h";
+  });
   const [ticker, setTicker] = useState<Ticker | null>(null);
   const [trades, setTrades] = useState<RecentTrade[]>([]);
   const [openOrders, setOpenOrders] = useState<OpenOrder[]>([]);
@@ -37,7 +47,6 @@ export function MarketsPage() {
   const [estimate, setEstimate] = useState<CostEstimate | null>(null);
   const [liquidity, setLiquidity] = useState<Liquidity>("maker");
   const [candles, setCandles] = useState<Candle[]>([]);
-  const [interval, setInterval] = useState("1h");
 
   const refreshKlines = useCallback(async () => {
     if (!apiOnline || !symbol) return;
@@ -133,7 +142,13 @@ export function MarketsPage() {
       <div className="form-grid form-grid--inline">
         <label className="field">
           <span>周期</span>
-          <select value={interval} onChange={(e) => setInterval(e.target.value)}>
+          <select
+            value={interval}
+            onChange={(e) => {
+              setInterval(e.target.value);
+              localStorage.setItem("markets_interval", e.target.value);
+            }}
+          >
             <option value="1m">1m</option>
             <option value="5m">5m</option>
             <option value="15m">15m</option>
