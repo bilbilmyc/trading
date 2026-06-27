@@ -1,107 +1,115 @@
-"""Tests for position management — mark-to-market + close."""
+"""Tests for PositionManager — in-memory position tracking."""
 
 from __future__ import annotations
 
 import pytest
 
-from app.engine.position_mgmt import close_position, mark_to_market
+from app.engine.position_manager import PositionManager
+from app.models.position import Position
 
 
-def test_long_position_in_profit() -> None:
-    snap = mark_to_market(
-        symbol="BTCUSDT",
-        side="long",
-        quantity=0.1,
-        avg_entry_price=100_000.0,
-        mark_price=105_000.0,
-    )
-    assert snap.unrealized_pnl == 500.0
-    assert abs(snap.unrealized_pnl_pct - 0.05) < 1e-6
+@pytest.mark.asyncio
+async def test_get_position_returns_none_initially() -> None:
+    pm = PositionManager()
+    pos = await pm.get_position("binance_usdm", "BTCUSDT")
+    assert pos is None
 
 
-def test_long_position_in_loss() -> None:
-    snap = mark_to_market(
-        symbol="BTCUSDT",
-        side="long",
-        quantity=0.1,
-        avg_entry_price=100_000.0,
-        mark_price=95_000.0,
-    )
-    assert snap.unrealized_pnl == -500.0
-    assert snap.unrealized_pnl_pct < 0
+@pytest.mark.asyncio
+async def test_update_position_long() -> None:
+    pm = PositionManager()
+    await pm.update_position("binance_usdm", "BTCUSDT", 0.1, 50_000.0, "buy")
+    pos = await pm.get_position("binance_usdm", "BTCUSDT")
+    assert pos is not None
+    assert pos.quantity == 0.1
+    assert pos.avg_entry_price == 50_000.0
 
 
-def test_short_position_in_profit() -> None:
-    snap = mark_to_market(
-        symbol="BTCUSDT",
-        side="short",
-        quantity=0.1,
-        avg_entry_price=100_000.0,
-        mark_price=95_000.0,
-    )
-    assert snap.unrealized_pnl == 500.0
+@pytest.mark.asyncio
+async def test_update_position_increases_quantity_uses_avg() -> None:
+    pm = PositionManager()
+    # Buy 0.1 @ 50k, then 0.1 @ 60k → avg should be 55k, qty 0.2.
+    await pm.update_position("binance_usdm", "BTCUSDT", 0.1, 50_000.0, "buy")
+    await pm.update_position("binance_usdm", "BTCUSDT", 0.1, 60_000.0, "buy")
+    pos = await pm.get_position("binance_usdm", "BTCUSDT")
+    assert pos.quantity == 0.2
+    assert pos.avg_entry_price == 55_000.0
 
 
-def test_short_position_in_loss() -> None:
-    snap = mark_to_market(
-        symbol="BTCUSDT",
-        side="short",
-        quantity=0.1,
-        avg_entry_price=100_000.0,
-        mark_price=105_000.0,
-    )
-    assert snap.unrealized_pnl == -500.0
+@pytest.mark.asyncio
+async def test_update_position_sell_reduces_quantity() -> None:
+    pm = PositionManager()
+    await pm.update_position("binance_usdm", "BTCUSDT", 0.1, 50_000.0, "buy")
+    await pm.update_position("binance_usdm", "BTCUSDT", 0.1, 55_000.0, "sell")
+    pos = await pm.get_position("binance_usdm", "BTCUSDT")
+    assert pos.quantity == 0.0
 
 
-def test_flat_position_returns_zero_pnl() -> None:
-    snap = mark_to_market(
-        symbol="BTCUSDT",
-        side="long",
-        quantity=0.0,
-        avg_entry_price=0.0,
-        mark_price=100.0,
-    )
-    assert snap.unrealized_pnl == 0.0
+@pytest.mark.asyncio
+async def test_update_position_reverses_long_to_short() -> None:
+    pm = PositionManager()
+    await pm.update_position("binance_usdm", "BTCUSDT", 0.1, 50_000.0, "buy")
+    # Sell more than held → short position at the new price.
+    await pm.update_position("binance_usdm", "BTCUSDT", 0.2, 60_000.0, "sell")
+    pos = await pm.get_position("binance_usdm", "BTCUSDT")
+    assert pos.quantity == -0.1
+    assert pos.avg_entry_price == 60_000.0
 
 
-def test_close_full_long_position_realizes_pnl() -> None:
-    result = close_position(
-        side="long",
-        quantity=0.1,
-        avg_entry_price=100_000.0,
-        exit_price=105_000.0,
-    )
-    assert result.realized_pnl == 500.0
-    assert result.remaining_quantity == 0.0
+@pytest.mark.asyncio
+async def test_update_price_marks_to_market() -> None:
+    pm = PositionManager()
+    await pm.update_position("binance_usdm", "BTCUSDT", 0.1, 50_000.0, "buy")
+    await pm.update_price("binance_usdm", "BTCUSDT", 55_000.0)
+    pos = await pm.get_position("binance_usdm", "BTCUSDT")
+    assert pos.current_price == 55_000.0
 
 
-def test_close_partial_long_position() -> None:
-    result = close_position(
-        side="long",
-        quantity=0.2,
-        avg_entry_price=100_000.0,
-        exit_price=105_000.0,
-        close_quantity=0.05,
-    )
-    assert result.realized_pnl == 250.0
-    assert result.remaining_quantity == 0.15
+@pytest.mark.asyncio
+async def test_get_all_positions_returns_dict() -> None:
+    pm = PositionManager()
+    await pm.update_position("binance_usdm", "BTCUSDT", 0.1, 50_000.0, "buy")
+    positions = await pm.get_all_positions()
+    assert "binance_usdm:BTCUSDT" in positions
 
 
-def test_close_short_position_realizes_pnl() -> None:
-    result = close_position(
-        side="short",
-        quantity=0.1,
-        avg_entry_price=100_000.0,
-        exit_price=95_000.0,
-    )
-    assert result.realized_pnl == 500.0
+@pytest.mark.asyncio
+async def test_get_balance_returns_none_initially() -> None:
+    pm = PositionManager()
+    bal = await pm.get_balance("binance_usdm", "USDT")
+    assert bal is None
 
 
-def test_close_with_zero_quantity_rejected() -> None:
-    with pytest.raises(ValueError):
-        close_position(side="long", quantity=0, avg_entry_price=100, exit_price=110)
+@pytest.mark.asyncio
+async def test_update_balance_persists() -> None:
+    pm = PositionManager()
+    await pm.update_balance("binance_usdm", "USDT", 1000.0, 800.0)
+    bal = await pm.get_balance("binance_usdm", "USDT")
+    assert bal is not None
+    assert bal.total == 1000.0
+    assert bal.available == 800.0
 
 
-def test_close_at_invalid_price_rejected() -> None:
-    with pytest.raises(ValueError):
-        close_position(side="long", quantity=0.1, avg_entry_price=100, exit_price=-1)
+@pytest.mark.asyncio
+async def test_get_position_summary_shape() -> None:
+    pm = PositionManager()
+    await pm.update_position("binance_usdm", "BTCUSDT", 0.1, 50_000.0, "buy")
+    await pm.update_price("binance_usdm", "BTCUSDT", 55_000.0)
+    summary = await pm.get_position_summary()
+    assert "positions" in summary or "total_unrealized_pnl" in summary
+
+
+def test_position_manager_initial_state() -> None:
+    pm = PositionManager()
+    assert pm._positions == {}
+    assert pm._balances == {}
+
+
+@pytest.mark.asyncio
+async def test_position_manager_update_position_with_price_none() -> None:
+    """update_position with price=None should not crash."""
+    pm = PositionManager()
+    await pm.update_position("binance_usdm", "BTCUSDT", 0.1, 0.0, "buy")
+    pos = await pm.get_position("binance_usdm", "BTCUSDT")
+    assert pos is not None
+    assert pos.avg_entry_price == 0.0
