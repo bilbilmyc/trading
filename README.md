@@ -423,6 +423,31 @@ docker run --rm \
   ghcr.io/bilbilmyc/trading:latest
 ```
 
+### 生产 vs 开发模式（业界最佳实践：单体部署 + 开发期分离）
+
+| 场景 | 模式 | 命令 | 端口 |
+|------|------|------|------|
+| **生产 / 演示 / 单机部署** | 单体（FastAPI + 静态前端） | `docker compose up -d` | `:8000` |
+| **二次开发 / 改前端** | vite dev + uvicorn reload | `docker compose -f docker-compose.dev.yml up` | `:5173` (前端) + `:8000` (后端) |
+
+**生产单体** — 1 个容器，1 个端口，1 个 .env。前端在 Docker 构建时打包到 `/app/static`，FastAPI 用 `StaticFiles` mount 出来。简单、可靠、易运维。
+
+**开发分离** — `docker-compose.dev.yml` 启动两个服务：vite dev server (5173) 带热重载 + uvicorn (8000) 带 `--reload`。Vite proxy 自动把 `/api` 和 `/health` 转发到后端，**不需要 CORS 配置**。访问 http://localhost:5173 开发。
+
+切换方式：
+```bash
+# 生产
+docker compose up -d
+
+# 开发
+docker compose -f docker-compose.dev.yml up
+
+# 停止
+docker compose down
+# 或
+docker compose -f docker-compose.dev.yml down
+```
+
 > 不需要重新 `docker build`，因为配置文件 `.env` 是在容器启动时读入的，不是打在镜像里的。
 
 ### 临时覆盖单个变量

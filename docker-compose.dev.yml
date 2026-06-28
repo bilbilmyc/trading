@@ -1,0 +1,30 @@
+services:
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: quant-trader:dev
+    container_name: quant-trader-api
+    command: uv run uvicorn app.api.server:create_app --factory --host 0.0.0.0 --port 8000 --reload
+    volumes:
+      - ./app:/app/app
+      - ./config:/app/config
+      - ./main.py:/app/main.py
+    environment:
+      SQLITE_PATH: /app/data/trading.sqlite3
+    ports:
+      - "8000:8000"
+
+  web:
+    image: node:22-slim
+    container_name: quant-trader-web
+    working_dir: /app
+    command: sh -c "npm install && npm run dev -- --host 0.0.0.0"
+    volumes:
+      - ./frontend:/app
+    environment:
+      VITE_API_URL: http://localhost:8000
+    ports:
+      - "5173:5173"
+    depends_on:
+      - api
