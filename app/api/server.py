@@ -11,7 +11,6 @@ FastAPI HTTP 入口。
 5. 路由函数通常先从 `state` 取 engine/store/exchange，再调用具体业务方法。
 """
 
-import secrets
 from collections.abc import Awaitable, Callable
 from contextlib import asynccontextmanager
 from datetime import datetime
@@ -23,10 +22,29 @@ from fastapi import Depends, FastAPI, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel, Field
 
 from app.api.auth import require_api_key
 from app.api.cache import TTLCache
+from app.api.helpers import (
+    ensure_contract_client_order_id,
+    extract_order_id,
+    infer_liquidity,
+)
+from app.api.schemas import (
+    AIAnalyzeRequest,
+    BacktestRequest,
+    ClosePositionRequest,
+    CustomSourceRequest,
+    KillSwitchRequest,
+    LLMStrategyCreateRequest,
+    OrderRequest,
+    PaperResetRequest,
+    SignalRunnerRequest,
+    SizingRequest,
+    SMAStrategyRequest,
+    StrategyModeRequest,
+    SuggestRequest,
+)
 from app.core.logging import setup_logger
 from app.core.sqlite_store import SQLiteStore
 from app.data_sources.generic_http import GenericHttpDataSource
@@ -41,70 +59,6 @@ from app.strategies.sma import SMAStrategy
 from config import Settings, load_settings
 
 T = TypeVar("T")
-
-
-class OrderRequest(BaseModel):
-    """现货下单请求体。
-
-    FastAPI 会根据这个 Pydantic 模型校验前端传入的 JSON。
-    校验通过后，路由函数里拿到的 request 就是一个 OrderRequest 对象。
-    """
-
-    exchange: str = Field(..., min_length=1)
-    symbol: str = Field(..., min_length=1)
-    side: str = Field(..., pattern="^(buy|sell|BUY|SELL)$")
-    order_type: str = Field("market", pattern="^(market|limit|MARKET|LIMIT)$")
-    quantity: float = Field(..., gt=0)
-    price: float | None = Field(None, gt=0)
-    quote_order_qty: float | None = Field(None, gt=0)
-
-
-class SMAStrategyRequest(BaseModel):
-    """创建 SMA 策略时前端传入的请求体。"""
-
-    name: str | None = Field(None, min_length=1, max_length=64)
-    exchange: str = Field("binance_usdm", min_length=1)
-    symbol: str = Field("BTCUSDT", min_length=1)
-    interval: str = Field("1m", min_length=1, max_length=16)
-    short_window: int = Field(5, ge=1)
-    long_window: int = Field(20, ge=2)
-    min_data_points: int | None = Field(None, ge=2)
-    enabled: bool = False
-    mode: str = Field("signal", pattern="^(signal|paper)$")
-
-
-class SignalRunnerRequest(BaseModel):
-    """启动或手动运行信号运行器的请求体。"""
-
-    poll_seconds: int = Field(60, ge=5, le=3600)
-    candle_limit: int = Field(80, ge=20, le=500)
-
-
-class PaperResetRequest(BaseModel):
-    """重置模拟盘账户的请求体。"""
-
-    initial_cash: float | None = Field(None, gt=0)
-
-
-class StrategyModeRequest(BaseModel):
-    """切换策略运行模式的请求体。
-
-    `live` 表示策略希望执行实盘（仍受全局 `enable_live_trading` 开关
-    与 `LiveTradingGuard` 熔断保护）。
-    """
-
-    mode: str = Field(..., pattern="^(signal|paper|live)$")
-
-
-class KillSwitchRequest(BaseModel):
-    """全局 Kill Switch 切换请求体。
-
-    enabled=true 表示立即熔断全部真实交易；enabled=false 表示恢复交易权限。
-    reason 会写入 SQLite 审计事件，方便复盘是谁因为什么原因切换了风控状态。
-    """
-
-    enabled: bool
-    reason: str = Field("manual", min_length=1, max_length=200)
 
 
 class AppState:
@@ -365,47 +319,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 "error_category": category,
             }) from exc
 
-    def extract_order_id(result: Any) -> str | None:
-        """尽量从不同交易所返回里取订单号。
-
-        Binance、OKX、Bitget 的字段名不完全一样，所以这里做一层兼容。
-        后续引入正式 OMS 后，订单号抽取应该下沉到各交易所适配器。
-        """
-
-        if not isinstance(result, dict):
-            return None
-        for key in ("order_id", "orderId", "ordId", "clientOid", "clOrdId"):
-            value = result.get(key)
-            if value:
-                return str(value)
-        raw = result.get("raw")
-        if isinstance(raw, dict):
-            return extract_order_id(raw)
-        return None
-
-    def generate_client_order_id() -> str:
-        """生成交易所可接受的客户端订单号。
-
-        这个 ID 会写入交易所订单请求，也会进入 SQLite 审计事件。
-        前端先调用 preview 拿到这个 ID，再用同一个 ID 提交订单，方便排查和重试。
-        """
-
-        return f"qt{datetime.utcnow():%y%m%d%H%M%S}{secrets.token_hex(5)}"
-
-    def ensure_contract_client_order_id(request: ContractOrderRequest) -> ContractOrderRequest:
-        """保证合约订单一定带 client_order_id。"""
-
-        if request.client_order_id:
-            return request
-        return request.model_copy(update={"client_order_id": generate_client_order_id()})
-
-    def infer_liquidity(order_type: str) -> LiquidityType:
-        """按订单类型推断预估手续费用 maker 还是 taker 费率。"""
-
-        normalized = order_type.lower()
-        if normalized in {"market", "ioc", "fok"}:
-            return LiquidityType.TAKER
-        return LiquidityType.MAKER
+    def _placeholder():
+        pass
 
     async def build_contract_order_preview(request: ContractOrderRequest) -> dict[str, Any]:
         """构建合约下单预览，不产生任何交易所状态变更。"""
@@ -1219,24 +1134,6 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     # ── AI 大模型分析 API ──────────────────────────────────────
 
-    class AIAnalyzeRequest(BaseModel):
-        """AI 市场分析请求体。"""
-
-        exchange: str = Field("binance_usdm", min_length=1)
-        symbol: str = Field("BTCUSDT", min_length=1)
-        interval: str = Field("1h", min_length=1, max_length=8)
-        limit: int = Field(30, ge=10, le=100)
-
-    class SizingRequest(BaseModel):
-        account_equity: float = Field(..., gt=0)
-        entry_price: float = Field(..., gt=0)
-        stop_loss_price: float = Field(..., gt=0)
-        take_profit_price: float | None = Field(None, gt=0)
-        leverage: float = Field(1.0, gt=0)
-        risk_pct: float = Field(0.02, gt=0, lt=1)
-        contract_size: float = Field(1.0, gt=0)
-        min_quantity: float = Field(0.001, gt=0)
-
     @app.post("/api/v1/sizing")
     async def sizing(request: SizingRequest):
         """Compute recommended contract quantity sized to a target risk %.
@@ -1267,26 +1164,6 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             "risk_pct": r.risk_pct,
             "risk_reward_ratio": r.risk_reward_ratio,
         }
-
-    class BacktestRequest(BaseModel):
-        klines: list[dict[str, Any]] = Field(..., min_length=1)
-        short_window: int = Field(5, gt=0)
-        long_window: int = Field(20, gt=0)
-        initial_capital: float = Field(10_000.0, gt=0)
-        position_size_pct: float = Field(1.0, gt=0, le=1.0)
-
-
-    class SuggestRequest(BaseModel):
-        klines: list[dict[str, Any]] = Field(..., min_length=1)
-        prefer: str | None = None
-
-
-    class ClosePositionRequest(BaseModel):
-        symbol: str
-        exchange: str
-        exit_quantity: float | None = None
-        position_size_pct: float = Field(1.0, gt=0, le=1.0)
-
 
     @app.post("/api/v1/backtest")
     async def backtest_endpoint(request: BacktestRequest):
@@ -1506,18 +1383,6 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     # ── LLM 策略（D / B / A）管理 API ─────────────────────────
 
-    class LLMStrategyCreateRequest(BaseModel):
-        """创建 LLM 策略实例的请求体。"""
-
-        name: str | None = Field(None, min_length=1, max_length=64)
-        exchange: str = Field("binance_usdm", min_length=1)
-        symbol: str = Field("BTCUSDT", min_length=1)
-        interval: str = Field("1h", min_length=1, max_length=16)
-        default_order_amount: float | None = Field(None, gt=0)
-        min_confidence: float = Field(0.5, ge=0.0, le=1.0)
-        enabled: bool = False
-        mode: str = Field("signal", pattern="^(signal|paper|live)$")
-
     @app.post("/api/v1/strategies/llm")
     async def create_llm_strategy(
         request: LLMStrategyCreateRequest,
@@ -1666,14 +1531,6 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 "interval_seconds": state.engine.position_sync.interval_seconds,
             },
         }
-
-    class CustomSourceRequest(BaseModel):
-        name: str = Field(..., min_length=1, max_length=64)
-        base_url: str = Field(..., min_length=1)
-        ticker_path: str = "/ticker/{symbol}"
-        klines_path: str = "/klines"
-        trades_path: str = "/trades"
-        klines_array_key: str | None = None
 
     @app.get("/api/v1/sources")
     async def list_sources(state: AppState = Depends(get_state)):
