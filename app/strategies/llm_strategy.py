@@ -10,10 +10,32 @@ LLM 大模型交易策略
 """
 
 from datetime import datetime
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Protocol
 
 from app.strategies.base import StrategyBase, Signal, SignalAction
 from app.strategies.llm_analyzer import LLMAnalyzer, LLMAnalysisResult
+
+
+class LLMContextProvider(Protocol):
+    """Source of risk + trade-history context for LLM signal generation.
+
+    The strategy doesn't know about RiskManager or SQLiteStore directly —
+    anything implementing these two methods can feed the prompt. This keeps
+    the strategy unit-testable without spinning up the engine, and lets
+    the wiring live in the API layer.
+
+    Both methods are async because the engine's RiskManager exposes an
+    async `get_risk_status`. Implementations may choose to return None
+    for either block to omit it from the prompt.
+    """
+
+    async def get_risk_context(self) -> Optional[Dict[str, Any]]:
+        """Return current risk metrics (daily_pnl, drawdown, kill switch, ...)."""
+        ...
+
+    async def get_trade_history(self, symbol: str) -> Optional[Dict[str, Any]]:
+        """Return trade history stats for a symbol (win rate, streaks, ...)."""
+        ...
 
 
 class LLMStrategy(StrategyBase):
@@ -36,6 +58,7 @@ class LLMStrategy(StrategyBase):
         min_candles: int = 10,
         max_candles: int = 80,
         allowed_symbols: Optional[List[str]] = None,
+        context_provider: Optional[LLMContextProvider] = None,
     ):
         super().__init__(name=name)
         self.analyzer = analyzer
@@ -48,6 +71,10 @@ class LLMStrategy(StrategyBase):
         self.allowed_symbols: Optional[set] = (
             set(allowed_symbols) if allowed_symbols else None
         )
+        # Optional provider for risk + trade-history blocks in the LLM prompt.
+        # None = those blocks are omitted (backward compat for personal use
+        # that doesn't want to wire the engine context in).
+        self.context_provider: Optional[LLMContextProvider] = context_provider
 
         # 缓存最近的 K 线数据，键为 symbol
         self._klines: Dict[str, List[Dict[str, Any]]] = {}
@@ -111,6 +138,21 @@ class LLMStrategy(StrategyBase):
         }
 
         # 调用 LLM 分析
+        # If a context provider is configured, pull live risk metrics and
+        # recent trade history so the prompt template (Slice 1 of P1-4)
+        # can show the LLM what's actually going on.
+        risk_context = None
+        trade_history = None
+        if self.context_provider is not None:
+            try:
+                risk_context = await self.context_provider.get_risk_context()
+            except Exception:
+                risk_context = None
+            try:
+                trade_history = await self.context_provider.get_trade_history(symbol)
+            except Exception:
+                trade_history = None
+
         try:
             result = await self.analyzer.analyze_raw(
                 ticker=ticker,
@@ -118,6 +160,8 @@ class LLMStrategy(StrategyBase):
                 symbol=symbol,
                 interval="",  # 由调用方决定周期
                 position_context=None,
+                risk_context=risk_context,
+                trade_history=trade_history,
             )
         except Exception as exc:
             self._last_result[symbol] = None

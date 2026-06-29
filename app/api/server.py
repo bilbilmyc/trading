@@ -1529,6 +1529,7 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
 
         from app.strategies.llm_analyzer import LLMAnalyzer, LLMAnalyzerConfig
         from app.strategies.llm_strategy import LLMStrategy
+        from app.engine.llm_context import DefaultLLMContextProvider
 
         llm_config = LLMAnalyzerConfig(
             api_key=state.settings.llm_api_key,
@@ -1545,12 +1546,21 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
         amount = request.default_order_amount or state.settings.llm_default_order_amount
         strategy_name = request.name or f"llm_{request.symbol.lower()}_{request.interval}"
 
+        # P1-4 Slice 2: pipe live risk metrics + trade history into the LLM
+        # prompt. The provider adapts engine state (RiskManager + SQLiteStore)
+        # so the strategy stays engine-agnostic.
+        context_provider = DefaultLLMContextProvider(
+            risk_manager=state.engine.risk_manager,
+            store=state.store,
+        )
+
         strategy = LLMStrategy(
             analyzer=analyzer,
             name=strategy_name,
             default_order_amount_usdt=amount,
             min_confidence=request.min_confidence,
             allowed_symbols=state.settings.llm_allowed_symbols or None,
+            context_provider=context_provider,
         )
         state.engine.add_strategy(
             strategy_name,
