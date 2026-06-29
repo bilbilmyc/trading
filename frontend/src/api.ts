@@ -26,6 +26,8 @@ import { ordersApi } from "./api/orders";
 import { engineApi } from "./api/engine";
 import { strategiesApi } from "./api/strategies";
 import { portfolioApi } from "./api/portfolio";
+import { aiApi } from "./api/ai";
+import { riskApi } from "./api/risk";
 
 // Re-exported so existing `import { Ticker } from "./api"` keeps working
 // while the types live next to the methods that return them.
@@ -58,6 +60,8 @@ export type {
   SignalRunnerStatus,
 } from "./api/strategies";
 export type { TradeRecord, EquityPoint, LeaderboardEntry } from "./api/portfolio";
+export type { LLMAnalysisResult } from "./api/ai";
+export type { KillSwitchStatus } from "./api/risk";
 
 // ── Types that still live here (haven't been split yet) ──────────
 
@@ -87,27 +91,6 @@ export interface ExchangeCapabilities {
   supports_private_fee_lookup: boolean;
 }
 
-export interface KillSwitchStatus {
-  enabled: boolean;
-  trading_enabled: boolean;
-  risk: { trading_enabled: boolean; daily_pnl: number; current_drawdown: number; orders_last_minute: number; max_orders_per_minute: number };
-}
-
-export interface LLMAnalysisResult {
-  decision: string;
-  confidence: number;
-  reason: string;
-  stop_loss?: number | null;
-  take_profit?: number | null;
-  risk_level: string;
-  risk_note: string;
-  model?: string;
-  analysis_time?: string;
-  candle_count?: number;
-  cache_hit?: boolean;
-  error_kind?: string | null;
-}
-
 // ── The full API surface, composed of domain partials ─────────────
 
 export const api = {
@@ -117,32 +100,14 @@ export const api = {
   ...engineApi,
   ...strategiesApi,
   ...portfolioApi,
+  ...aiApi,
+  ...riskApi,
 
   health: () => request<HealthResponse>("/health"),
 
   config: () => request<AppConfig>("/api/v1/config"),
 
   exchanges: () => request<{ exchanges: string[]; enabled: string[] }>("/api/v1/exchanges"),
-
-  killSwitchStatus: () => request<KillSwitchStatus>("/api/v1/risk/kill-switch"),
-
-  setKillSwitch: (enabled: boolean, reason: string) =>
-    request<{ enabled: boolean; trading_enabled: boolean }>("/api/v1/risk/kill-switch", {
-      method: "POST",
-      body: JSON.stringify({ enabled, reason }),
-    }),
-
-  toggleLiveTrading: (enabled: boolean) =>
-    request<{ live_trading_enabled: boolean }>("/api/v1/settings/live-trading", {
-      method: "POST",
-      body: JSON.stringify({ enabled }),
-    }),
-
-  aiAnalyze: (payload: { exchange: string; symbol: string; interval: string; limit: number }) =>
-    request<LLMAnalysisResult>("/api/v1/ai/analyze", {
-      method: "POST",
-      body: JSON.stringify(payload),
-    }),
 };
 
 // Allow pages that build custom URLs (e.g. SSE) to call `api.request`.
