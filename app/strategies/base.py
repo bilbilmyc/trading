@@ -5,10 +5,11 @@
 """
 
 from abc import ABC, abstractmethod
-from typing import Dict, List, Optional, Any
 from datetime import datetime
-from pydantic import BaseModel, Field
 from enum import Enum
+from typing import Any
+
+from pydantic import BaseModel, Field
 
 
 class SignalAction(str, Enum):
@@ -33,18 +34,18 @@ class Signal(BaseModel):
         metadata: 额外信息
         timestamp: 信号时间
     """
-    
+
     symbol: str = Field(..., min_length=1, description="交易对")
     action: SignalAction = Field(..., description="买卖动作")
     strength: float = Field(1.0, ge=0, le=1, description="信号强度")
-    quantity: Optional[float] = Field(None, gt=0, description="建议数量")
-    price: Optional[float] = Field(None, gt=0, description="目标价格")
+    quantity: float | None = Field(None, gt=0, description="建议数量")
+    price: float | None = Field(None, gt=0, description="目标价格")
     order_type: str = Field('market', description="订单类型")
-    stop_loss: Optional[float] = Field(None, gt=0, description="止损价")
-    take_profit: Optional[float] = Field(None, gt=0, description="止盈价")
-    metadata: Dict[str, Any] = Field(default_factory=dict, description="额外信息")
+    stop_loss: float | None = Field(None, gt=0, description="止损价")
+    take_profit: float | None = Field(None, gt=0, description="止盈价")
+    metadata: dict[str, Any] = Field(default_factory=dict, description="额外信息")
     timestamp: datetime = Field(default_factory=datetime.utcnow, description="信号时间")
-    
+
     @property
     def is_actionable(self) -> bool:
         """信号是否可执行"""
@@ -56,7 +57,7 @@ class StrategyBase(ABC):
     
     所有交易策略必须继承此类并实现抽象方法。
     """
-    
+
     def __init__(self, name: str = 'BaseStrategy'):
         """初始化策略
         
@@ -65,15 +66,15 @@ class StrategyBase(ABC):
         """
         self.name = name
         self._initialized_at = datetime.utcnow()
-        self._last_signal_time: Dict[str, datetime] = {}
-    
+        self._last_signal_time: dict[str, datetime] = {}
+
     @property
     def initialized_at(self) -> datetime:
         """策略初始化时间"""
         return self._initialized_at
-    
+
     @abstractmethod
-    async def on_market_data(self, symbol: str, data: Dict[str, Any]):
+    async def on_market_data(self, symbol: str, data: dict[str, Any]):
         """处理行情数据
         
         Args:
@@ -81,9 +82,9 @@ class StrategyBase(ABC):
             data: 行情数据
         """
         pass
-    
+
     @abstractmethod
-    async def generate_signals(self, symbol: str) -> Optional[Signal]:
+    async def generate_signals(self, symbol: str) -> Signal | None:
         """生成交易信号
         
         Args:
@@ -93,8 +94,8 @@ class StrategyBase(ABC):
             交易信号，无信号返回 None
         """
         pass
-    
-    async def on_order_filled(self, symbol: str, order_info: Dict[str, Any]):
+
+    async def on_order_filled(self, symbol: str, order_info: dict[str, Any]):
         """订单成交回调
         
         Args:
@@ -102,8 +103,8 @@ class StrategyBase(ABC):
             order_info: 订单信息
         """
         pass
-    
-    async def on_position_update(self, symbol: str, position_info: Dict[str, Any]):
+
+    async def on_position_update(self, symbol: str, position_info: dict[str, Any]):
         """持仓更新回调
         
         Args:
@@ -111,23 +112,23 @@ class StrategyBase(ABC):
             position_info: 持仓信息
         """
         pass
-    
+
     async def start(self):
         """启动策略"""
         pass
-    
+
     async def stop(self):
         """停止策略"""
         pass
-    
-    def get_last_signal_time(self, symbol: str) -> Optional[datetime]:
+
+    def get_last_signal_time(self, symbol: str) -> datetime | None:
         """获取上次信号时间"""
         return self._last_signal_time.get(symbol)
-    
+
     def _update_signal_time(self, symbol: str):
         """更新信号时间"""
         self._last_signal_time[symbol] = datetime.utcnow()
-    
+
     def should_generate_signal(self, symbol: str, min_interval_seconds: int = 60) -> bool:
         """检查是否应该生成新信号 (防止频繁信号)
         
@@ -141,6 +142,6 @@ class StrategyBase(ABC):
         last_time = self.get_last_signal_time(symbol)
         if last_time is None:
             return True
-        
+
         elapsed = (datetime.utcnow() - last_time).total_seconds()
         return elapsed >= min_interval_seconds

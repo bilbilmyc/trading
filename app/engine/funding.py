@@ -11,7 +11,6 @@ means longs pay shorts; negative means shorts pay longs.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Dict, List, Optional
 
 
 @dataclass
@@ -19,13 +18,13 @@ class FundingSnapshot:
     symbol: str
     exchange: str
     rate: float              # e.g. 0.0001 = 0.01% per 8h
-    next_settlement_ms: Optional[int] = None
+    next_settlement_ms: int | None = None
     timestamp: str = ""
 
 
 @dataclass
 class FundingHistory:
-    snapshots: List[FundingSnapshot] = field(default_factory=list)
+    snapshots: list[FundingSnapshot] = field(default_factory=list)
 
     def add(self, snap: FundingSnapshot) -> None:
         self.snapshots.append(snap)
@@ -33,10 +32,10 @@ class FundingHistory:
         if len(self.snapshots) > 1000:
             self.snapshots = self.snapshots[-1000:]
 
-    def latest(self) -> Optional[FundingSnapshot]:
+    def latest(self) -> FundingSnapshot | None:
         return self.snapshots[-1] if self.snapshots else None
 
-    def annualized_rate(self) -> Optional[float]:
+    def annualized_rate(self) -> float | None:
         """Convert latest funding rate to annualized basis.
 
         Assumes 8h funding cycle (3 settlements per day). Real exchange
@@ -53,7 +52,7 @@ class FundingTracker:
     """Tracks funding rate history keyed by (symbol, exchange)."""
 
     def __init__(self, settlements_per_day: int = 3) -> None:
-        self._store: Dict[tuple, FundingHistory] = {}
+        self._store: dict[tuple, FundingHistory] = {}
         self.settlements_per_day = settlements_per_day
 
     def record(self, snap: FundingSnapshot) -> None:
@@ -66,10 +65,10 @@ class FundingTracker:
             (symbol.upper(), exchange.lower()), FundingHistory()
         )
 
-    def latest(self, symbol: str, exchange: str) -> Optional[FundingSnapshot]:
+    def latest(self, symbol: str, exchange: str) -> FundingSnapshot | None:
         return self.history(symbol, exchange).latest()
 
-    def all_pairs(self) -> List[tuple]:
+    def all_pairs(self) -> list[tuple]:
         return list(self._store.keys())
 
 

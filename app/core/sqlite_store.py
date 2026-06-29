@@ -11,14 +11,14 @@ import json
 import sqlite3
 from pathlib import Path
 from threading import RLock
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 
 def _json_dumps(value: Any) -> str:
     return json.dumps(value or {}, ensure_ascii=False, sort_keys=True)
 
 
-def _json_loads(value: Optional[str]) -> Dict[str, Any]:
+def _json_loads(value: str | None) -> dict[str, Any]:
     if not value:
         return {}
     try:
@@ -138,7 +138,7 @@ class SQLiteStore:
             )
             self._conn.commit()
 
-    def upsert_strategy(self, strategy: Dict[str, Any]) -> None:
+    def upsert_strategy(self, strategy: dict[str, Any]) -> None:
         with self._lock:
             self._conn.execute(
                 """
@@ -178,7 +178,7 @@ class SQLiteStore:
             self._conn.execute("DELETE FROM strategies WHERE name = ?", (name,))
             self._conn.commit()
 
-    def list_strategies(self) -> List[Dict[str, Any]]:
+    def list_strategies(self) -> list[dict[str, Any]]:
         with self._lock:
             rows = self._conn.execute("SELECT * FROM strategies ORDER BY name").fetchall()
         return [
@@ -197,7 +197,7 @@ class SQLiteStore:
             for row in rows
         ]
 
-    def append_signal(self, signal: Dict[str, Any]) -> None:
+    def append_signal(self, signal: dict[str, Any]) -> None:
         with self._lock:
             self._conn.execute(
                 """
@@ -225,7 +225,7 @@ class SQLiteStore:
             )
             self._conn.commit()
 
-    def recent_signals(self, limit: int = 50) -> List[Dict[str, Any]]:
+    def recent_signals(self, limit: int = 50) -> list[dict[str, Any]]:
         with self._lock:
             rows = self._conn.execute(
                 "SELECT * FROM signals ORDER BY id DESC LIMIT ?",
@@ -251,12 +251,12 @@ class SQLiteStore:
             for row in rows
         ]
 
-    def append_event(self, event: Dict[str, Any]) -> None:
+    def append_event(self, event: dict[str, Any]) -> None:
         """追加一条可审计事件，比如下单、撤单、风控拒单。"""
 
         self.append_events([event])
 
-    def append_events(self, events: List[Dict[str, Any]]) -> None:
+    def append_events(self, events: list[dict[str, Any]]) -> None:
         """Batched event writes — N rows in one transaction.
 
         Use this when emitting multiple audit events from a single logical
@@ -295,14 +295,14 @@ class SQLiteStore:
 
     def recent_events(
         self,
-        category: Optional[str] = None,
-        event_type: Optional[str] = None,
+        category: str | None = None,
+        event_type: str | None = None,
         limit: int = 50,
-    ) -> List[Dict[str, Any]]:
+    ) -> list[dict[str, Any]]:
         """按时间顺序返回最近事件，供 API 和前端审计时间线使用。"""
 
         filters = []
-        params: List[Any] = []
+        params: list[Any] = []
         if category:
             filters.append("category = ?")
             params.append(category)
@@ -335,7 +335,7 @@ class SQLiteStore:
             for row in rows
         ]
 
-    def save_paper_state(self, summary: Dict[str, Any]) -> None:
+    def save_paper_state(self, summary: dict[str, Any]) -> None:
         with self._lock:
             self._conn.execute(
                 """
@@ -395,7 +395,7 @@ class SQLiteStore:
                 self._conn.execute("DELETE FROM paper_positions")
             self._conn.commit()
 
-    def save_paper_order(self, order: Dict[str, Any]) -> None:
+    def save_paper_order(self, order: dict[str, Any]) -> None:
         with self._lock:
             self._conn.execute(
                 """
@@ -431,12 +431,12 @@ class SQLiteStore:
         self,
         *,
         limit: int = 100,
-        strategy: Optional[str] = None,
-        exchange: Optional[str] = None,
-    ) -> List[Dict[str, Any]]:
+        strategy: str | None = None,
+        exchange: str | None = None,
+    ) -> list[dict[str, Any]]:
         """List recent paper orders, newest first."""
-        clauses: List[str] = []
-        params: List[Any] = []
+        clauses: list[str] = []
+        params: list[Any] = []
         if strategy:
             clauses.append("strategy = ?")
             params.append(strategy)
@@ -453,7 +453,7 @@ class SQLiteStore:
             ).fetchall()
         return [dict(r) for r in rows]
 
-    def load_paper_state(self) -> Dict[str, Any]:
+    def load_paper_state(self) -> dict[str, Any]:
         with self._lock:
             account = self._conn.execute("SELECT * FROM paper_account WHERE id = 1").fetchone()
             positions = self._conn.execute("SELECT * FROM paper_positions ORDER BY position_key").fetchall()

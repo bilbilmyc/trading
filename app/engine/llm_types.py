@@ -9,10 +9,10 @@ Single source of truth for everything LLM-shaped. Used by:
 
 from __future__ import annotations
 
+from collections.abc import AsyncIterator, Mapping, Sequence
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any, AsyncIterator, Dict, List, Mapping, Optional, Protocol, Sequence
-
+from typing import Any, Protocol
 
 # ── Provider errors ──────────────────────────────────────────────────
 
@@ -30,7 +30,7 @@ class LLMErrorKind(str, Enum):
 class LLMError:
     kind: LLMErrorKind
     message: str
-    status_code: Optional[int] = None
+    status_code: int | None = None
     retryable: bool = False
 
 
@@ -44,20 +44,20 @@ class LLMDecided:
     decision: str  # "buy" | "sell" | "hold"
     confidence: float
     reason: str
-    stop_loss: Optional[float] = None
-    take_profit: Optional[float] = None
+    stop_loss: float | None = None
+    take_profit: float | None = None
     risk_level: str = "medium"
     risk_note: str = ""
     model: str = ""
-    raw_response: Optional[str] = None
+    raw_response: str | None = None
 
 
 @dataclass(frozen=True)
 class LLMResponse:
     """Tagged union — exactly one of `decided` / `failed` is populated."""
 
-    decided: Optional[LLMDecided] = None
-    failed: Optional[LLMError] = None
+    decided: LLMDecided | None = None
+    failed: LLMError | None = None
     prompt_tokens: int = 0
     completion_tokens: int = 0
     latency_ms: int = 0
@@ -80,7 +80,7 @@ class LLMChunk:
 
     text_delta: str = ""
     is_final: bool = False
-    response: Optional[LLMResponse] = None
+    response: LLMResponse | None = None
 
 
 # ── Message shape (OpenAI-compatible) ────────────────────────────────

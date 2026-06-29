@@ -9,10 +9,12 @@ import asyncio
 import contextlib
 import hashlib
 import hmac
-from typing import Dict, List, Optional, Any, Callable
+from collections.abc import Callable
 from datetime import datetime
-import orjson
+from typing import Any
 from urllib.parse import urlencode
+
+import orjson
 
 try:
     import httpx
@@ -25,7 +27,7 @@ from app.exchanges.base import ExchangeBase
 
 class BinanceExchange(ExchangeBase):
     """Binance 交易所异步实现"""
-    
+
     def __init__(
         self,
         api_key: str = '',
@@ -34,32 +36,32 @@ class BinanceExchange(ExchangeBase):
         use_testnet: bool = True
     ):
         super().__init__(api_key, secret_key, passphrase, use_testnet)
-        
+
         if use_testnet:
             self._base_url = "https://testnet.binance.vision"
             self._ws_url = "wss://stream.testnet.binance.vision/ws"
         else:
             self._base_url = "https://api.binance.com"
             self._ws_url = "wss://stream.binance.com:9443/ws"
-        
-        self._client: Optional[httpx.AsyncClient] = None
+
+        self._client: httpx.AsyncClient | None = None
         # WebSocket 连接对象和监听任务分开保存：
         # 连接对象用于关闭 socket，任务对象用于取消重连循环。
-        self._ws_connections: Dict[str, websockets.WebSocketClientProtocol] = {}
-        self._ws_tasks: Dict[str, asyncio.Task] = {}
-    
+        self._ws_connections: dict[str, websockets.WebSocketClientProtocol] = {}
+        self._ws_tasks: dict[str, asyncio.Task] = {}
+
     @property
     def name(self) -> str:
         return 'binance'
-    
+
     @property
     def base_url(self) -> str:
         return self._base_url
-    
+
     def normalize_symbol(self, symbol: str) -> str:
         """标准化交易对格式为 Binance 格式 (BTCUSDT)"""
         return symbol.upper().replace('-', '').replace('_', '')
-    
+
     async def _get_client(self) -> httpx.AsyncClient:
         """获取或创建 HTTP 客户端"""
         if self._client is None or self._client.is_closed:
@@ -73,8 +75,8 @@ class BinanceExchange(ExchangeBase):
                 timeout=30.0,
             )
         return self._client
-    
-    def _generate_signature(self, params: Dict) -> str:
+
+    def _generate_signature(self, params: dict) -> str:
         """生成 Binance 请求签名"""
         # Binance 签名基于精确 URL 编码后的 query string。
         # 不要手写字符串拼接，编码细节会影响签名。
@@ -85,24 +87,24 @@ class BinanceExchange(ExchangeBase):
             hashlib.sha256
         ).hexdigest()
         return signature
-    
-    def _sign_params(self, params: Dict) -> Dict:
+
+    def _sign_params(self, params: dict) -> dict:
         """为请求参数添加签名"""
         # Binance 私有 REST 接口要求参数里包含 timestamp 和 HMAC-SHA256 签名。
         params['timestamp'] = self.get_timestamp()
         signature = self._generate_signature(params)
         params['signature'] = signature
         return params
-    
-    async def get_account_balance(self) -> Dict[str, float]:
+
+    async def get_account_balance(self) -> dict[str, float]:
         """获取账户余额"""
         path = '/api/v3/account'
         params = self._sign_params({})
-        
+
         client = await self._get_client()
         response = await client.get(path, params=params)
         response.raise_for_status()
-        
+
         data = response.json()
         balances = {}
         for balance in data.get('balances', []):
@@ -112,16 +114,16 @@ class BinanceExchange(ExchangeBase):
             if total > 0:
                 balances[balance.get('asset')] = total
         return balances
-    
-    async def get_available_balances(self) -> Dict[str, float]:
+
+    async def get_available_balances(self) -> dict[str, float]:
         """获取可用余额"""
         path = '/api/v3/account'
         params = self._sign_params({})
-        
+
         client = await self._get_client()
         response = await client.get(path, params=params)
         response.raise_for_status()
-        
+
         data = response.json()
         balances = {}
         for balance in data.get('balances', []):
@@ -129,16 +131,16 @@ class BinanceExchange(ExchangeBase):
             if free > 0:
                 balances[balance.get('asset')] = free
         return balances
-    
+
     async def place_order(
         self,
         symbol: str,
         side: str,
         order_type: str,
         quantity: float,
-        price: Optional[float] = None,
+        price: float | None = None,
         **kwargs
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """下单交易"""
         path = '/api/v3/order'
         params = {
@@ -147,7 +149,7 @@ class BinanceExchange(ExchangeBase):
             'type': order_type.upper(),
             'newOrderRespType': 'FULL',
         }
-        
+
         if order_type.lower() == 'market':
             # Binance 市价买入既可以按基础币数量 quantity，也可以按计价币金额 quoteOrderQty。
             # 两条路径都保留，调用方可以选择“买 0.01 BTC”或“买 100 USDT 的 BTC”。
@@ -159,13 +161,13 @@ class BinanceExchange(ExchangeBase):
             params['quantity'] = quantity
             params['price'] = price
             params['timeInForce'] = 'GTC'
-        
+
         params = self._sign_params(params)
-        
+
         client = await self._get_client()
         response = await client.post(path, data=params)
         response.raise_for_status()
-        
+
         data = response.json()
         return {
             'order_id': str(data.get('orderId')),
@@ -173,8 +175,8 @@ class BinanceExchange(ExchangeBase):
             'status': self._normalize_order_status(data.get('status')),
             'raw': data,
         }
-    
-    async def cancel_order(self, symbol: str, order_id: str) -> Dict[str, Any]:
+
+    async def cancel_order(self, symbol: str, order_id: str) -> dict[str, Any]:
         """撤销订单"""
         path = '/api/v3/order'
         params = {
@@ -182,15 +184,13 @@ class BinanceExchange(ExchangeBase):
             'orderId': int(order_id),
         }
         params = self._sign_params(params)
-        
+
         client = await self._get_client()
         response = await client.delete(path, params=params)
         response.raise_for_status()
-        
-        data = response.json()
         return {'success': True, 'order_id': order_id}
-    
-    async def cancel_all_orders(self, symbol: Optional[str] = None) -> int:
+
+    async def cancel_all_orders(self, symbol: str | None = None) -> int:
         """批量撤销订单"""
         if not symbol:
             # Binance 不支持撤销所有订单，需要逐个撤销
@@ -207,14 +207,14 @@ class BinanceExchange(ExchangeBase):
             # 撤销指定交易对的所有订单
             path = '/api/v3/openOrders'
             params = self._sign_params({'symbol': self.normalize_symbol(symbol)})
-            
+
             client = await self._get_client()
             response = await client.delete(path, params=params)
             response.raise_for_status()
-            
+
             return len(response.json())
-    
-    async def get_order(self, symbol: str, order_id: str) -> Dict[str, Any]:
+
+    async def get_order(self, symbol: str, order_id: str) -> dict[str, Any]:
         """查询订单状态"""
         path = '/api/v3/order'
         params = {
@@ -222,11 +222,11 @@ class BinanceExchange(ExchangeBase):
             'orderId': int(order_id),
         }
         params = self._sign_params(params)
-        
+
         client = await self._get_client()
         response = await client.get(path, params=params)
         response.raise_for_status()
-        
+
         data = response.json()
         # Binance 现货订单查询不直接返回 avgPrice。
         # 平均成交价用累计成交额 / 已成交基础币数量计算。
@@ -240,30 +240,30 @@ class BinanceExchange(ExchangeBase):
             'avg_price': avg_price,
             'raw': data,
         }
-    
-    async def get_open_orders(self, symbol: Optional[str] = None) -> List[Dict[str, Any]]:
+
+    async def get_open_orders(self, symbol: str | None = None) -> list[dict[str, Any]]:
         """获取当前挂单"""
         path = '/api/v3/openOrders'
         params = {}
         if symbol:
             params['symbol'] = self.normalize_symbol(symbol)
         params = self._sign_params(params)
-        
+
         client = await self._get_client()
         response = await client.get(path, params=params)
         response.raise_for_status()
-        
+
         return response.json()
-    
-    async def get_ticker(self, symbol: str) -> Dict[str, Any]:
+
+    async def get_ticker(self, symbol: str) -> dict[str, Any]:
         """获取实时行情"""
         path = '/api/v3/ticker/24hr'
         params = {'symbol': self.normalize_symbol(symbol)}
-        
+
         client = await self._get_client()
         response = await client.get(path, params=params)
         response.raise_for_status()
-        
+
         data = response.json()
         return {
             'symbol': symbol,
@@ -279,15 +279,15 @@ class BinanceExchange(ExchangeBase):
             'price_change_pct_24h': float(data.get('priceChangePercent', 0)),
             'timestamp': datetime.utcnow(),
         }
-    
+
     async def get_klines(
         self,
         symbol: str,
         interval: str,
-        start_time: Optional[datetime] = None,
-        end_time: Optional[datetime] = None,
+        start_time: datetime | None = None,
+        end_time: datetime | None = None,
         limit: int = 100
-    ) -> List[Dict[str, Any]]:
+    ) -> list[dict[str, Any]]:
         """获取 K 线数据"""
         path = '/api/v3/klines'
         params = {
@@ -295,16 +295,16 @@ class BinanceExchange(ExchangeBase):
             'interval': interval,
             'limit': min(limit, 1000),
         }
-        
+
         if start_time:
             params['startTime'] = int(start_time.timestamp() * 1000)
         if end_time:
             params['endTime'] = int(end_time.timestamp() * 1000)
-        
+
         client = await self._get_client()
         response = await client.get(path, params=params)
         response.raise_for_status()
-        
+
         klines = []
         for candle in response.json():
             klines.append({
@@ -321,19 +321,19 @@ class BinanceExchange(ExchangeBase):
                 'trade_count': int(candle[8]),
             })
         return klines
-    
-    async def get_recent_trades(self, symbol: str, limit: int = 100) -> List[Dict[str, Any]]:
+
+    async def get_recent_trades(self, symbol: str, limit: int = 100) -> list[dict[str, Any]]:
         """获取最近成交记录"""
         path = '/api/v3/trades'
         params = {
             'symbol': self.normalize_symbol(symbol),
             'limit': min(limit, 1000),
         }
-        
+
         client = await self._get_client()
         response = await client.get(path, params=params)
         response.raise_for_status()
-        
+
         trades = []
         for trade in response.json():
             trades.append({
@@ -346,7 +346,7 @@ class BinanceExchange(ExchangeBase):
                 'timestamp': datetime.fromtimestamp(trade.get('time') / 1000),
             })
         return trades
-    
+
     async def subscribe_ticker(self, symbol: str, callback: Callable):
         """订阅实时行情"""
         normalized = self.normalize_symbol(symbol)
@@ -390,7 +390,7 @@ class BinanceExchange(ExchangeBase):
                     self._ws_connections.pop(normalized, None)
 
         self._ws_tasks[normalized] = asyncio.create_task(_listen())
-    
+
     async def unsubscribe_ticker(self, symbol: str):
         """取消订阅行情"""
         normalized = self.normalize_symbol(symbol)
@@ -404,7 +404,7 @@ class BinanceExchange(ExchangeBase):
         if normalized in self._ws_connections:
             await self._ws_connections[normalized].close()
             del self._ws_connections[normalized]
-    
+
     def _normalize_order_status(self, binance_status: str) -> str:
         """转换 Binance 订单状态到统一格式"""
         status_map = {
@@ -416,12 +416,12 @@ class BinanceExchange(ExchangeBase):
             'EXPIRED': 'expired',
         }
         return status_map.get(binance_status, 'pending')
-    
+
     async def close(self):
         """关闭连接"""
         if self._client and not self._client.is_closed:
             await self._client.aclose()
-        
+
         # 关闭 socket 前先停止监听任务，否则关闭过程中监听任务可能再次重连。
         for task in self._ws_tasks.values():
             task.cancel()

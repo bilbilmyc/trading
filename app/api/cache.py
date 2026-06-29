@@ -8,12 +8,13 @@ from __future__ import annotations
 
 import asyncio
 import time
-from typing import Any, Awaitable, Callable, Dict, Optional, Tuple
+from collections.abc import Awaitable, Callable
+from typing import Any
 
 
 class TTLCache:
     def __init__(self, default_ttl: float = 30.0) -> None:
-        self._store: Dict[str, Tuple[float, Any]] = {}
+        self._store: dict[str, tuple[float, Any]] = {}
         self._default_ttl = default_ttl
         self._lock = asyncio.Lock()
 
@@ -21,7 +22,7 @@ class TTLCache:
         self,
         key: str,
         factory: Callable[[], Awaitable[Any]],
-        ttl: Optional[float] = None,
+        ttl: float | None = None,
     ) -> Any:
         now = time.monotonic()
         async with self._lock:
@@ -34,13 +35,13 @@ class TTLCache:
             self._store[key] = (now + (ttl or self._default_ttl), value)
         return value
 
-    def invalidate(self, key: Optional[str] = None) -> None:
+    def invalidate(self, key: str | None = None) -> None:
         if key is None:
             self._store.clear()
         else:
             self._store.pop(key, None)
 
-    def stats(self) -> Dict[str, Any]:
+    def stats(self) -> dict[str, Any]:
         now = time.monotonic()
         alive = sum(1 for ts, _ in self._store.values() if ts > now)
         return {"size": len(self._store), "alive": alive}

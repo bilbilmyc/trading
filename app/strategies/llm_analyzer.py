@@ -9,19 +9,14 @@ Internally uses `OpenAIProvider` (retry policy, three-state errors) and
 
 from __future__ import annotations
 
-import json
 import os
 from dataclasses import dataclass
 from datetime import datetime
 from decimal import Decimal
-from typing import Any, Dict, List, Optional
-
-import httpx
+from typing import Any
 
 from app.engine.llm_cache import LLMFingerprintCache
 from app.engine.llm_types import (
-    LLMDecided,
-    LLMError,
     LLMErrorKind,
     LLMMessage,
     LLMRequest,
@@ -29,7 +24,6 @@ from app.engine.llm_types import (
 )
 from app.engine.openai_provider import OpenAIProvider, RetryPolicy
 from app.exchanges.base import ExchangeBase
-
 
 # ── Backward-compatible config ──────────────────────────────────────
 
@@ -60,11 +54,11 @@ class LLMAnalysisResult:
     decision: str  # "buy" | "sell" | "hold"
     confidence: float
     reason: str
-    suggested_action: Optional[str] = None
-    suggested_quantity: Optional[float] = None
-    suggested_price: Optional[float] = None
-    stop_loss: Optional[float] = None
-    take_profit: Optional[float] = None
+    suggested_action: str | None = None
+    suggested_quantity: float | None = None
+    suggested_price: float | None = None
+    stop_loss: float | None = None
+    take_profit: float | None = None
     risk_level: str = "medium"
     risk_note: str = ""
     analyzed_symbol: str = ""
@@ -72,13 +66,13 @@ class LLMAnalysisResult:
     candle_count: int = 0
     model: str = ""
     analysis_time: str = ""
-    raw_response: Optional[str] = None
+    raw_response: str | None = None
 
     # v2 additions
-    error_kind: Optional[str] = None
+    error_kind: str | None = None
     cache_hit: bool = False
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         out = {}
         for k, v in self.__dict__.items():
             if isinstance(v, Decimal):
@@ -184,7 +178,7 @@ def _system_message() -> str:
     )
 
 
-def _format_risk_section(risk: Optional[Dict[str, Any]]) -> str:
+def _format_risk_section(risk: dict[str, Any] | None) -> str:
     """Render the risk-context block for the user prompt.
 
     When the engine doesn't pass risk data, the section still appears
@@ -207,7 +201,7 @@ def _format_risk_section(risk: Optional[Dict[str, Any]]) -> str:
     )
 
 
-def _format_trade_history_section(history: Optional[Dict[str, Any]]) -> str:
+def _format_trade_history_section(history: dict[str, Any] | None) -> str:
     """Render the trade-history block for the user prompt.
 
     When no history is available, the section shows a "no history" marker.
@@ -237,9 +231,9 @@ def _format_trade_history_section(history: Optional[Dict[str, Any]]) -> str:
 class LLMAnalyzer:
     def __init__(
         self,
-        config: Optional[LLMAnalyzerConfig] = None,
-        provider: Optional[OpenAIProvider] = None,
-        cache: Optional[LLMFingerprintCache] = None,
+        config: LLMAnalyzerConfig | None = None,
+        provider: OpenAIProvider | None = None,
+        cache: LLMFingerprintCache | None = None,
     ) -> None:
         self.config = config or LLMAnalyzerConfig()
         if not self.config.api_key:
@@ -288,10 +282,6 @@ class LLMAnalyzer:
             timeout_seconds=self.config.request_timeout,
             retry_policy=RetryPolicy(),
         )
-        self._cache = cache or LLMFingerprintCache(
-            ttl_seconds=self.config.cache_ttl_seconds,
-            max_entries=self.config.cache_max_entries,
-        )
 
     # ── Public API ──────────────────────────────────────────────
 
@@ -299,11 +289,11 @@ class LLMAnalyzer:
         self,
         exchange: ExchangeBase,
         symbol: str,
-        interval: Optional[str] = None,
-        limit: Optional[int] = None,
-        position_context: Optional[Dict[str, Any]] = None,
-        risk_context: Optional[Dict[str, Any]] = None,
-        trade_history: Optional[Dict[str, Any]] = None,
+        interval: str | None = None,
+        limit: int | None = None,
+        position_context: dict[str, Any] | None = None,
+        risk_context: dict[str, Any] | None = None,
+        trade_history: dict[str, Any] | None = None,
     ) -> LLMAnalysisResult:
         interval = interval or self.config.default_interval
         limit = min(
@@ -323,13 +313,13 @@ class LLMAnalyzer:
 
     async def analyze_raw(
         self,
-        ticker: Dict[str, Any],
-        klines: List[Dict[str, Any]],
+        ticker: dict[str, Any],
+        klines: list[dict[str, Any]],
         symbol: str,
         interval: str,
-        position_context: Optional[Dict[str, Any]] = None,
-        risk_context: Optional[Dict[str, Any]] = None,
-        trade_history: Optional[Dict[str, Any]] = None,
+        position_context: dict[str, Any] | None = None,
+        risk_context: dict[str, Any] | None = None,
+        trade_history: dict[str, Any] | None = None,
     ) -> LLMAnalysisResult:
         position_signature = self._position_signature(position_context)
         last_candle = klines[-1] if klines else {}
@@ -385,11 +375,11 @@ class LLMAnalyzer:
         self,
         symbol: str,
         interval: str,
-        ticker: Dict[str, Any],
-        klines: List[Dict[str, Any]],
-        position_context: Optional[Dict[str, Any]] = None,
-        risk_context: Optional[Dict[str, Any]] = None,
-        trade_history: Optional[Dict[str, Any]] = None,
+        ticker: dict[str, Any],
+        klines: list[dict[str, Any]],
+        position_context: dict[str, Any] | None = None,
+        risk_context: dict[str, Any] | None = None,
+        trade_history: dict[str, Any] | None = None,
     ) -> str:
         candle_data = self._render_klines_compact(klines)
         if position_context:
@@ -427,7 +417,7 @@ class LLMAnalyzer:
     # ── Compact K-line encoding ──────────────────────────────────
 
     @staticmethod
-    def _kline_summary(klines: List[Dict[str, Any]]) -> Dict[str, float]:
+    def _kline_summary(klines: list[dict[str, Any]]) -> dict[str, float]:
         """Aggregate stats - gives the LLM orientation in 1 line."""
         if not klines:
             return {"count": 0}
@@ -454,7 +444,7 @@ class LLMAnalyzer:
             "atr": sum(trs) / n if n else 0.0,
         }
 
-    def _render_klines_compact(self, klines: List[Dict[str, Any]]) -> str:
+    def _render_klines_compact(self, klines: list[dict[str, Any]]) -> str:
         """Render K-lines as compact text.
 
         Output format (newest first):
@@ -495,7 +485,7 @@ class LLMAnalyzer:
         return "\n".join([header, *body])
 
     @staticmethod
-    def _position_signature(position_context: Optional[Dict[str, Any]]) -> str:
+    def _position_signature(position_context: dict[str, Any] | None) -> str:
         if not position_context:
             return "none"
         side = position_context.get("side", "")

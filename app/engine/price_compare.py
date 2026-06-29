@@ -5,16 +5,16 @@ Used for arbitrage detection and best-execution routing.
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Any, Callable, Dict, List, Optional
 
 
 @dataclass
 class PriceQuote:
     source: str
     price: float             # mid price (always populated)
-    bid: Optional[float] = None
-    ask: Optional[float] = None
+    bid: float | None = None
+    ask: float | None = None
 
 
 # Fetcher: (source_name, symbol) -> PriceQuote
@@ -24,15 +24,15 @@ Fetcher = Callable[[str, str], PriceQuote]
 def compare_symbol(
     *,
     symbol: str,
-    sources: List[str],
+    sources: list[str],
     fetcher: Fetcher,
-) -> List[PriceQuote]:
+) -> list[PriceQuote]:
     """Fetch the same symbol from each source; skip sources that fail.
 
     Failures are silently skipped — one bad source shouldn't block
     arbitrage view from the others.
     """
-    quotes: List[PriceQuote] = []
+    quotes: list[PriceQuote] = []
     for src in sources:
         try:
             q = fetcher(src, symbol)
@@ -42,7 +42,7 @@ def compare_symbol(
     return quotes
 
 
-def best_price(quotes: List[PriceQuote], *, side: str) -> Optional[PriceQuote]:
+def best_price(quotes: list[PriceQuote], *, side: str) -> PriceQuote | None:
     """Return the venue with the best executable price for `side` ("buy" or "sell").
 
     For "buy", minimize `ask` (cheapest to lift). For "sell", maximize

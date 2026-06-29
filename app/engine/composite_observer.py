@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import asyncio
 from datetime import datetime
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 from app.core.sqlite_store import SQLiteStore
 from app.engine.monitor import Alert, AlertCategory, AlertLevel, Monitor
@@ -24,19 +24,19 @@ class CompositeObserver(Observer):
     def __init__(
         self,
         monitor: Monitor,
-        store: Optional[SQLiteStore],
+        store: SQLiteStore | None,
         buffer_max: int = 10,
         flush_interval: float = 0.5,
     ) -> None:
         self._monitor = monitor
         self._store = store
-        self._buffer: List[Dict[str, Any]] = []
+        self._buffer: list[dict[str, Any]] = []
         self._buffer_max = max(1, buffer_max)
         self._flush_interval = max(0.01, flush_interval)
         self._flush_lock = asyncio.Lock()
-        self._flush_task: Optional[asyncio.Task] = None
+        self._flush_task: asyncio.Task | None = None
         self._stopped = False
-        self._alert_payloads: Dict[str, Dict[str, Any]] = {}
+        self._alert_payloads: dict[str, dict[str, Any]] = {}
 
     # ── Lifecycle ──────────────────────────────────────────────
 
@@ -81,7 +81,7 @@ class CompositeObserver(Observer):
         Alert goes to the monitor immediately. Audit row is buffered
         for batched flush.
         """
-        payload: Dict[str, Any] = dict(event.payload)
+        payload: dict[str, Any] = dict(event.payload)
         now = datetime.utcnow().isoformat()
         alert, audit = self._translate(event.kind, payload, now)
 
@@ -97,7 +97,7 @@ class CompositeObserver(Observer):
     # ── Translation ────────────────────────────────────────────
 
     @staticmethod
-    def _translate(kind: str, payload: Dict[str, Any], now: str) -> tuple:
+    def _translate(kind: str, payload: dict[str, Any], now: str) -> tuple:
         if kind == "order_placed":
             return (
                 Alert(

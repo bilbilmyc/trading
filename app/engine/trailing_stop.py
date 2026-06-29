@@ -9,7 +9,6 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from enum import Enum
-from typing import Optional
 
 
 class Side(str, Enum):
@@ -30,12 +29,12 @@ class TrailingStop:
     entry_price: float
     ratchet_pct: float = 0.01
     activation_pct: float = 0.005
-    _initial_stop: Optional[float] = None
-    _current_stop: Optional[float] = None
-    _peak: Optional[float] = None
+    _initial_stop: float | None = None
+    _current_stop: float | None = None
+    _peak: float | None = None
     _triggered: bool = False
     _hit: bool = False
-    _hit_price: Optional[float] = None
+    _hit_price: float | None = None
 
     def __post_init__(self) -> None:
         if self.ratchet_pct < 0 or self.ratchet_pct >= 1:
@@ -95,7 +94,7 @@ class TrailingStop:
         return False
 
     @property
-    def current_stop(self) -> Optional[float]:
+    def current_stop(self) -> float | None:
         return self._current_stop
 
     @property
@@ -107,11 +106,11 @@ class TrailingStop:
         return self._hit
 
     @property
-    def hit_price(self) -> Optional[float]:
+    def hit_price(self) -> float | None:
         return self._hit_price
 
     @property
-    def peak(self) -> Optional[float]:
+    def peak(self) -> float | None:
         return self._peak
 
     def unrealized_pnl(self, current_price: float) -> float:

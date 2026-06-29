@@ -12,14 +12,14 @@ LLM 信号过滤器（B 方案）
     engine.add_signal_filter(filter_.check)
 """
 
-from typing import TYPE_CHECKING, Any, Dict, Optional
+from typing import TYPE_CHECKING, Any
 
 from loguru import logger
 
 from app.strategies.base import Signal
 
 if TYPE_CHECKING:
-    from app.strategies.llm_analyzer import LLMAnalyzer, LLMAnalyzerConfig
+    pass
 
 
 class LLMSignalFilter:
@@ -39,10 +39,10 @@ class LLMSignalFilter:
         self.default_order_amount_usdt = default_order_amount_usdt
         self.min_confidence = min_confidence
         # 缓存最近的 ticker/klines，由外部通过 feed_market_data 更新
-        self._latest_ticker: Dict[str, Optional[Dict[str, Any]]] = {}
-        self._latest_klines: Dict[str, list] = {}
+        self._latest_ticker: dict[str, dict[str, Any] | None] = {}
+        self._latest_klines: dict[str, list] = {}
 
-    def feed_market_data(self, symbol: str, ticker: Dict[str, Any], klines: list) -> None:
+    def feed_market_data(self, symbol: str, ticker: dict[str, Any], klines: list) -> None:
         """注入市场数据供过滤器使用。"""
         self._latest_ticker[symbol] = ticker
         self._latest_klines[symbol] = klines[-80:] if klines else []

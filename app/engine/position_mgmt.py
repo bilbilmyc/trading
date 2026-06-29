@@ -8,7 +8,6 @@ This module adds the *API-facing* helpers used by the trade panel's
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Optional
 
 
 @dataclass
@@ -74,7 +73,7 @@ def close_position(
     avg_entry_price: float,
     exit_price: float,
     realized_pnl_so_far: float = 0.0,
-    close_quantity: Optional[float] = None,
+    close_quantity: float | None = None,
 ) -> CloseResult:
     """Close (or partially close) a position at `exit_price`."""
     if quantity <= 0:

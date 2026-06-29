@@ -7,7 +7,7 @@
 
 import asyncio
 from datetime import datetime
-from typing import Any, Dict, List, Optional, Set
+from typing import Any
 
 from loguru import logger
 
@@ -26,8 +26,8 @@ class OrderSync:
 
     def __init__(self, interval_seconds: int = 10):
         self.interval_seconds = interval_seconds
-        self._local_orders: Dict[str, Order] = {}  # 订单号 -> 本地订单模型
-        self._callbacks: List = []
+        self._local_orders: dict[str, Order] = {}  # 订单号 -> 本地订单模型
+        self._callbacks: list = []
 
     # ── 订单注册 ──────────────────────────────────────────────
 
@@ -52,7 +52,7 @@ class OrderSync:
 
     # ── 单次同步 ──────────────────────────────────────────────
 
-    async def sync(self, exchange: ExchangeBase, symbol: Optional[str] = None) -> int:
+    async def sync(self, exchange: ExchangeBase, symbol: str | None = None) -> int:
         """从交易所拉取挂单并更新本地订单记录。
 
         返回状态发生变化的订单数量。
@@ -66,7 +66,7 @@ class OrderSync:
             return 0
 
         # 先收集交易所侧仍处于挂单状态的订单 ID。
-        exchange_ids: Set[str] = set()
+        exchange_ids: set[str] = set()
         for raw in open_orders:
             oid = str(raw.get("order_id") or raw.get("orderId") or "")
             if not oid:
@@ -121,7 +121,7 @@ class OrderSync:
                 logger.warning(f"OrderSync callback error: {exc}")
 
     @staticmethod
-    def _translate_status(raw: str) -> Optional[OrderStatus]:
+    def _translate_status(raw: str) -> OrderStatus | None:
         """把交易所状态字符串映射成统一 OrderStatus。"""
 
         mapping = {
@@ -138,7 +138,7 @@ class OrderSync:
         return mapping.get(raw)
 
     @staticmethod
-    def _parse_exchange_order(raw: Dict[str, Any], exchange_name: str) -> Optional[Order]:
+    def _parse_exchange_order(raw: dict[str, Any], exchange_name: str) -> Order | None:
         """把交易所原始订单字典转换成本地 Order 模型。"""
 
         try:
@@ -177,5 +177,5 @@ class OrderSync:
         return len(self._local_orders)
 
     @property
-    def open_orders(self) -> List[Order]:
+    def open_orders(self) -> list[Order]:
         return [o for o in self._local_orders.values() if o.is_active]

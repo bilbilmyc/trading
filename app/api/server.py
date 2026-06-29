@@ -11,11 +11,12 @@ FastAPI HTTP 入口。
 5. 路由函数通常先从 `state` 取 engine/store/exchange，再调用具体业务方法。
 """
 
+import secrets
+from collections.abc import Awaitable, Callable
 from contextlib import asynccontextmanager
 from datetime import datetime
 from pathlib import Path
-import secrets
-from typing import Any, Awaitable, Callable, Dict, List, Optional, TypeVar
+from typing import Any, TypeVar
 
 import httpx
 from fastapi import Depends, FastAPI, HTTPException, Query, Request
@@ -26,17 +27,17 @@ from pydantic import BaseModel, Field
 
 from app.api.auth import require_api_key
 from app.api.cache import TTLCache
+from app.core.logging import setup_logger
 from app.core.sqlite_store import SQLiteStore
+from app.data_sources.generic_http import GenericHttpDataSource
+from app.engine.live_trading_guard import LiveTradingGuard
 from app.engine.risk_manager import RiskConfig
 from app.engine.trader import TradingEngine
-from app.engine.live_trading_guard import LiveTradingGuard
 from app.exchanges.base import ExchangeBase
 from app.exchanges.contract_base import ContractExchangeBase
 from app.exchanges.factory import ExchangeFactory
-from app.data_sources.generic_http import GenericHttpDataSource
 from app.models.contract import ContractOrderRequest, LiquidityType, MarginMode, PositionSide
 from app.strategies.sma import SMAStrategy
-from app.core.logging import setup_logger
 from config import Settings, load_settings
 
 T = TypeVar("T")
@@ -54,20 +55,20 @@ class OrderRequest(BaseModel):
     side: str = Field(..., pattern="^(buy|sell|BUY|SELL)$")
     order_type: str = Field("market", pattern="^(market|limit|MARKET|LIMIT)$")
     quantity: float = Field(..., gt=0)
-    price: Optional[float] = Field(None, gt=0)
-    quote_order_qty: Optional[float] = Field(None, gt=0)
+    price: float | None = Field(None, gt=0)
+    quote_order_qty: float | None = Field(None, gt=0)
 
 
 class SMAStrategyRequest(BaseModel):
     """创建 SMA 策略时前端传入的请求体。"""
 
-    name: Optional[str] = Field(None, min_length=1, max_length=64)
+    name: str | None = Field(None, min_length=1, max_length=64)
     exchange: str = Field("binance_usdm", min_length=1)
     symbol: str = Field("BTCUSDT", min_length=1)
     interval: str = Field("1m", min_length=1, max_length=16)
     short_window: int = Field(5, ge=1)
     long_window: int = Field(20, ge=2)
-    min_data_points: Optional[int] = Field(None, ge=2)
+    min_data_points: int | None = Field(None, ge=2)
     enabled: bool = False
     mode: str = Field("signal", pattern="^(signal|paper)$")
 
@@ -82,7 +83,7 @@ class SignalRunnerRequest(BaseModel):
 class PaperResetRequest(BaseModel):
     """重置模拟盘账户的请求体。"""
 
-    initial_cash: Optional[float] = Field(None, gt=0)
+    initial_cash: float | None = Field(None, gt=0)
 
 
 class StrategyModeRequest(BaseModel):
@@ -144,11 +145,11 @@ class AppState:
         # - trading_exchanges: private + order operations, require keys + flag.
         # ExchangeBase already implements the DataSource surface, so existing
         # adapters serve both roles once registered.
-        self.exchanges: Dict[str, ExchangeBase] = {}
-        self.data_sources: Dict[str, ExchangeBase] = {}
-        self.trading_exchanges: Dict[str, ExchangeBase] = {}
+        self.exchanges: dict[str, ExchangeBase] = {}
+        self.data_sources: dict[str, ExchangeBase] = {}
+        self.trading_exchanges: dict[str, ExchangeBase] = {}
         # User-registered custom data sources (any HTTP API via GenericHttpDataSource).
-        self.custom_sources: Dict[str, Any] = {}
+        self.custom_sources: dict[str, Any] = {}
         # In-process TTL cache for slow endpoints (config / capabilities / venues).
         self.cache = TTLCache(default_ttl=30.0)
         self._register_data_sources()
@@ -259,7 +260,7 @@ def get_settings() -> Settings:
     return load_settings()
 
 
-def create_app(settings: Optional[Settings] = None) -> FastAPI:
+def create_app(settings: Settings | None = None) -> FastAPI:
     """创建 FastAPI 应用实例。
 
     这是整个 HTTP 服务的装配点：配置日志、创建 AppState、注册中间件、
@@ -341,7 +342,7 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
                 detail = exc.response.json()
             except ValueError:
                 detail = exc.response.text or exc.response.reason_phrase
-            body: Dict[str, Any] = {
+            body: dict[str, Any] = {
                 "message": "Exchange returned an error response",
                 "error_category": category,
                 "status_code": exc.response.status_code,
@@ -364,7 +365,7 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
                 "error_category": category,
             }) from exc
 
-    def extract_order_id(result: Any) -> Optional[str]:
+    def extract_order_id(result: Any) -> str | None:
         """尽量从不同交易所返回里取订单号。
 
         Binance、OKX、Bitget 的字段名不完全一样，所以这里做一层兼容。
@@ -406,7 +407,7 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
             return LiquidityType.TAKER
         return LiquidityType.MAKER
 
-    async def build_contract_order_preview(request: ContractOrderRequest) -> Dict[str, Any]:
+    async def build_contract_order_preview(request: ContractOrderRequest) -> dict[str, Any]:
         """构建合约下单预览，不产生任何交易所状态变更。"""
 
         preview_request = ensure_contract_client_order_id(request)
@@ -477,11 +478,11 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
         event_type: str,
         message: str,
         level: str = "info",
-        exchange: Optional[str] = None,
-        symbol: Optional[str] = None,
-        strategy: Optional[str] = None,
-        order_id: Optional[str] = None,
-        details: Optional[Dict[str, Any]] = None,
+        exchange: str | None = None,
+        symbol: str | None = None,
+        strategy: str | None = None,
+        order_id: str | None = None,
+        details: dict[str, Any] | None = None,
     ) -> None:
         # 订单/风控事件统一写 SQLite。前端右侧“审计事件”面板读取的就是这张表。
         state.store.append_event(
@@ -503,10 +504,10 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
         *,
         action: str,
         detail: str,
-        exchange: Optional[str] = None,
-        symbol: Optional[str] = None,
-        order_id: Optional[str] = None,
-        details: Optional[Dict[str, Any]] = None,
+        exchange: str | None = None,
+        symbol: str | None = None,
+        order_id: str | None = None,
+        details: dict[str, Any] | None = None,
     ) -> None:
         # 实盘关闭时，不能只返回 403；量化系统要留下“谁、对哪个交易所/币对、试图做什么”的审计记录。
         payload = {"action": action, **(details or {})}
@@ -525,10 +526,10 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
     def reject_kill_switch_enabled(
         *,
         action: str,
-        exchange: Optional[str] = None,
-        symbol: Optional[str] = None,
-        order_id: Optional[str] = None,
-        details: Optional[Dict[str, Any]] = None,
+        exchange: str | None = None,
+        symbol: str | None = None,
+        order_id: str | None = None,
+        details: dict[str, Any] | None = None,
     ) -> None:
         # Kill Switch 是运行时紧急熔断。触发后，所有会改变交易所状态的接口都必须先被挡住并留审计。
         detail = "Global kill switch is active. Disable it before trading."
@@ -547,10 +548,10 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
     def ensure_trading_not_killed(
         *,
         action: str,
-        exchange: Optional[str] = None,
-        symbol: Optional[str] = None,
-        order_id: Optional[str] = None,
-        details: Optional[Dict[str, Any]] = None,
+        exchange: str | None = None,
+        symbol: str | None = None,
+        order_id: str | None = None,
+        details: dict[str, Any] | None = None,
     ) -> None:
         # RiskManager.trading_enabled 是引擎层风控总闸；API 层在创建交易所客户端前先检查它。
         if not state.engine.risk_manager.is_trading_enabled:
@@ -563,11 +564,11 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
             )
 
     @app.get("/health")
-    async def health() -> Dict[str, Any]:
+    async def health() -> dict[str, Any]:
         return {"status": "ok", "env": settings.app_env}
 
     @app.get("/api/v1/health/venues")
-    async def venue_health(state: AppState = Depends(get_state)) -> Dict[str, Any]:
+    async def venue_health(state: AppState = Depends(get_state)) -> dict[str, Any]:
         """检查每个已启用交易所的健康状态。
 
         对每个 venue 执行：
@@ -578,14 +579,14 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
         - 频率限制状态 (取决于交易所是否返回 rate-limit 头)
         """
 
-        venues: Dict[str, Any] = {}
+        venues: dict[str, Any] = {}
         for name in ExchangeFactory.list_supported_exchanges():
             exchange_settings = settings.exchange(name)
             if exchange_settings is None or not exchange_settings.enabled:
                 continue
 
             has_keys = bool(exchange_settings.api_key)
-            result: Dict[str, Any] = {
+            result: dict[str, Any] = {
                 "enabled": True,
                 "use_testnet": exchange_settings.use_testnet,
                 "credentials_present": has_keys,
@@ -631,7 +632,7 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
         return {"venues": venues, "timestamp": datetime.utcnow().isoformat()}
 
     @app.get("/api/v1/config")
-    async def get_config(state: AppState = Depends(get_state)) -> Dict[str, Any]:
+    async def get_config(state: AppState = Depends(get_state)) -> dict[str, Any]:
         async def build():
             configured = {}
             capabilities = {}
@@ -661,7 +662,7 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
         return await state.cache.get_or_set("config", build, ttl=30.0)
 
     @app.get("/api/v1/exchanges")
-    async def list_exchanges() -> Dict[str, Any]:
+    async def list_exchanges() -> dict[str, Any]:
         supported = ExchangeFactory.list_supported_exchanges()
         enabled = [
             name
@@ -671,7 +672,7 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
         return {"exchanges": supported, "enabled": enabled}
 
     @app.get("/api/v1/risk/kill-switch")
-    async def get_kill_switch_status(state: AppState = Depends(get_state)) -> Dict[str, Any]:
+    async def get_kill_switch_status(state: AppState = Depends(get_state)) -> dict[str, Any]:
         """读取全局 Kill Switch 状态。
 
         前端风控面板用这个接口判断是否允许真实下单。这里同时返回 risk 快照，
@@ -690,7 +691,7 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
     async def set_kill_switch(
         request: KillSwitchRequest,
         state: AppState = Depends(get_state),
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """切换全局 Kill Switch。
 
         enabled=true 会调用 RiskManager.disable_trading()；策略实盘执行和手动下单都会被同一状态拦截。
@@ -771,7 +772,7 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
     @app.get("/api/v1/orders/{exchange}/open")
     async def get_open_orders(
         exchange: str,
-        symbol: Optional[str] = None,
+        symbol: str | None = None,
         state: AppState = Depends(get_state),
     ):
         client = state.get_exchange(exchange)
@@ -1012,7 +1013,7 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
     )
     async def cancel_all_orders(
         exchange: str,
-        symbol: Optional[str] = None,
+        symbol: str | None = None,
         state: AppState = Depends(get_state),
     ):
         if not state.settings.enable_live_trading:
@@ -1171,8 +1172,8 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
 
     @app.get("/api/v1/events/recent")
     async def recent_events(
-        category: Optional[str] = Query(None, min_length=1, max_length=32),
-        event_type: Optional[str] = Query(None, min_length=1, max_length=64),
+        category: str | None = Query(None, min_length=1, max_length=32),
+        event_type: str | None = Query(None, min_length=1, max_length=64),
         limit: int = Query(30, ge=1, le=200),
         state: AppState = Depends(get_state),
     ):
@@ -1230,7 +1231,7 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
         account_equity: float = Field(..., gt=0)
         entry_price: float = Field(..., gt=0)
         stop_loss_price: float = Field(..., gt=0)
-        take_profit_price: Optional[float] = Field(None, gt=0)
+        take_profit_price: float | None = Field(None, gt=0)
         leverage: float = Field(1.0, gt=0)
         risk_pct: float = Field(0.02, gt=0, lt=1)
         contract_size: float = Field(1.0, gt=0)
@@ -1257,7 +1258,7 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
                 min_quantity=request.min_quantity,
             )
         except ValueError as exc:
-            raise HTTPException(status_code=400, detail=str(exc))
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
         return {
             "quantity": r.quantity,
             "notional": r.notional,
@@ -1268,7 +1269,7 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
         }
 
     class BacktestRequest(BaseModel):
-        klines: List[Dict[str, Any]] = Field(..., min_length=1)
+        klines: list[dict[str, Any]] = Field(..., min_length=1)
         short_window: int = Field(5, gt=0)
         long_window: int = Field(20, gt=0)
         initial_capital: float = Field(10_000.0, gt=0)
@@ -1276,14 +1277,14 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
 
 
     class SuggestRequest(BaseModel):
-        klines: List[Dict[str, Any]] = Field(..., min_length=1)
-        prefer: Optional[str] = None
+        klines: list[dict[str, Any]] = Field(..., min_length=1)
+        prefer: str | None = None
 
 
     class ClosePositionRequest(BaseModel):
         symbol: str
         exchange: str
-        exit_quantity: Optional[float] = None
+        exit_quantity: float | None = None
         position_size_pct: float = Field(1.0, gt=0, le=1.0)
 
 
@@ -1306,7 +1307,7 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
                 position_size_pct=request.position_size_pct,
             )
         except (KeyError, ValueError, TypeError) as exc:
-            raise HTTPException(status_code=400, detail=f"Invalid kline data: {exc}")
+            raise HTTPException(status_code=400, detail=f"Invalid kline data: {exc}") from exc
 
         def _serialize_kline(k: dict) -> dict:
             out = {}
@@ -1343,7 +1344,6 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
     @app.get("/api/v1/strategies/leaderboard")
     async def strategies_leaderboard(state: AppState = Depends(get_state)):
         """Rank strategies by composite score (Sharpe + winrate + DD-adjusted)."""
-        from app.engine.leaderboard import build_leaderboard
 
         # Use a fresh tracker from in-memory equity (no real persistence).
         # In production, this would aggregate from store-recorded outcomes.
@@ -1359,7 +1359,7 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
 
     @app.get("/api/v1/portfolio/equity-curves")
     async def portfolio_equity_curves(
-        since: Optional[str] = None,
+        since: str | None = None,
         state: AppState = Depends(get_state),
     ):
         """Multi-strategy equity curves for portfolio chart."""
@@ -1368,7 +1368,7 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
         store = EquityCurveStore(state.settings.sqlite_path)
         curves = store.all_strategies_equity_curves(since=since)
         # Return as JSON-serializable dict.
-        out: Dict[str, Any] = {}
+        out: dict[str, Any] = {}
         for strategy, snaps in curves.items():
             out[strategy] = [
                 {"timestamp": s.timestamp, "equity": s.equity, "trade_id": s.trade_id}
@@ -1394,8 +1394,8 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
     @app.get("/api/v1/trade-history")
     async def trade_history(
         limit: int = 100,
-        strategy: Optional[str] = None,
-        exchange: Optional[str] = None,
+        strategy: str | None = None,
+        exchange: str | None = None,
         state: AppState = Depends(get_state),
     ):
         """List paper (or live) trade history — newest first."""
@@ -1408,8 +1408,8 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
     @app.post("/api/v1/atr-sizing")
     async def atr_sizing_endpoint(request: AIAnalyzeRequest):
         """ATR-based volatility-adjusted position sizing."""
+
         from app.engine.atr_sizing import atr_position_size, compute_atr
-        from datetime import datetime as _dt
 
         closes = []
         if state.data_sources:
@@ -1435,7 +1435,7 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
                 risk_pct=0.02,
             )
         except ValueError as exc:
-            raise HTTPException(status_code=400, detail=str(exc))
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
         return r.__dict__
 
 
@@ -1509,11 +1509,11 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
     class LLMStrategyCreateRequest(BaseModel):
         """创建 LLM 策略实例的请求体。"""
 
-        name: Optional[str] = Field(None, min_length=1, max_length=64)
+        name: str | None = Field(None, min_length=1, max_length=64)
         exchange: str = Field("binance_usdm", min_length=1)
         symbol: str = Field("BTCUSDT", min_length=1)
         interval: str = Field("1h", min_length=1, max_length=16)
-        default_order_amount: Optional[float] = Field(None, gt=0)
+        default_order_amount: float | None = Field(None, gt=0)
         min_confidence: float = Field(0.5, ge=0.0, le=1.0)
         enabled: bool = False
         mode: str = Field("signal", pattern="^(signal|paper|live)$")
@@ -1531,9 +1531,9 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
           live (A)  — 全自动执行
         """
 
+        from app.engine.llm_context import DefaultLLMContextProvider
         from app.strategies.llm_analyzer import LLMAnalyzer, LLMAnalyzerConfig
         from app.strategies.llm_strategy import LLMStrategy
-        from app.engine.llm_context import DefaultLLMContextProvider
 
         llm_config = LLMAnalyzerConfig(
             api_key=state.settings.llm_api_key,
@@ -1583,7 +1583,7 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
     async def attach_llm_filter(
         exchange: str = Query("binance_usdm", min_length=1),
         symbol: str = Query("BTCUSDT", min_length=1),
-        default_order_amount: Optional[float] = Query(None, gt=0),
+        default_order_amount: float | None = Query(None, gt=0),
         min_confidence: float = Query(0.5, ge=0.0, le=1.0),
         state: AppState = Depends(get_state),
     ):
@@ -1592,8 +1592,8 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
         过滤器会拦截所有策略信号，让 LLM 二次确认后才放行。
         """
 
-        from app.strategies.llm_analyzer import LLMAnalyzer, LLMAnalyzerConfig
         from app.engine.llm_filter import LLMSignalFilter
+        from app.strategies.llm_analyzer import LLMAnalyzer, LLMAnalyzerConfig
 
         llm_config = LLMAnalyzerConfig(
             api_key=state.settings.llm_api_key,
@@ -1638,7 +1638,7 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
 
     @app.get("/api/v1/monitor/alerts")
     async def recent_alerts(
-        level: Optional[str] = Query(None, max_length=16),
+        level: str | None = Query(None, max_length=16),
         limit: int = Query(50, ge=1, le=200),
         state: AppState = Depends(get_state),
     ):
@@ -1673,7 +1673,7 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
         ticker_path: str = "/ticker/{symbol}"
         klines_path: str = "/klines"
         trades_path: str = "/trades"
-        klines_array_key: Optional[str] = None
+        klines_array_key: str | None = None
 
     @app.get("/api/v1/sources")
     async def list_sources(state: AppState = Depends(get_state)):
@@ -1755,7 +1755,7 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
                 price=None,
             )
         except Exception as exc:
-            raise HTTPException(status_code=502, detail=f"Exchange error: {exc}")
+            raise HTTPException(status_code=502, detail=f"Exchange error: {exc}") from exc
 
         # Audit event.
         try:
@@ -1834,7 +1834,7 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
         return {"exchange": exchange, "orders_changed": changed, "tracked": state.engine.order_sync.tracked_count}
 
     @app.post("/api/v1/sync/positions/{exchange}")
-    async def sync_positions_manual(exchange: str, symbol: Optional[str] = None, state: AppState = Depends(get_state)):
+    async def sync_positions_manual(exchange: str, symbol: str | None = None, state: AppState = Depends(get_state)):
         client = state.get_exchange(exchange)
         changed = await state.engine.position_sync.sync(client, exchange, symbol)
         return {"exchange": exchange, "items_updated": changed}

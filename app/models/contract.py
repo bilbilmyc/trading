@@ -7,7 +7,7 @@ Binance / Bitget / OKX 自己的字段。
 
 from datetime import datetime
 from enum import Enum
-from typing import Any, Dict, Optional
+from typing import Any
 
 from pydantic import BaseModel, Field
 
@@ -57,7 +57,7 @@ class FeeRate(BaseModel):
     symbol: str = Field(..., min_length=1)
     maker: float = Field(..., description="Maker 手续费率，例如 0.0002")
     taker: float = Field(..., description="Taker 手续费率，例如 0.0005")
-    raw: Dict[str, Any] = Field(default_factory=dict)
+    raw: dict[str, Any] = Field(default_factory=dict)
     timestamp: datetime = Field(default_factory=datetime.utcnow)
 
 
@@ -69,13 +69,13 @@ class ContractOrderRequest(BaseModel):
     intent: ContractOrderIntent
     quantity: float = Field(..., gt=0)
     order_type: str = Field("limit", pattern="^(market|limit|post_only|ioc|fok|MARKET|LIMIT|POST_ONLY|IOC|FOK)$")
-    price: Optional[float] = Field(None, gt=0)
+    price: float | None = Field(None, gt=0)
     margin_mode: MarginMode = MarginMode.CROSS
     position_side: PositionSide = PositionSide.NET
-    leverage: Optional[int] = Field(None, gt=0)
-    reduce_only: Optional[bool] = None
-    client_order_id: Optional[str] = None
-    metadata: Dict[str, Any] = Field(default_factory=dict)
+    leverage: int | None = Field(None, gt=0)
+    reduce_only: bool | None = None
+    client_order_id: str | None = None
+    metadata: dict[str, Any] = Field(default_factory=dict)
 
 
 class CostEstimate(BaseModel):

@@ -8,25 +8,25 @@ in-memory history for late-attaching subscribers.
 from __future__ import annotations
 
 import asyncio
-from dataclasses import dataclass, field, asdict
-from typing import Any, Dict, List
+from dataclasses import asdict, dataclass
+from typing import Any
 
 
 @dataclass
 class AuditEvent:
     kind: str
-    payload: Dict[str, Any]
+    payload: dict[str, Any]
     severity: str = "info"
     timestamp: str = ""
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         return asdict(self)
 
 
 class AuditEventBus:
     def __init__(self, max_history: int = 500, queue_maxsize: int = 100) -> None:
-        self._subscribers: List[asyncio.Queue] = []
-        self._history: List[AuditEvent] = []
+        self._subscribers: list[asyncio.Queue] = []
+        self._history: list[AuditEvent] = []
         self._max_history = max_history
         self._queue_maxsize = queue_maxsize
         self._lock = asyncio.Lock()
@@ -48,7 +48,7 @@ class AuditEventBus:
         except ValueError:
             pass
 
-    def history(self) -> List[AuditEvent]:
+    def history(self) -> list[AuditEvent]:
         return list(self._history)
 
     async def publish(self, event: AuditEvent) -> None:

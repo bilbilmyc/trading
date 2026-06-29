@@ -7,7 +7,8 @@ contract. Used by the frontend "Add custom source" form (ADR-0003).
 
 from __future__ import annotations
 
-from typing import Any, Dict, List, Mapping, Optional
+from collections.abc import Mapping
+from typing import Any
 
 import httpx
 
@@ -23,11 +24,11 @@ class GenericHttpDataSource:
         ticker_path: str = "/ticker/{symbol}",
         klines_path: str = "/klines",
         trades_path: str = "/trades",
-        ticker_field_map: Optional[Mapping[str, str]] = None,
-        klines_field_map: Optional[Mapping[str, str]] = None,
-        klines_array_key: Optional[str] = None,  # if response is wrapped
+        ticker_field_map: Mapping[str, str] | None = None,
+        klines_field_map: Mapping[str, str] | None = None,
+        klines_array_key: str | None = None,  # if response is wrapped
         timeout_seconds: float = 10.0,
-        headers: Optional[Mapping[str, str]] = None,
+        headers: Mapping[str, str] | None = None,
     ) -> None:
         self.name = name
         self._base_url = base_url.rstrip("/")
@@ -43,7 +44,7 @@ class GenericHttpDataSource:
         self._timeout = timeout_seconds
         self._headers = dict(headers or {})
 
-    def _url(self, path: str, symbol: str, query: Optional[Dict[str, Any]] = None) -> str:
+    def _url(self, path: str, symbol: str, query: dict[str, Any] | None = None) -> str:
         if "{symbol}" in path:
             rendered = path.replace("{symbol}", symbol)
         else:
@@ -62,14 +63,14 @@ class GenericHttpDataSource:
             resp.raise_for_status()
             return resp.json()
 
-    def _remap(self, src: Mapping[str, Any], field_map: Mapping[str, str]) -> Dict[str, Any]:
-        out: Dict[str, Any] = {}
+    def _remap(self, src: Mapping[str, Any], field_map: Mapping[str, str]) -> dict[str, Any]:
+        out: dict[str, Any] = {}
         for target, src_field in field_map.items():
             if src_field in src:
                 out[target] = src[src_field]
         return out
 
-    async def get_ticker(self, symbol: str) -> Dict[str, Any]:
+    async def get_ticker(self, symbol: str) -> dict[str, Any]:
         url = self._url(self._ticker_path, symbol)
         data = await self._get_json(url)
         if not isinstance(data, Mapping):
@@ -81,15 +82,15 @@ class GenericHttpDataSource:
         symbol: str,
         interval: str = "1m",
         limit: int = 100,
-    ) -> List[Dict[str, Any]]:
+    ) -> list[dict[str, Any]]:
         url = self._url(self._klines_path, symbol, {"interval": interval, "limit": str(limit)})
         data = await self._get_json(url)
-        rows: List[Any]
+        rows: list[Any]
         if self._klines_array_key and isinstance(data, Mapping):
             rows = data.get(self._klines_array_key, [])
         else:
             rows = data if isinstance(data, list) else []
-        out: List[Dict[str, Any]] = []
+        out: list[dict[str, Any]] = []
         for row in rows:
             if isinstance(row, Mapping):
                 out.append(self._remap(row, self._klines_map))
@@ -99,7 +100,7 @@ class GenericHttpDataSource:
         self,
         symbol: str,
         limit: int = 50,
-    ) -> List[Dict[str, Any]]:
+    ) -> list[dict[str, Any]]:
         url = self._url(self._trades_path, symbol, {"limit": str(limit)})
         data = await self._get_json(url)
         if not isinstance(data, list):

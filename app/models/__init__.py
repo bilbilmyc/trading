@@ -5,8 +5,6 @@
 使用 Pydantic v2 进行数据验证和序列化优化。
 """
 
-from app.models.order import Order, OrderSide, OrderType, OrderStatus
-from app.models.position import Position
 from app.models.balance import Balance
 from app.models.contract import (
     ContractOrderIntent,
@@ -18,7 +16,9 @@ from app.models.contract import (
     MarketType,
     PositionSide,
 )
-from app.models.market import ContractMarket, Ticker, Candlestick, Trade
+from app.models.market import Candlestick, ContractMarket, Ticker, Trade
+from app.models.order import Order, OrderSide, OrderStatus, OrderType
+from app.models.position import Position
 
 __all__ = [
     # Order

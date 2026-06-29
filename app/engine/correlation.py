@@ -7,17 +7,17 @@ those that complement each other (high diversification).
 from __future__ import annotations
 
 import math
+from collections.abc import Sequence
 from dataclasses import dataclass
-from typing import Dict, List, Sequence
 
 
 @dataclass
 class CorrelationMatrix:
-    strategies: List[str]
-    matrix: List[List[float]]  # matrix[i][j] = correlation between i and j
+    strategies: list[str]
+    matrix: list[list[float]]  # matrix[i][j] = correlation between i and j
 
 
-def _returns(equity_curve: Sequence[float]) -> List[float]:
+def _returns(equity_curve: Sequence[float]) -> list[float]:
     if len(equity_curve) < 2:
         return []
     return [equity_curve[i] - equity_curve[i - 1] for i in range(1, len(equity_curve))]
@@ -40,7 +40,7 @@ def _pearson(xs: Sequence[float], ys: Sequence[float]) -> float:
 
 
 def correlation_matrix(
-    equity_curves: Dict[str, Sequence[float]],
+    equity_curves: dict[str, Sequence[float]],
 ) -> CorrelationMatrix:
     """Build pairwise correlation matrix from per-strategy equity curves.
 
@@ -48,9 +48,9 @@ def correlation_matrix(
     """
     strategies = list(equity_curves.keys())
     returns = {name: _returns(curve) for name, curve in equity_curves.items()}
-    matrix: List[List[float]] = []
+    matrix: list[list[float]] = []
     for i, name_i in enumerate(strategies):
-        row: List[float] = []
+        row: list[float] = []
         for j, name_j in enumerate(strategies):
             if i == j:
                 row.append(1.0)

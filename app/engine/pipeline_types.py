@@ -6,11 +6,11 @@ free of behaviour — only types live here.
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass, field
-from typing import Any, Dict, Mapping, Optional, Protocol, Sequence
+from typing import Any, Protocol
 
 from app.strategies.base import Signal
-
 
 # ── result types ──────────────────────────────────────────────────────
 
@@ -25,9 +25,9 @@ class TradeReceipt:
     side: str
     order_type: str
     quantity: float
-    price: Optional[float]
+    price: float | None
     filled_quantity: float = 0.0
-    avg_fill_price: Optional[float] = None
+    avg_fill_price: float | None = None
 
 
 @dataclass(frozen=True)
@@ -53,8 +53,8 @@ class RiskDecision:
 
     allowed: bool
     reason: str
-    stop_loss: Optional[float] = None
-    take_profit: Optional[float] = None
+    stop_loss: float | None = None
+    take_profit: float | None = None
 
 
 @dataclass(frozen=True)

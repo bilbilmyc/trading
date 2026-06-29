@@ -5,14 +5,14 @@
 """
 
 import sys
-from typing import Optional
+
 from loguru import logger
 
 
 def setup_logger(
     level: str = "INFO",
-    format_string: Optional[str] = None,
-    log_file: Optional[str] = None,
+    format_string: str | None = None,
+    log_file: str | None = None,
 ) -> None:
     """配置日志系统
     
@@ -23,7 +23,7 @@ def setup_logger(
     """
     # 移除默认处理器
     logger.remove()
-    
+
     # 默认格式：带颜色的美观格式
     if format_string is None:
         format_string = (
@@ -32,7 +32,7 @@ def setup_logger(
             "<cyan>{name}</cyan>:<cyan>{function}</cyan>:<cyan>{line}</cyan> | "
             "<level>{message}</level>"
         )
-    
+
     # 添加控制台处理器
     logger.add(
         sys.stderr,
@@ -42,7 +42,7 @@ def setup_logger(
         backtrace=True,
         diagnose=True,
     )
-    
+
     # 可选：添加文件处理器
     if log_file:
         logger.add(
@@ -55,7 +55,7 @@ def setup_logger(
         )
 
 
-def get_logger(name: Optional[str] = None):
+def get_logger(name: str | None = None):
     """获取日志记录器
     
     Args:

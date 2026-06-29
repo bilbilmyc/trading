@@ -3,7 +3,7 @@
 """
 
 from datetime import datetime
-from typing import Optional
+
 from pydantic import BaseModel, Field
 
 
@@ -21,7 +21,7 @@ class Position(BaseModel):
         created_at: 建仓时间
         updated_at: 更新时间
     """
-    
+
     symbol: str = Field(..., min_length=1, description="交易对")
     exchange: str = Field(..., min_length=1, description="交易所名称")
     quantity: float = Field(0.0, description="持仓数量")
@@ -29,21 +29,21 @@ class Position(BaseModel):
     current_price: float = Field(0.0, ge=0, description="当前价格")
     unrealized_pnl: float = Field(0.0, description="未实现盈亏")
     realized_pnl: float = Field(0.0, description="已实现盈亏")
-    
+
     # 时间戳
     created_at: datetime = Field(default_factory=datetime.utcnow, description="建仓时间")
     updated_at: datetime = Field(default_factory=datetime.utcnow, description="更新时间")
-    
+
     @property
     def market_value(self) -> float:
         """持仓市值"""
         return abs(self.quantity) * self.current_price
-    
+
     @property
     def cost_basis(self) -> float:
         """持仓成本"""
         return abs(self.quantity) * self.avg_entry_price
-    
+
     @property
     def side(self) -> str:
         """持仓方向"""
@@ -52,19 +52,19 @@ class Position(BaseModel):
         elif self.quantity < 0:
             return 'short'
         return 'flat'
-    
+
     @property
     def pnl_percentage(self) -> float:
         """盈亏百分比"""
         if self.cost_basis == 0:
             return 0.0
         return self.unrealized_pnl / self.cost_basis * 100
-    
+
     def update_price(self, price: float):
         """更新当前价格并计算未实现盈亏"""
         self.current_price = price
         self.updated_at = datetime.utcnow()
-        
+
         if self.quantity != 0:
             if self.quantity > 0:
                 # 多头：(当前价 - 均价) * 数量
@@ -74,7 +74,7 @@ class Position(BaseModel):
                 self.unrealized_pnl = (self.avg_entry_price - price) * abs(self.quantity)
         else:
             self.unrealized_pnl = 0.0
-    
+
     def update_position(self, quantity: float, price: float):
         """更新持仓信息
         
@@ -84,10 +84,10 @@ class Position(BaseModel):
         """
         old_quantity = self.quantity
         old_cost = abs(old_quantity) * self.avg_entry_price
-        
+
         new_quantity = old_quantity + quantity
         trade_value = abs(quantity) * price
-        
+
         if new_quantity == 0:
             # 平仓
             self.realized_pnl += self.unrealized_pnl
@@ -114,18 +114,18 @@ class Position(BaseModel):
                 self.quantity = new_qty if quantity > 0 else -new_qty
                 self.avg_entry_price = price
                 self.unrealized_pnl = 0
-        
+
         self.current_price = price
         self.update_price(price)
-    
+
     def is_flat(self) -> bool:
         """是否空仓"""
         return self.quantity == 0
-    
+
     def is_long(self) -> bool:
         """是否多头"""
         return self.quantity > 0
-    
+
     def is_short(self) -> bool:
         """是否空头"""
         return self.quantity < 0

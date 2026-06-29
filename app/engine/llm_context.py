@@ -12,7 +12,7 @@ accepts any `LLMContextProvider`; the wiring lives in the API layer.
 
 from __future__ import annotations
 
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 from app.core.sqlite_store import SQLiteStore
 from app.engine.risk_manager import RiskManager
@@ -41,7 +41,7 @@ class DefaultLLMContextProvider:
 
     # ── LLMContextProvider surface ────────────────────────────────
 
-    async def get_risk_context(self) -> Optional[Dict[str, Any]]:
+    async def get_risk_context(self) -> dict[str, Any] | None:
         """Live risk metrics. Returns None if the engine has no risk state yet."""
         try:
             status = await self._risk.get_risk_status()
@@ -66,7 +66,7 @@ class DefaultLLMContextProvider:
             ),
         }
 
-    async def get_trade_history(self, symbol: str) -> Optional[Dict[str, Any]]:
+    async def get_trade_history(self, symbol: str) -> dict[str, Any] | None:
         """Recent trade performance for the given symbol, computed from
         the SQLite `paper_orders` table.
 
@@ -75,7 +75,7 @@ class DefaultLLMContextProvider:
         for a brand-new symbol).
         """
         try:
-            all_orders: List[Dict[str, Any]] = self._store.recent_paper_orders(
+            all_orders: list[dict[str, Any]] = self._store.recent_paper_orders(
                 limit=self._TRADE_HISTORY_LOOKBACK,
             )
         except Exception:

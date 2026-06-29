@@ -6,10 +6,9 @@ takes an LLM analysis result to enrich the rationale.
 
 from __future__ import annotations
 
-from typing import Any, Dict, Optional
+from typing import Any
 
 from app.engine.strategy_suggester import (
-    StrategySuggestion,
     suggest_strategy as heuristic_suggest,
 )
 
@@ -17,11 +16,11 @@ from app.engine.strategy_suggester import (
 def recommend_strategy(
     candles: list,
     *,
-    llm_rationale: Optional[str] = None,
-    llm_decision: Optional[str] = None,
-    llm_confidence: Optional[float] = None,
-    prefer: Optional[str] = None,
-) -> Dict[str, Any]:
+    llm_rationale: str | None = None,
+    llm_decision: str | None = None,
+    llm_confidence: float | None = None,
+    prefer: str | None = None,
+) -> dict[str, Any]:
     """Combine heuristic suggestion with optional LLM insights.
 
     Returns a JSON-serializable dict with `kind`, `params`, and
@@ -33,7 +32,7 @@ def recommend_strategy(
     if llm_rationale and llm_confidence is not None and llm_confidence >= 0.5:
         rationale = f"LLM: {llm_rationale}\n\n启发式: {suggestion.rationale}"
 
-    out: Dict[str, Any] = {
+    out: dict[str, Any] = {
         "kind": suggestion.kind,
         "params": dict(suggestion.params),
         "rationale": rationale,

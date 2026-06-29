@@ -10,7 +10,7 @@ import hashlib
 import json
 import time
 from dataclasses import dataclass
-from typing import Any, Dict, Optional
+from typing import Any
 
 from app.engine.llm_types import LLMDecided, LLMResponse
 
@@ -27,7 +27,7 @@ class LLMFingerprintCache:
     def __init__(self, ttl_seconds: float = 30.0, max_entries: int = 1024) -> None:
         self._ttl = ttl_seconds
         self._max = max_entries
-        self._store: Dict[str, _Entry] = {}
+        self._store: dict[str, _Entry] = {}
         self.hits = 0
         self.misses = 0
 
@@ -35,7 +35,7 @@ class LLMFingerprintCache:
     def fingerprint(
         symbol: str,
         interval: str,
-        last_candle: Dict[str, Any],
+        last_candle: dict[str, Any],
         position_signature: str,
         prompt_version: str,
     ) -> str:
@@ -49,7 +49,7 @@ class LLMFingerprintCache:
         raw = json.dumps(payload, sort_keys=True, default=str)
         return hashlib.sha256(raw.encode("utf-8")).hexdigest()
 
-    def get(self, key: str) -> Optional[LLMResponse]:
+    def get(self, key: str) -> LLMResponse | None:
         entry = self._store.get(key)
         if entry is None:
             self.misses += 1
@@ -79,7 +79,7 @@ class LLMFingerprintCache:
             completion_tokens=response.completion_tokens,
         )
 
-    def stats(self) -> Dict[str, Any]:
+    def stats(self) -> dict[str, Any]:
         total = self.hits + self.misses
         return {
             "hits": self.hits,

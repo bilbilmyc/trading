@@ -4,9 +4,9 @@
 用于创建和管理不同交易所的实例。
 """
 
-from typing import Any, Dict, Optional, Type
-from app.exchanges.base import ExchangeBase
+from typing import Any
 
+from app.exchanges.base import ExchangeBase
 
 EXCHANGE_PRIORITY = [
     "binance_usdm",
@@ -23,12 +23,12 @@ class ExchangeFactory:
     
     单例模式，集中管理所有交易所实例的创建和获取。
     """
-    
-    _instances: Dict[str, ExchangeBase] = {}
-    _exchange_classes: Dict[str, Type[ExchangeBase]] = {}
-    
+
+    _instances: dict[str, ExchangeBase] = {}
+    _exchange_classes: dict[str, type[ExchangeBase]] = {}
+
     @classmethod
-    def register_exchange(cls, name: str, exchange_class: Type[ExchangeBase]):
+    def register_exchange(cls, name: str, exchange_class: type[ExchangeBase]):
         """注册交易所实现类
         
         Args:
@@ -36,7 +36,7 @@ class ExchangeFactory:
             exchange_class: 交易所实现类
         """
         cls._exchange_classes[name.lower()] = exchange_class
-    
+
     @classmethod
     def create_exchange(
         cls,
@@ -64,12 +64,12 @@ class ExchangeFactory:
             ValueError: 不支持的交易所
         """
         name = exchange_name.lower()
-        
+
         if name not in cls._exchange_classes:
             raise ValueError(f"不支持的交易所：{name}。支持的交易所：{list(cls._exchange_classes.keys())}")
-        
+
         exchange_class = cls._exchange_classes[name]
-        
+
         instance = exchange_class(
             api_key=api_key,
             secret_key=secret_key,
@@ -77,9 +77,9 @@ class ExchangeFactory:
             use_testnet=use_testnet,
             **kwargs
         )
-        
+
         return instance
-    
+
     @classmethod
     def get_or_create(
         cls,
@@ -105,7 +105,7 @@ class ExchangeFactory:
         """
         name = exchange_name.lower()
         key = f"{name}_{api_key[:8]}"  # 使用 API 密钥前缀作为缓存键
-        
+
         if key not in cls._instances:
             cls._instances[key] = cls.create_exchange(
                 exchange_name=name,
@@ -115,11 +115,11 @@ class ExchangeFactory:
                 use_testnet=use_testnet,
                 **kwargs
             )
-        
+
         return cls._instances[key]
-    
+
     @classmethod
-    def get_instance(cls, exchange_name: str) -> Optional[ExchangeBase]:
+    def get_instance(cls, exchange_name: str) -> ExchangeBase | None:
         """获取已存在的交易所实例
         
         Args:
@@ -133,7 +133,7 @@ class ExchangeFactory:
             if key.startswith(f"{name}_"):
                 return instance
         return None
-    
+
     @classmethod
     def remove_instance(cls, exchange_name: str, api_key_prefix: str = ''):
         """移除交易所实例
@@ -144,15 +144,15 @@ class ExchangeFactory:
         """
         name = exchange_name.lower()
         keys_to_remove = []
-        
+
         for key in cls._instances:
             if key.startswith(f"{name}_"):
                 if not api_key_prefix or key.startswith(f"{name}_{api_key_prefix}"):
                     keys_to_remove.append(key)
-        
+
         for key in keys_to_remove:
             del cls._instances[key]
-    
+
     @classmethod
     def close_all(cls):
         """关闭所有交易所连接"""
@@ -163,9 +163,9 @@ class ExchangeFactory:
             except Exception:
                 pass
         cls._instances.clear()
-    
+
     @classmethod
-    def get_capabilities(cls, exchange_name: str) -> Dict[str, Any]:
+    def get_capabilities(cls, exchange_name: str) -> dict[str, Any]:
         """返回交易所的能力标志，不创建实例。"""
 
         name = exchange_name.lower()
@@ -201,7 +201,7 @@ def _auto_register_exchanges():
         ExchangeFactory.register_exchange('okx', OKXExchange)
     except ImportError:
         pass
-    
+
     try:
         from app.exchanges.binance import BinanceExchange
         ExchangeFactory.register_exchange('binance', BinanceExchange)

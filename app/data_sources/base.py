@@ -12,7 +12,7 @@ in by implementing the same shape.
 
 from __future__ import annotations
 
-from typing import Any, Dict, List, Protocol
+from typing import Any, Protocol
 
 
 class DataSource(Protocol):
@@ -20,20 +20,20 @@ class DataSource(Protocol):
 
     name: str
 
-    async def get_ticker(self, symbol: str) -> Dict[str, Any]: ...
+    async def get_ticker(self, symbol: str) -> dict[str, Any]: ...
 
     async def get_klines(
         self,
         symbol: str,
         interval: str = "1m",
         limit: int = 100,
-    ) -> List[Dict[str, Any]]: ...
+    ) -> list[dict[str, Any]]: ...
 
     async def get_recent_trades(
         self,
         symbol: str,
         limit: int = 50,
-    ) -> List[Dict[str, Any]]: ...
+    ) -> list[dict[str, Any]]: ...
 
 
 __all__ = ["DataSource"]

@@ -10,7 +10,7 @@ from __future__ import annotations
 import asyncio
 import json
 import time
-from typing import Any, Dict, Optional
+from typing import Any
 
 import httpx
 
@@ -18,7 +18,6 @@ from app.engine.llm_types import (
     LLMDecided,
     LLMError,
     LLMErrorKind,
-    LLMMessage,
     LLMRequest,
     LLMResponse,
 )
@@ -32,7 +31,7 @@ class OllamaProvider:
         self,
         base_url: str = "http://localhost:11434",
         timeout_seconds: float = 60.0,
-        retry_policy: Optional[RetryPolicy] = None,
+        retry_policy: RetryPolicy | None = None,
         # Ollama doesn't require auth; accept (and ignore) `api_key` so
         # callers using the standard `LLMAnalyzer._select_provider` path
         # can construct an OllamaProvider without special-casing.
@@ -43,7 +42,7 @@ class OllamaProvider:
         self._retry = retry_policy or RetryPolicy()
 
     async def _request_once(self, request: LLMRequest) -> LLMResponse:
-        payload: Dict[str, Any] = {
+        payload: dict[str, Any] = {
             "model": request.model,
             "messages": [{"role": m.role, "content": m.content} for m in request.messages],
             "stream": False,
@@ -132,7 +131,7 @@ class OllamaProvider:
         return last
 
     @staticmethod
-    def _extract_text(data: Dict[str, Any]) -> str:
+    def _extract_text(data: dict[str, Any]) -> str:
         msg = data.get("message", {})
         return str(msg.get("content", "")).strip()
 
@@ -154,7 +153,7 @@ class OllamaProvider:
                 raw_response=raw,
             )
 
-        def _safe_float(v: Any) -> Optional[float]:
+        def _safe_float(v: Any) -> float | None:
             if v is None:
                 return None
             try:

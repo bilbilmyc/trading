@@ -12,10 +12,9 @@ caller supplies (could be grid search, Bayesian, etc.).
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass, field
-from typing import Callable, List, Optional, Sequence, Tuple
 
-from app.engine.rsi import run_rsi_backtest
 from app.engine.backtest import run_sma_backtest
 
 
@@ -32,7 +31,7 @@ class WalkForwardWindow:
 
 @dataclass
 class WalkForwardResult:
-    windows: List[WalkForwardWindow] = field(default_factory=list)
+    windows: list[WalkForwardWindow] = field(default_factory=list)
     aggregate_oos_pnl: float = 0.0
     aggregate_oos_sharpe: float = 0.0
     aggregate_oos_win_rate: float = 0.0
@@ -63,7 +62,7 @@ def _max_dd(equity: Sequence[float]) -> float:
     return max_dd
 
 
-def _equity_returns(equity: Sequence[float]) -> List[float]:
+def _equity_returns(equity: Sequence[float]) -> list[float]:
     if len(equity) < 2:
         return []
     return [equity[i] - equity[i - 1] for i in range(1, len(equity))]
@@ -92,11 +91,11 @@ def walk_forward_sma(
         return WalkForwardResult()
 
     result = WalkForwardResult()
-    total_oos_returns: List[float] = []
+    total_oos_returns: list[float] = []
     win_count = 0
     max_dd_peak = 0.0
     running_equity = initial_capital
-    equity_curve: List[float] = [initial_capital]
+    equity_curve: list[float] = [initial_capital]
 
     for w in range(n_windows):
         win_start = w * window_size

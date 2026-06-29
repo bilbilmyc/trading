@@ -16,8 +16,8 @@ returns. Pure functions, no I/O.
 from __future__ import annotations
 
 import math
-from dataclasses import dataclass, field
-from typing import List, Optional, Sequence
+from collections.abc import Sequence
+from dataclasses import dataclass
 
 
 @dataclass
@@ -45,7 +45,7 @@ def _mean(values: Sequence[float]) -> float:
     return sum(values) / len(values)
 
 
-def _std(values: Sequence[float], mean: Optional[float] = None) -> float:
+def _std(values: Sequence[float], mean: float | None = None) -> float:
     if len(values) < 2:
         return 0.0
     m = mean if mean is not None else _mean(values)
@@ -92,7 +92,7 @@ def _max_drawdown_periods(equity_curve: Sequence[float]) -> tuple:
 
 def compute_metrics(
     trade_pnls: Sequence[float],
-    equity_curve: Optional[Sequence[float]] = None,
+    equity_curve: Sequence[float] | None = None,
     periods_per_year: int = 252,
 ) -> PortfolioMetrics:
     """Compute all portfolio metrics in one pass.

@@ -9,8 +9,9 @@ from __future__ import annotations
 import asyncio
 import json
 import time
+from collections.abc import AsyncIterator
 from dataclasses import dataclass
-from typing import Any, AsyncIterator, Dict, List, Optional
+from typing import Any
 
 import httpx
 
@@ -19,12 +20,9 @@ from app.engine.llm_types import (
     LLMDecided,
     LLMError,
     LLMErrorKind,
-    LLMMessage,
     LLMRequest,
     LLMResponse,
-    LLMProvider,
 )
-
 
 # ── Retry policy ─────────────────────────────────────────────────────
 
@@ -50,7 +48,7 @@ class OpenAIProvider:
         api_key: str,
         base_url: str = "https://api.openai.com/v1",
         timeout_seconds: float = 30.0,
-        retry_policy: Optional[RetryPolicy] = None,
+        retry_policy: RetryPolicy | None = None,
     ) -> None:
         self._api_key = api_key
         self._base_url = base_url.rstrip("/")
@@ -67,7 +65,7 @@ class OpenAIProvider:
                 )
             )
 
-        payload: Dict[str, Any] = {
+        payload: dict[str, Any] = {
             "model": request.model,
             "messages": [{"role": m.role, "content": m.content} for m in request.messages],
             "temperature": request.temperature,
@@ -200,7 +198,7 @@ class OpenAIProvider:
                 raw_response=raw,
             )
 
-        def _safe_float(v: Any) -> Optional[float]:
+        def _safe_float(v: Any) -> float | None:
             if v is None:
                 return None
             try:

@@ -9,11 +9,10 @@ LLM 大模型交易策略
 防全仓机制：通过 default_order_amount_usdt 控制单笔最大金额。
 """
 
-from datetime import datetime
-from typing import Any, Dict, List, Optional, Protocol
+from typing import Any, Protocol
 
-from app.strategies.base import StrategyBase, Signal, SignalAction
-from app.strategies.llm_analyzer import LLMAnalyzer, LLMAnalysisResult
+from app.strategies.base import Signal, SignalAction, StrategyBase
+from app.strategies.llm_analyzer import LLMAnalysisResult, LLMAnalyzer
 
 
 class LLMContextProvider(Protocol):
@@ -29,11 +28,11 @@ class LLMContextProvider(Protocol):
     for either block to omit it from the prompt.
     """
 
-    async def get_risk_context(self) -> Optional[Dict[str, Any]]:
+    async def get_risk_context(self) -> dict[str, Any] | None:
         """Return current risk metrics (daily_pnl, drawdown, kill switch, ...)."""
         ...
 
-    async def get_trade_history(self, symbol: str) -> Optional[Dict[str, Any]]:
+    async def get_trade_history(self, symbol: str) -> dict[str, Any] | None:
         """Return trade history stats for a symbol (win rate, streaks, ...)."""
         ...
 
@@ -57,8 +56,8 @@ class LLMStrategy(StrategyBase):
         min_confidence: float = 0.5,
         min_candles: int = 10,
         max_candles: int = 80,
-        allowed_symbols: Optional[List[str]] = None,
-        context_provider: Optional[LLMContextProvider] = None,
+        allowed_symbols: list[str] | None = None,
+        context_provider: LLMContextProvider | None = None,
     ):
         super().__init__(name=name)
         self.analyzer = analyzer
@@ -68,19 +67,19 @@ class LLMStrategy(StrategyBase):
         self.max_candles = max_candles
         # None or empty list = all symbols allowed. Otherwise an exact-match
         # set (case-sensitive) of symbol codes the LLM may trade.
-        self.allowed_symbols: Optional[set] = (
+        self.allowed_symbols: set | None = (
             set(allowed_symbols) if allowed_symbols else None
         )
         # Optional provider for risk + trade-history blocks in the LLM prompt.
         # None = those blocks are omitted (backward compat for personal use
         # that doesn't want to wire the engine context in).
-        self.context_provider: Optional[LLMContextProvider] = context_provider
+        self.context_provider: LLMContextProvider | None = context_provider
 
         # 缓存最近的 K 线数据，键为 symbol
-        self._klines: Dict[str, List[Dict[str, Any]]] = {}
+        self._klines: dict[str, list[dict[str, Any]]] = {}
         # 上次分析结果缓存
-        self._last_result: Dict[str, Optional[LLMAnalysisResult]] = {}
-        self._last_signal: Dict[str, Optional[Signal]] = {}
+        self._last_result: dict[str, LLMAnalysisResult | None] = {}
+        self._last_signal: dict[str, Signal | None] = {}
 
     # ── 生命周期 ──────────────────────────────────────────────
 
@@ -96,7 +95,7 @@ class LLMStrategy(StrategyBase):
 
     # ── 行情处理 ──────────────────────────────────────────────
 
-    async def on_market_data(self, symbol: str, data: Dict[str, Any]):
+    async def on_market_data(self, symbol: str, data: dict[str, Any]):
         """缓存 K 线数据供 generate_signals 使用。"""
 
         if symbol not in self._klines:
@@ -107,7 +106,7 @@ class LLMStrategy(StrategyBase):
 
     # ── 信号生成 ──────────────────────────────────────────────
 
-    async def generate_signals(self, symbol: str) -> Optional[Signal]:
+    async def generate_signals(self, symbol: str) -> Signal | None:
         """调用 LLM 分析并生成交易信号。"""
 
         # Symbol whitelist gate: refuse symbols not on the configured list
@@ -163,7 +162,7 @@ class LLMStrategy(StrategyBase):
                 risk_context=risk_context,
                 trade_history=trade_history,
             )
-        except Exception as exc:
+        except Exception:
             self._last_result[symbol] = None
             self._last_signal[symbol] = None
             return None
@@ -212,11 +211,11 @@ class LLMStrategy(StrategyBase):
 
     # ── 查询方法 ──────────────────────────────────────────────
 
-    def get_last_result(self, symbol: str) -> Optional[LLMAnalysisResult]:
+    def get_last_result(self, symbol: str) -> LLMAnalysisResult | None:
         """获取最近一次 LLM 分析结果。"""
         return self._last_result.get(symbol)
 
-    def get_last_signal(self, symbol: str) -> Optional[Signal]:
+    def get_last_signal(self, symbol: str) -> Signal | None:
         """获取最近一次生成的信号。"""
         return self._last_signal.get(symbol)
 

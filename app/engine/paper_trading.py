@@ -6,7 +6,7 @@
 """
 
 from datetime import datetime
-from typing import Any, Dict, List, Optional
+from typing import Any
 from uuid import uuid4
 
 from app.strategies.base import Signal
@@ -19,11 +19,11 @@ class PaperTradingAccount:
         self.initial_cash = initial_cash
         self.cash = initial_cash
         self.fee_rate = fee_rate
-        self.positions: Dict[str, Dict[str, Any]] = {}
-        self.orders: List[Dict[str, Any]] = []
+        self.positions: dict[str, dict[str, Any]] = {}
+        self.orders: list[dict[str, Any]] = []
         self.enabled = True
 
-    def reset(self, initial_cash: Optional[float] = None) -> None:
+    def reset(self, initial_cash: float | None = None) -> None:
         """重置模拟账户状态。"""
 
         if initial_cash is not None:
@@ -34,9 +34,9 @@ class PaperTradingAccount:
 
     def load_state(
         self,
-        account: Optional[Dict[str, Any]],
-        positions: List[Dict[str, Any]],
-        orders: List[Dict[str, Any]],
+        account: dict[str, Any] | None,
+        positions: list[dict[str, Any]],
+        orders: list[dict[str, Any]],
     ) -> None:
         """从 SQLite 恢复模拟账户状态。"""
 
@@ -105,7 +105,7 @@ class PaperTradingAccount:
         signal: Signal,
         fill_price: float,
         default_quantity: float = 0.001,
-    ) -> Optional[Dict[str, Any]]:
+    ) -> dict[str, Any] | None:
         """把一个可执行信号模拟为完全成交。"""
 
         if not self.enabled or not signal.is_actionable or fill_price <= 0:
@@ -178,7 +178,7 @@ class PaperTradingAccount:
         self.orders = self.orders[-200:]
         return order
 
-    def summary(self) -> Dict[str, Any]:
+    def summary(self) -> dict[str, Any]:
         """返回模拟账户汇总，供 API 和前端展示。"""
 
         active_positions = [

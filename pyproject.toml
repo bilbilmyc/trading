@@ -25,6 +25,8 @@ dependencies = [
 dev = [
     "pytest>=7.4.0",
     "pytest-asyncio>=0.23.0",
+    "ruff>=0.6.0",
+    "mypy>=1.10.0",
 ]
 
 [tool.uv]
@@ -33,3 +35,69 @@ package = false
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]
+
+# ── Lint / format ────────────────────────────────────────────────
+# Ruff replaces flake8 + isort + black for this project. We enable
+# E + F + W (pycodestyle/pyflakes/pycodestyle warnings) plus a small
+# set of modernization rules. B (bugbear) is on because it catches
+# real bugs without much false-positive noise.
+[tool.ruff]
+line-length = 100
+target-version = "py313"
+extend-exclude = [
+    ".venv",
+    "frontend",
+    "docs",
+    "data",
+]
+
+[tool.ruff.lint]
+# Start conservative; we can opt in to more rule families later.
+select = ["E", "F", "W", "I", "B", "UP"]
+# Suppress categories that are mostly style noise on this codebase:
+#   - B007 (unused loop control var): too noisy on tuple-unpacking patterns
+#   - B008 (function-call-in-default-argument): dataclass patterns; review later
+#   - B023 (function-uses-loop-variable): common, low-value
+#   - B027 (empty-method-without-abstract-decorator): ABC subclasses often
+#     leave methods for subclasses
+#   - B905 (zip without strict=): Python 3.10+ behavior is fine
+#   - E501 (line-too-long): 77 existing violations; tighten in follow-up
+#   - UP042 (replace str Enum): `class X(str, Enum)` is a deliberate pattern
+#   - UP046 (non-pep695 generic class): legacy generic syntax still common
+#   - W293 (blank-line-with-whitespace): cosmetic, will be fixed by ruff format
+ignore = [
+    "B007", "B008", "B023", "B027", "B905", "E501",
+    "UP042", "UP046", "W293",
+]
+# Per-file relaxation: tests + scripts often have intentional patterns
+# (re-binding, dynamic imports) that we don't want to fail CI on.
+per-file-ignores = { "tests/*" = ["B011", "F841"] }
+
+[tool.ruff.lint.isort]
+known-first-party = ["app", "config"]
+
+# ── Type checking ────────────────────────────────────────────────
+# mypy is installed and available, but configured permissively for now.
+# The codebase predates type hints; we add them opportunistically and
+# tighten settings as coverage grows.
+[tool.mypy]
+python_version = "3.13"
+ignore_missing_imports = true
+warn_unused_ignores = true
+warn_redundant_casts = true
+no_implicit_optional = true
+# Most permissive mode — only flag definite errors, not missing annotations.
+disallow_untyped_defs = false
+disallow_any_generics = false
+check_untyped_defs = false
+# Ignore the noisiest categories in the current codebase.
+# Tighten these as the team adds type hints.
+ignore_errors = false
+[[tool.mypy.overrides]]
+module = [
+    "app.engine.trader",
+    "app.api.server",
+]
+# These two files are the largest and most dynamic; check only return
+# type assignments for now, not the whole file.
+check_untyped_defs = false

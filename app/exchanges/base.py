@@ -6,8 +6,8 @@
 """
 
 from abc import ABC, abstractmethod
-from typing import Dict, List, Optional, Any
 from datetime import datetime
+from typing import Any
 
 
 class ExchangeBase(ABC):
@@ -16,8 +16,8 @@ class ExchangeBase(ABC):
     所有交易所实现必须继承此类并实现所有抽象方法。
     使用异步方法提高 IO 密集型操作的效率。
     """
-    
-    def __init__(self, api_key: str = '', secret_key: str = '', 
+
+    def __init__(self, api_key: str = '', secret_key: str = '',
                  passphrase: str = '', use_testnet: bool = True):
         """初始化交易所连接
         
@@ -32,13 +32,13 @@ class ExchangeBase(ABC):
         self.passphrase = passphrase
         self.use_testnet = use_testnet
         self._initialized_at = datetime.utcnow()
-    
+
     @property
     @abstractmethod
     def name(self) -> str:
         """交易所名称"""
         pass
-    
+
     @property
     @abstractmethod
     def base_url(self) -> str:
@@ -46,7 +46,7 @@ class ExchangeBase(ABC):
         pass
 
     @property
-    def capabilities(self) -> Dict[str, Any]:
+    def capabilities(self) -> dict[str, Any]:
         """交易所能力标志。
 
         每个适配器可以覆盖这个 property，声明自己支持哪些功能。
@@ -69,27 +69,27 @@ class ExchangeBase(ABC):
         }
 
     # ========== 账户相关 ==========
-    
+
     @abstractmethod
-    async def get_account_balance(self) -> Dict[str, float]:
+    async def get_account_balance(self) -> dict[str, float]:
         """获取账户余额
         
         Returns:
             币种到余额的映射，如 {'BTC': 1.5, 'USDT': 10000}
         """
         pass
-    
+
     @abstractmethod
-    async def get_available_balances(self) -> Dict[str, float]:
+    async def get_available_balances(self) -> dict[str, float]:
         """获取可用余额
         
         Returns:
             币种到可用余额的映射
         """
         pass
-    
+
     # ========== 订单相关 ==========
-    
+
     @abstractmethod
     async def place_order(
         self,
@@ -97,9 +97,9 @@ class ExchangeBase(ABC):
         side: str,
         order_type: str,
         quantity: float,
-        price: Optional[float] = None,
+        price: float | None = None,
         **kwargs
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """下单交易
         
         Args:
@@ -114,9 +114,9 @@ class ExchangeBase(ABC):
             订单结果，包含订单 ID 等信息
         """
         pass
-    
+
     @abstractmethod
-    async def cancel_order(self, symbol: str, order_id: str) -> Dict[str, Any]:
+    async def cancel_order(self, symbol: str, order_id: str) -> dict[str, Any]:
         """撤销订单
         
         Args:
@@ -127,9 +127,9 @@ class ExchangeBase(ABC):
             撤单结果
         """
         pass
-    
+
     @abstractmethod
-    async def cancel_all_orders(self, symbol: Optional[str] = None) -> int:
+    async def cancel_all_orders(self, symbol: str | None = None) -> int:
         """批量撤销订单
         
         Args:
@@ -139,9 +139,9 @@ class ExchangeBase(ABC):
             成功撤销的订单数量
         """
         pass
-    
+
     @abstractmethod
-    async def get_order(self, symbol: str, order_id: str) -> Dict[str, Any]:
+    async def get_order(self, symbol: str, order_id: str) -> dict[str, Any]:
         """查询订单状态
         
         Args:
@@ -152,9 +152,9 @@ class ExchangeBase(ABC):
             订单详细信息
         """
         pass
-    
+
     @abstractmethod
-    async def get_open_orders(self, symbol: Optional[str] = None) -> List[Dict[str, Any]]:
+    async def get_open_orders(self, symbol: str | None = None) -> list[dict[str, Any]]:
         """获取当前挂单
         
         Args:
@@ -164,11 +164,11 @@ class ExchangeBase(ABC):
             挂单列表
         """
         pass
-    
+
     # ========== 行情相关 ==========
-    
+
     @abstractmethod
-    async def get_ticker(self, symbol: str) -> Dict[str, Any]:
+    async def get_ticker(self, symbol: str) -> dict[str, Any]:
         """获取实时行情
         
         Args:
@@ -178,16 +178,16 @@ class ExchangeBase(ABC):
             行情数据
         """
         pass
-    
+
     @abstractmethod
     async def get_klines(
         self,
         symbol: str,
         interval: str,
-        start_time: Optional[datetime] = None,
-        end_time: Optional[datetime] = None,
+        start_time: datetime | None = None,
+        end_time: datetime | None = None,
         limit: int = 100
-    ) -> List[Dict[str, Any]]:
+    ) -> list[dict[str, Any]]:
         """获取 K 线数据
         
         Args:
@@ -201,9 +201,9 @@ class ExchangeBase(ABC):
             K 线数据列表
         """
         pass
-    
+
     @abstractmethod
-    async def get_recent_trades(self, symbol: str, limit: int = 100) -> List[Dict[str, Any]]:
+    async def get_recent_trades(self, symbol: str, limit: int = 100) -> list[dict[str, Any]]:
         """获取最近成交记录
         
         Args:
@@ -214,9 +214,9 @@ class ExchangeBase(ABC):
             成交记录列表
         """
         pass
-    
+
     # ========== WebSocket 相关 ==========
-    
+
     @abstractmethod
     async def subscribe_ticker(self, symbol: str, callback):
         """订阅实时行情
@@ -226,14 +226,14 @@ class ExchangeBase(ABC):
             callback: 回调函数
         """
         pass
-    
+
     @abstractmethod
     async def unsubscribe_ticker(self, symbol: str):
         """取消订阅行情"""
         pass
-    
+
     # ========== 工具方法 ==========
-    
+
     def normalize_symbol(self, symbol: str) -> str:
         """标准化交易对格式
         
@@ -246,11 +246,11 @@ class ExchangeBase(ABC):
             标准化后的交易对
         """
         return symbol.upper().replace('-', '').replace('_', '')
-    
+
     def get_timestamp(self) -> int:
         """获取当前时间戳 (毫秒)"""
         return int(datetime.utcnow().timestamp() * 1000)
-    
+
     async def ping(self) -> bool:
         """检查连接状态"""
         try:
@@ -258,7 +258,7 @@ class ExchangeBase(ABC):
             return True
         except Exception:
             return False
-    
+
     async def close(self):
         """关闭连接，释放资源"""
         pass

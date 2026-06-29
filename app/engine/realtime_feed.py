@@ -12,8 +12,7 @@ from __future__ import annotations
 
 import asyncio
 from dataclasses import dataclass, field
-from datetime import datetime
-from typing import Any, Awaitable, Callable, Dict, List, Optional
+from typing import Any
 
 
 @dataclass
@@ -22,7 +21,7 @@ class PriceTick:
     symbol: str
     price: float
     timestamp: str
-    extra: Dict[str, Any] = field(default_factory=dict)
+    extra: dict[str, Any] = field(default_factory=dict)
 
 
 class PriceFeed:
@@ -33,9 +32,9 @@ class PriceFeed:
     """
 
     def __init__(self, max_queue: int = 256) -> None:
-        self._subscribers: List[asyncio.Queue] = []
+        self._subscribers: list[asyncio.Queue] = []
         self._max_queue = max_queue
-        self._latest: Dict[str, PriceTick] = {}
+        self._latest: dict[str, PriceTick] = {}
         self._lock = asyncio.Lock()
 
     def subscribe(self) -> asyncio.Queue:
@@ -49,10 +48,10 @@ class PriceFeed:
         except ValueError:
             pass
 
-    def latest(self, source: str, symbol: str) -> Optional[PriceTick]:
+    def latest(self, source: str, symbol: str) -> PriceTick | None:
         return self._latest.get(f"{source}:{symbol}")
 
-    def latest_all(self) -> List[PriceTick]:
+    def latest_all(self) -> list[PriceTick]:
         return list(self._latest.values())
 
     async def publish(self, tick: PriceTick) -> None:
@@ -69,7 +68,7 @@ class PriceFeed:
                 except asyncio.QueueFull:
                     pass
 
-    def latest_dict(self) -> Dict[str, Dict[str, Any]]:
+    def latest_dict(self) -> dict[str, dict[str, Any]]:
         """Return all latest prices as a JSON-serializable dict."""
         return {
             f"{t.source}:{t.symbol}": {

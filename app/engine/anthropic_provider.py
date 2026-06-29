@@ -11,7 +11,7 @@ from __future__ import annotations
 import asyncio
 import json
 import time
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 import httpx
 
@@ -19,10 +19,8 @@ from app.engine.llm_types import (
     LLMDecided,
     LLMError,
     LLMErrorKind,
-    LLMMessage,
     LLMRequest,
     LLMResponse,
-    LLMProvider,
 )
 from app.engine.openai_provider import RetryPolicy
 
@@ -36,7 +34,7 @@ class AnthropicProvider:
         base_url: str = "https://api.anthropic.com",
         timeout_seconds: float = 30.0,
         anthropic_version: str = "2023-06-01",
-        retry_policy: Optional[RetryPolicy] = None,
+        retry_policy: RetryPolicy | None = None,
     ) -> None:
         self._api_key = api_key
         self._base_url = base_url.rstrip("/")
@@ -54,15 +52,15 @@ class AnthropicProvider:
                 )
             )
 
-        system_parts: List[str] = []
-        user_messages: List[Dict[str, Any]] = []
+        system_parts: list[str] = []
+        user_messages: list[dict[str, Any]] = []
         for m in request.messages:
             if m.role == "system":
                 system_parts.append(m.content)
             else:
                 user_messages.append({"role": m.role, "content": m.content})
 
-        payload: Dict[str, Any] = {
+        payload: dict[str, Any] = {
             "model": request.model,
             "max_tokens": request.max_tokens,
             "temperature": request.temperature,
@@ -156,7 +154,7 @@ class AnthropicProvider:
         return last
 
     @staticmethod
-    def _extract_text(data: Dict[str, Any]) -> str:
+    def _extract_text(data: dict[str, Any]) -> str:
         """Pull the assistant text out of Anthropic's content[] array."""
         parts = data.get("content", [])
         texts = [p.get("text", "") for p in parts if p.get("type") == "text"]
@@ -180,7 +178,7 @@ class AnthropicProvider:
                 raw_response=raw,
             )
 
-        def _safe_float(v: Any) -> Optional[float]:
+        def _safe_float(v: Any) -> float | None:
             if v is None:
                 return None
             try:

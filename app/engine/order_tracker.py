@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-from typing import Any
-
 from app.engine.order_sync import OrderSync
 from app.engine.pipeline_types import TradeReceipt
 

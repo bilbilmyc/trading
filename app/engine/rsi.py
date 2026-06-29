@@ -8,16 +8,16 @@ crosses up through 30), exit when overbought (RSI crosses down through 70).
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Dict, List, Tuple
+from typing import Any
 
 
-def compute_rsi(closes: List[float], period: int = 14) -> List[float]:
+def compute_rsi(closes: list[float], period: int = 14) -> list[float]:
     """Wilder's RSI; first `period` values are 0.0."""
-    rsi: List[float] = [0.0] * len(closes)
+    rsi: list[float] = [0.0] * len(closes)
     if len(closes) < period + 1:
         return rsi
-    gains: List[float] = []
-    losses: List[float] = []
+    gains: list[float] = []
+    losses: list[float] = []
     for i in range(1, period + 1):
         diff = closes[i] - closes[i - 1]
         gains.append(max(diff, 0.0))
@@ -50,11 +50,11 @@ class BacktestResult:
     trades: int
     win_rate: float
     max_drawdown: float
-    equity_curve: List[float]
+    equity_curve: list[float]
 
 
 def run_rsi_backtest(
-    candles: List[Dict[str, Any]],
+    candles: list[dict[str, Any]],
     *,
     period: int = 14,
     oversold: float = 30.0,
@@ -71,8 +71,8 @@ def run_rsi_backtest(
     cash = initial_capital
     qty = 0.0
     entry = 0.0
-    equity_curve: List[float] = []
-    trades: List[float] = []
+    equity_curve: list[float] = []
+    trades: list[float] = []
     peak = initial_capital
     max_dd = 0.0
 

@@ -10,9 +10,7 @@ from __future__ import annotations
 import sqlite3
 import threading
 from dataclasses import dataclass
-from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Sequence
 
 
 @dataclass
@@ -20,7 +18,7 @@ class EquitySnapshot:
     strategy: str
     equity: float
     timestamp: str
-    trade_id: Optional[str] = None
+    trade_id: str | None = None
 
 
 class EquityCurveStore:
@@ -65,9 +63,9 @@ class EquityCurveStore:
         self,
         strategy: str,
         *,
-        since: Optional[str] = None,
+        since: str | None = None,
         limit: int = 500,
-    ) -> List[EquitySnapshot]:
+    ) -> list[EquitySnapshot]:
         with self._lock:
             if since:
                 rows = self._conn.execute(
@@ -91,7 +89,7 @@ class EquityCurveStore:
             for r in rows
         ]
 
-    def latest(self, strategy: str) -> Optional[EquitySnapshot]:
+    def latest(self, strategy: str) -> EquitySnapshot | None:
         with self._lock:
             row = self._conn.execute(
                 "SELECT * FROM equity_curve WHERE strategy = ? "
@@ -108,8 +106,8 @@ class EquityCurveStore:
         )
 
     def all_strategies_equity_curves(
-        self, since: Optional[str] = None
-    ) -> Dict[str, List[EquitySnapshot]]:
+        self, since: str | None = None
+    ) -> dict[str, list[EquitySnapshot]]:
         """Return a dict strategy -> sorted equity curve (oldest first)."""
         with self._lock:
             if since:
@@ -122,7 +120,7 @@ class EquityCurveStore:
                 rows = self._conn.execute(
                     "SELECT * FROM equity_curve ORDER BY strategy, timestamp ASC"
                 ).fetchall()
-        out: Dict[str, List[EquitySnapshot]] = {}
+        out: dict[str, list[EquitySnapshot]] = {}
         for r in rows:
             out.setdefault(r["strategy"], []).append(
                 EquitySnapshot(

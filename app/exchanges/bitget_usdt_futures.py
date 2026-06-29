@@ -10,8 +10,9 @@ import base64
 import hashlib
 import hmac
 import json
+from collections.abc import Callable
 from datetime import datetime
-from typing import Any, Callable, Dict, List, Optional
+from typing import Any
 from urllib.parse import urlencode
 
 try:
@@ -20,9 +21,14 @@ except ImportError as exc:
     raise ImportError("请安装依赖：pip install httpx") from exc
 
 from app.exchanges.contract_base import ContractExchangeBase
-from app.models.contract import ContractOrderIntent, ContractOrderRequest, FeeRate, MarginMode, PositionSide
+from app.models.contract import (
+    ContractOrderIntent,
+    ContractOrderRequest,
+    FeeRate,
+    MarginMode,
+    PositionSide,
+)
 from app.models.market import ContractMarket
-
 
 BASE_ASSET_PRIORITY = [
     "BTC",
@@ -56,14 +62,14 @@ class BitgetUSDTFuturesExchange(ContractExchangeBase):
         # Demo 账户语义和普通账户不同，所以这里保持正常 REST 行为，
         # 是否允许真实下单交给应用层 ENABLE_LIVE_TRADING 控制。
         self._base_url = "https://api.bitget.com"
-        self._client: Optional[httpx.AsyncClient] = None
+        self._client: httpx.AsyncClient | None = None
 
     @property
     def name(self) -> str:
         return "bitget_usdt_futures"
 
     @property
-    def capabilities(self) -> Dict[str, Any]:
+    def capabilities(self) -> dict[str, Any]:
         return {
             "supports_hedge_mode": True,
             "supports_post_only": True,
@@ -100,7 +106,7 @@ class BitgetUSDTFuturesExchange(ContractExchangeBase):
         digest = hmac.new(self.secret_key.encode(), prehash.encode(), hashlib.sha256).digest()
         return base64.b64encode(digest).decode()
 
-    def _auth_headers(self, method: str, path: str, query_string: str = "", body: str = "") -> Dict[str, str]:
+    def _auth_headers(self, method: str, path: str, query_string: str = "", body: str = "") -> dict[str, str]:
         self._require_credentials()
         timestamp = str(self.get_timestamp())
         return {
@@ -112,7 +118,7 @@ class BitgetUSDTFuturesExchange(ContractExchangeBase):
             "locale": "en-US",
         }
 
-    async def _public_get(self, path: str, params: Dict[str, Any]) -> Any:
+    async def _public_get(self, path: str, params: dict[str, Any]) -> Any:
         client = await self._get_client()
         response = await client.get(path, params=params)
         response.raise_for_status()
@@ -121,7 +127,7 @@ class BitgetUSDTFuturesExchange(ContractExchangeBase):
             raise ValueError(f"Bitget API error: {payload.get('msg', 'unknown error')}")
         return payload.get("data")
 
-    async def _signed_get(self, path: str, params: Dict[str, Any]) -> Any:
+    async def _signed_get(self, path: str, params: dict[str, Any]) -> Any:
         query = urlencode(params)
         headers = self._auth_headers("GET", path, query_string=query)
         client = await self._get_client()
@@ -132,7 +138,7 @@ class BitgetUSDTFuturesExchange(ContractExchangeBase):
             raise ValueError(f"Bitget API error: {payload.get('msg', 'unknown error')}")
         return payload.get("data")
 
-    async def _signed_post(self, path: str, body: Dict[str, Any]) -> Any:
+    async def _signed_post(self, path: str, body: dict[str, Any]) -> Any:
         body_text = json.dumps(body, separators=(",", ":"), ensure_ascii=False)
         headers = self._auth_headers("POST", path, body=body_text)
         client = await self._get_client()
@@ -143,13 +149,13 @@ class BitgetUSDTFuturesExchange(ContractExchangeBase):
             raise ValueError(f"Bitget API error: {payload.get('msg', 'unknown error')}")
         return payload.get("data")
 
-    async def get_contract_markets(self, quote_asset: str = "USDT") -> List[ContractMarket]:
+    async def get_contract_markets(self, quote_asset: str = "USDT") -> list[ContractMarket]:
         data = await self._public_get(
             "/api/v2/mix/market/contracts",
             {"productType": self.PRODUCT_TYPE},
         )
         quote = quote_asset.upper()
-        markets: List[ContractMarket] = []
+        markets: list[ContractMarket] = []
         for item in data or []:
             if str(item.get("quoteCoin", "")).upper() != quote:
                 continue
@@ -188,12 +194,12 @@ class BitgetUSDTFuturesExchange(ContractExchangeBase):
             raw=item,
         )
 
-    async def get_account_balance(self) -> Dict[str, float]:
+    async def get_account_balance(self) -> dict[str, float]:
         data = await self._signed_get(
             "/api/v2/mix/account/accounts",
             {"productType": self.PRODUCT_TYPE},
         )
-        balances: Dict[str, float] = {}
+        balances: dict[str, float] = {}
         for item in data or []:
             coin = str(item.get("marginCoin", "")).upper()
             equity = self._safe_float(item.get("accountEquity"))
@@ -201,12 +207,12 @@ class BitgetUSDTFuturesExchange(ContractExchangeBase):
                 balances[coin] = equity
         return balances
 
-    async def get_available_balances(self) -> Dict[str, float]:
+    async def get_available_balances(self) -> dict[str, float]:
         data = await self._signed_get(
             "/api/v2/mix/account/accounts",
             {"productType": self.PRODUCT_TYPE},
         )
-        balances: Dict[str, float] = {}
+        balances: dict[str, float] = {}
         for item in data or []:
             coin = str(item.get("marginCoin", "")).upper()
             available = self._safe_float(item.get("available"))
@@ -214,7 +220,7 @@ class BitgetUSDTFuturesExchange(ContractExchangeBase):
                 balances[coin] = available
         return balances
 
-    async def get_ticker(self, symbol: str) -> Dict[str, Any]:
+    async def get_ticker(self, symbol: str) -> dict[str, Any]:
         data = await self._public_get(
             "/api/v2/mix/market/ticker",
             {"productType": self.PRODUCT_TYPE, "symbol": self.normalize_symbol(symbol)},
@@ -245,11 +251,11 @@ class BitgetUSDTFuturesExchange(ContractExchangeBase):
         self,
         symbol: str,
         interval: str,
-        start_time: Optional[datetime] = None,
-        end_time: Optional[datetime] = None,
+        start_time: datetime | None = None,
+        end_time: datetime | None = None,
         limit: int = 100,
-    ) -> List[Dict[str, Any]]:
-        params: Dict[str, Any] = {
+    ) -> list[dict[str, Any]]:
+        params: dict[str, Any] = {
             "symbol": self.normalize_symbol(symbol),
             "productType": self.PRODUCT_TYPE,
             "granularity": interval,
@@ -280,7 +286,7 @@ class BitgetUSDTFuturesExchange(ContractExchangeBase):
             )
         return klines
 
-    async def get_recent_trades(self, symbol: str, limit: int = 100) -> List[Dict[str, Any]]:
+    async def get_recent_trades(self, symbol: str, limit: int = 100) -> list[dict[str, Any]]:
         data = await self._public_get(
             "/api/v2/mix/market/fills",
             {
@@ -305,14 +311,14 @@ class BitgetUSDTFuturesExchange(ContractExchangeBase):
             )
         return trades
 
-    async def get_open_orders(self, symbol: Optional[str] = None) -> List[Dict[str, Any]]:
-        params: Dict[str, Any] = {"productType": self.PRODUCT_TYPE}
+    async def get_open_orders(self, symbol: str | None = None) -> list[dict[str, Any]]:
+        params: dict[str, Any] = {"productType": self.PRODUCT_TYPE}
         if symbol:
             params["symbol"] = self.normalize_symbol(symbol)
         data = await self._signed_get("/api/v2/mix/order/orders-pending", params)
         return list((data or {}).get("entrustedList", []))
 
-    async def get_order(self, symbol: str, order_id: str) -> Dict[str, Any]:
+    async def get_order(self, symbol: str, order_id: str) -> dict[str, Any]:
         data = await self._signed_get(
             "/api/v2/mix/order/detail",
             {
@@ -330,7 +336,7 @@ class BitgetUSDTFuturesExchange(ContractExchangeBase):
             "raw": item,
         }
 
-    async def cancel_order(self, symbol: str, order_id: str) -> Dict[str, Any]:
+    async def cancel_order(self, symbol: str, order_id: str) -> dict[str, Any]:
         data = await self._signed_post(
             "/api/v2/mix/order/cancel-order",
             {
@@ -342,8 +348,8 @@ class BitgetUSDTFuturesExchange(ContractExchangeBase):
         )
         return {"success": True, "order_id": order_id, "raw": data}
 
-    async def cancel_all_orders(self, symbol: Optional[str] = None) -> int:
-        body: Dict[str, Any] = {"productType": self.PRODUCT_TYPE, "marginCoin": self.MARGIN_COIN}
+    async def cancel_all_orders(self, symbol: str | None = None) -> int:
+        body: dict[str, Any] = {"productType": self.PRODUCT_TYPE, "marginCoin": self.MARGIN_COIN}
         if symbol:
             body["symbol"] = self.normalize_symbol(symbol)
         data = await self._signed_post("/api/v2/mix/order/cancel-all-orders", body)
@@ -357,8 +363,8 @@ class BitgetUSDTFuturesExchange(ContractExchangeBase):
         leverage: int,
         margin_mode: MarginMode = MarginMode.CROSS,
         position_side: PositionSide = PositionSide.NET,
-    ) -> Dict[str, Any]:
-        body: Dict[str, Any] = {
+    ) -> dict[str, Any]:
+        body: dict[str, Any] = {
             "symbol": self.normalize_symbol(symbol),
             "productType": self.PRODUCT_TYPE,
             "marginCoin": self.MARGIN_COIN,
@@ -370,7 +376,7 @@ class BitgetUSDTFuturesExchange(ContractExchangeBase):
         data = await self._signed_post("/api/v2/mix/account/set-leverage", body)
         return {"success": True, "raw": data}
 
-    async def get_positions(self, symbol: Optional[str] = None) -> List[Dict[str, Any]]:
+    async def get_positions(self, symbol: str | None = None) -> list[dict[str, Any]]:
         params = {"productType": self.PRODUCT_TYPE, "marginCoin": self.MARGIN_COIN}
         data = await self._signed_get("/api/v2/mix/position/all-position", params)
         positions = []
@@ -399,9 +405,9 @@ class BitgetUSDTFuturesExchange(ContractExchangeBase):
             )
         return positions
 
-    async def place_contract_order(self, request: ContractOrderRequest) -> Dict[str, Any]:
+    async def place_contract_order(self, request: ContractOrderRequest) -> dict[str, Any]:
         order_type = request.order_type.lower()
-        body: Dict[str, Any] = {
+        body: dict[str, Any] = {
             "symbol": self.normalize_symbol(request.symbol),
             "productType": self.PRODUCT_TYPE,
             "marginMode": self._margin_mode(request.margin_mode),
@@ -444,9 +450,9 @@ class BitgetUSDTFuturesExchange(ContractExchangeBase):
         side: str,
         order_type: str,
         quantity: float,
-        price: Optional[float] = None,
+        price: float | None = None,
         **kwargs,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         raise NotImplementedError("Use place_contract_order for Bitget USDT-M futures trading")
 
     async def subscribe_ticker(self, symbol: str, callback: Callable):
@@ -459,7 +465,7 @@ class BitgetUSDTFuturesExchange(ContractExchangeBase):
         if self._client and not self._client.is_closed:
             await self._client.aclose()
 
-    def _price_tick(self, item: Dict[str, Any]) -> Optional[float]:
+    def _price_tick(self, item: dict[str, Any]) -> float | None:
         price_place = int(self._safe_float(item.get("pricePlace")))
         price_end_step = self._safe_float(item.get("priceEndStep"))
         if price_place < 0:

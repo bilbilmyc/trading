@@ -5,7 +5,7 @@ OKX 永续合约适配器。
 reduce-only 和杠杆等额外参数。
 """
 
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 import orjson
 
@@ -23,7 +23,7 @@ class OKXSwapExchange(OKXExchange, ContractExchangeBase):
         return "okx_swap"
 
     @property
-    def capabilities(self) -> Dict[str, Any]:
+    def capabilities(self) -> dict[str, Any]:
         return {
             "supports_hedge_mode": True,
             "supports_post_only": True,
@@ -46,7 +46,7 @@ class OKXSwapExchange(OKXExchange, ContractExchangeBase):
         normalized = self.normalize_symbol(symbol)
         return normalized.removesuffix("-SWAP")
 
-    async def get_contract_markets(self, quote_asset: str = "USDT") -> List[ContractMarket]:
+    async def get_contract_markets(self, quote_asset: str = "USDT") -> list[ContractMarket]:
         """从公开 instruments 接口列出 OKX 永续合约。"""
 
         path = "/api/v5/public/instruments"
@@ -61,7 +61,7 @@ class OKXSwapExchange(OKXExchange, ContractExchangeBase):
             raise Exception(f"OKX instruments query failed: {data.get('msg', 'Unknown error')}")
 
         quote = quote_asset.upper()
-        markets: List[ContractMarket] = []
+        markets: list[ContractMarket] = []
         for item in data.get("data", []):
             if item.get("settleCcy", "").upper() != quote:
                 continue
@@ -122,7 +122,7 @@ class OKXSwapExchange(OKXExchange, ContractExchangeBase):
         leverage: int,
         margin_mode: MarginMode = MarginMode.CROSS,
         position_side: PositionSide = PositionSide.NET,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """设置 OKX 永续合约杠杆。"""
 
         path = "/api/v5/account/set-leverage"
@@ -146,7 +146,7 @@ class OKXSwapExchange(OKXExchange, ContractExchangeBase):
             raise Exception(f"OKX set leverage failed: {data.get('msg', 'Unknown error')}")
         return {"success": True, "raw": data}
 
-    async def place_contract_order(self, request: ContractOrderRequest) -> Dict[str, Any]:
+    async def place_contract_order(self, request: ContractOrderRequest) -> dict[str, Any]:
         """把统一合约请求翻译成 OKX 永续下单请求。"""
 
         path = "/api/v5/trade/order"
@@ -155,7 +155,7 @@ class OKXSwapExchange(OKXExchange, ContractExchangeBase):
         reduce_only = inferred_reduce_only if request.reduce_only is None else request.reduce_only
         order_type = request.order_type.lower()
 
-        params: Dict[str, Any] = {
+        params: dict[str, Any] = {
             "instId": self.normalize_symbol(request.symbol),
             "tdMode": request.margin_mode.value,
             "side": side,
@@ -203,11 +203,11 @@ class OKXSwapExchange(OKXExchange, ContractExchangeBase):
             "raw": data,
         }
 
-    async def get_positions(self, symbol: Optional[str] = None) -> List[Dict[str, Any]]:
+    async def get_positions(self, symbol: str | None = None) -> list[dict[str, Any]]:
         """从 positions API 获取 OKX 永续持仓。"""
 
         path = "/api/v5/account/positions"
-        params: Dict[str, Any] = {"instType": "SWAP"}
+        params: dict[str, Any] = {"instType": "SWAP"}
         if symbol:
             params["instId"] = self.normalize_symbol(symbol)
         headers = await self._sign_request("GET", path, query=params)
@@ -248,9 +248,9 @@ class OKXSwapExchange(OKXExchange, ContractExchangeBase):
         side: str,
         order_type: str,
         quantity: float,
-        price: Optional[float] = None,
+        price: float | None = None,
         **kwargs,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """兼容 ExchangeBase 的现货下单接口；OKX 永续请使用 place_contract_order。"""
 
         raise NotImplementedError("Use place_contract_order for OKX swap trading")

@@ -7,32 +7,33 @@ None (the engine skips it on startup).
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Any, Callable, Dict, List
+from typing import Any
 
 
 @dataclass(frozen=True)
 class _Registration:
     cls: type
-    snapshot: Callable[[Any], Dict[str, Any]]
-    restore: Callable[[Dict[str, Any]], Any]
+    snapshot: Callable[[Any], dict[str, Any]]
+    restore: Callable[[dict[str, Any]], Any]
 
 
 class StrategyRegistry:
     def __init__(self) -> None:
-        self._by_name: Dict[str, _Registration] = {}
+        self._by_name: dict[str, _Registration] = {}
 
     def register(
         self,
         cls: type,
-        snapshot: Callable[[Any], Dict[str, Any]],
-        restore: Callable[[Dict[str, Any]], Any],
+        snapshot: Callable[[Any], dict[str, Any]],
+        restore: Callable[[dict[str, Any]], Any],
     ) -> None:
         """Bind (cls, snapshot_fn, restore_fn) under cls.__name__."""
 
         self._by_name[cls.__name__] = _Registration(cls=cls, snapshot=snapshot, restore=restore)
 
-    def snapshot(self, strategy: Any) -> Dict[str, Any]:
+    def snapshot(self, strategy: Any) -> dict[str, Any]:
         """Capture the strategy's persistent state via its declared snapshot fn."""
 
         reg = self._by_name.get(type(strategy).__name__)
@@ -40,7 +41,7 @@ class StrategyRegistry:
             return {}
         return reg.snapshot(strategy)
 
-    def restore(self, item: Dict[str, Any]) -> Any | None:
+    def restore(self, item: dict[str, Any]) -> Any | None:
         """Rebuild a strategy instance from a persisted dict.
 
         Returns None when the class isn't registered (forward-compat).
@@ -57,7 +58,7 @@ class StrategyRegistry:
         except Exception:
             return None
 
-    def registered_classes(self) -> List[str]:
+    def registered_classes(self) -> list[str]:
         return sorted(self._by_name.keys())
 
 

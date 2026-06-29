@@ -8,10 +8,9 @@ but never raised (notifications should not break the trading loop).
 from __future__ import annotations
 
 import asyncio
-import json
 import time
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 import httpx
 
@@ -22,7 +21,7 @@ class NotificationEvent:
     message: str
     severity: str = "info"     # "info" | "warning" | "critical"
     timestamp: str = ""
-    extra: Dict[str, Any] = field(default_factory=dict)
+    extra: dict[str, Any] = field(default_factory=dict)
 
 
 class WebhookNotifier:
@@ -34,7 +33,7 @@ class WebhookNotifier:
 
     def __init__(
         self,
-        url: Optional[str] = None,
+        url: str | None = None,
         *,
         enabled: bool = False,
         timeout_seconds: float = 5.0,
@@ -43,14 +42,14 @@ class WebhookNotifier:
         self._url = url
         self._enabled = enabled
         self._timeout = timeout_seconds
-        self._log: List[Dict[str, Any]] = []
+        self._log: list[dict[str, Any]] = []
         self._max_log = max_log
 
     @property
     def enabled(self) -> bool:
         return self._enabled and bool(self._url)
 
-    def configure(self, *, url: Optional[str] = None, enabled: Optional[bool] = None) -> None:
+    def configure(self, *, url: str | None = None, enabled: bool | None = None) -> None:
         if url is not None:
             self._url = url
         if enabled is not None:
@@ -100,12 +99,12 @@ class WebhookNotifier:
             # No running loop (e.g., from CLI subcommand). Best-effort sync run.
             return asyncio.run(self.notify(event))
 
-    def _record(self, entry: Dict[str, Any]) -> None:
+    def _record(self, entry: dict[str, Any]) -> None:
         self._log.append(entry)
         if len(self._log) > self._max_log:
             self._log = self._log[-self._max_log :]
 
-    def log(self) -> List[Dict[str, Any]]:
+    def log(self) -> list[dict[str, Any]]:
         return list(self._log)
 
 

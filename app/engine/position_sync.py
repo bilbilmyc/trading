@@ -6,14 +6,12 @@
 """
 
 import asyncio
-from datetime import datetime
-from typing import Any, Dict, List, Optional
 
 from loguru import logger
 
+from app.engine.position_manager import PositionManager
 from app.exchanges.base import ExchangeBase
 from app.exchanges.contract_base import ContractExchangeBase
-from app.engine.position_manager import PositionManager
 from app.models.position import Position
 
 
@@ -33,7 +31,7 @@ class PositionSync:
     ):
         self.position_manager = position_manager
         self.interval_seconds = interval_seconds
-        self._callbacks: List = []
+        self._callbacks: list = []
 
     # ── 生命周期 ──────────────────────────────────────────────
 
@@ -51,7 +49,7 @@ class PositionSync:
         self,
         exchange: ExchangeBase,
         exchange_name: str,
-        symbol: Optional[str] = None,
+        symbol: str | None = None,
     ) -> int:
         """执行一次持仓同步，返回更新的持仓/余额数量。"""
 

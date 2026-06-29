@@ -10,15 +10,15 @@ from __future__ import annotations
 import asyncio
 import time
 from dataclasses import dataclass
-from typing import Any, Awaitable, Callable, Dict, Optional
+from typing import Any
 
 
 @dataclass
 class _Entry:
-    value: Dict[str, Any]
+    value: dict[str, Any]
     expires_at: float
     lock: asyncio.Lock
-    in_flight: Optional[asyncio.Task] = None
+    in_flight: asyncio.Task | None = None
 
 
 class TickerCache:
@@ -38,12 +38,12 @@ class TickerCache:
     ) -> None:
         self._fetch = fetch
         self._ttl = ttl_seconds
-        self._store: Dict[str, _Entry] = {}
+        self._store: dict[str, _Entry] = {}
         self._global_lock = asyncio.Lock()
         self.hits = 0
         self.misses = 0
 
-    async def get_ticker(self, symbol: str) -> Dict[str, Any]:
+    async def get_ticker(self, symbol: str) -> dict[str, Any]:
         now = time.monotonic()
         entry = self._store.get(symbol)
         if entry is not None and entry.expires_at > now:
@@ -73,7 +73,7 @@ class TickerCache:
         if entry is not None:
             entry.expires_at = 0.0
 
-    def stats(self) -> Dict[str, Any]:
+    def stats(self) -> dict[str, Any]:
         total = self.hits + self.misses
         return {
             "hits": self.hits,

@@ -6,26 +6,27 @@
 """
 
 import asyncio
-from typing import Dict, List, Optional, Any, Callable
+from collections.abc import Callable
 from datetime import datetime
+from typing import Any, Optional
+
 from loguru import logger
 
 from app.core.sqlite_store import SQLiteStore
-from app.exchanges.base import ExchangeBase
-from app.strategies.base import StrategyBase, Signal, SignalAction
-from app.engine.risk_manager import RiskManager, RiskConfig
-from app.engine.position_manager import PositionManager
-from app.engine.paper_trading import PaperTradingAccount
-from app.engine.order_sync import OrderSync
-from app.engine.position_sync import PositionSync
-from app.engine.monitor import Monitor, Alert, AlertLevel, AlertCategory, build_engine_checkers
-from app.engine.live_order_pipeline import LiveOrderPipeline
-from app.engine.order_tracker import OrderTrackerAdapter
-from app.engine.position_recorder import PositionRecorderAdapter
 from app.engine.composite_observer import CompositeObserver
+from app.engine.live_order_pipeline import LiveOrderPipeline
 from app.engine.live_trading_guard import LiveTradingGuard
+from app.engine.monitor import Alert, AlertCategory, AlertLevel, Monitor, build_engine_checkers
+from app.engine.order_sync import OrderSync
+from app.engine.order_tracker import OrderTrackerAdapter
+from app.engine.paper_trading import PaperTradingAccount
+from app.engine.position_manager import PositionManager
+from app.engine.position_recorder import PositionRecorderAdapter
+from app.engine.position_sync import PositionSync
+from app.engine.risk_manager import RiskConfig, RiskManager
 from app.engine.strategy_registry import StrategyRegistry
-from app.models.order import Order, OrderSide, OrderType, OrderStatus
+from app.exchanges.base import ExchangeBase
+from app.strategies.base import Signal, StrategyBase
 
 
 class _NoOpGuard:
@@ -50,31 +51,31 @@ class TradingEngine:
     - 持仓管理
     - 高并发支持
     """
-    
+
     def __init__(
         self,
-        risk_config: Optional[RiskConfig] = None,
+        risk_config: RiskConfig | None = None,
         max_concurrent_orders: int = 10,
         order_sync_interval: int = 10,
         position_sync_interval: int = 15,
         monitor_check_interval: int = 30,
         monitor_max_alerts: int = 100,
-        store: Optional[SQLiteStore] = None,
+        store: SQLiteStore | None = None,
         trading_guard: Optional["LiveTradingGuard"] = None,
-        llm_allowed_symbols: Optional[List[str]] = None,
+        llm_allowed_symbols: list[str] | None = None,
     ):
-        self._exchanges: Dict[str, ExchangeBase] = {}
-        self._pipelines: Dict[str, LiveOrderPipeline] = {}
-        self._strategies: Dict[str, StrategyBase] = {}
-        self._strategy_configs: Dict[str, Dict[str, Any]] = {}
-        self._recent_signals: List[Dict[str, Any]] = []
+        self._exchanges: dict[str, ExchangeBase] = {}
+        self._pipelines: dict[str, LiveOrderPipeline] = {}
+        self._strategies: dict[str, StrategyBase] = {}
+        self._strategy_configs: dict[str, dict[str, Any]] = {}
+        self._recent_signals: list[dict[str, Any]] = []
         self._running = False
         self.store = store
         self.trading_guard = trading_guard
         # Snapshot of the symbol whitelist at engine-construction time.
         # Restored LLM strategies get this passed in so they remain gated
         # after a process restart.
-        self._llm_allowed_symbols: Optional[List[str]] = (
+        self._llm_allowed_symbols: list[str] | None = (
             list(llm_allowed_symbols) if llm_allowed_symbols else None
         )
 
@@ -82,7 +83,7 @@ class TradingEngine:
         self.risk_manager = RiskManager(risk_config, trading_guard=trading_guard)
         self.position_manager = PositionManager()
         self.paper_account = PaperTradingAccount()
-        
+
         # 实盘同步组件（阶段 5）
         self.order_sync = OrderSync(interval_seconds=order_sync_interval)
         self.position_sync = PositionSync(
@@ -93,13 +94,13 @@ class TradingEngine:
             check_interval_seconds=monitor_check_interval,
             max_alerts=monitor_max_alerts,
         )
-        
+
         # 并发控制
         self._order_semaphore = asyncio.Semaphore(max_concurrent_orders)
-        self._tasks: List[asyncio.Task] = []
-        self._sync_tasks: List[asyncio.Task] = []
-        self._signal_runner_task: Optional[asyncio.Task] = None
-        self._signal_runner_status: Dict[str, Any] = {
+        self._tasks: list[asyncio.Task] = []
+        self._sync_tasks: list[asyncio.Task] = []
+        self._signal_runner_task: asyncio.Task | None = None
+        self._signal_runner_status: dict[str, Any] = {
             "running": False,
             "poll_seconds": None,
             "last_cycle_at": None,
@@ -107,16 +108,16 @@ class TradingEngine:
             "cycles": 0,
             "signals_generated": 0,
         }
-        
+
         # 回调函数
-        self._on_signal_callbacks: List[Callable] = []
-        self._on_order_callbacks: List[Callable] = []
-        
+        self._on_signal_callbacks: list[Callable] = []
+        self._on_order_callbacks: list[Callable] = []
+
         # 信号过滤器（B 方案：LLM 二次确认）
         # 过滤器签名：async (exchange_name, strategy_name, signal) -> bool
-        self._signal_filters: List[Callable] = []
-        self._signal_filter_rejects: List[Dict[str, Any]] = []
-        
+        self._signal_filters: list[Callable] = []
+        self._signal_filter_rejects: list[dict[str, Any]] = []
+
         logger.info("交易引擎初始化完成（含 stage-5 实盘同步组件）")
 
         if self.store:
@@ -204,7 +205,7 @@ class TradingEngine:
             )
         except ImportError:
             logger.info("LLMStrategy not importable — skipping registration")
-    
+
     def add_exchange(self, name: str, exchange: ExchangeBase):
         """添加交易所"""
         self._exchanges[name.lower()] = exchange
@@ -220,13 +221,13 @@ class TradingEngine:
             signal_filters=tuple(self._signal_filters),
         )
         logger.info(f"添加交易所：{name}")
-    
+
     def add_strategy(
         self,
         name: str,
         strategy: StrategyBase,
-        exchange: Optional[str] = None,
-        symbol: Optional[str] = None,
+        exchange: str | None = None,
+        symbol: str | None = None,
         interval: str = "1m",
         enabled: bool = False,
         mode: str = "signal",
@@ -254,7 +255,7 @@ class TradingEngine:
             self.store.delete_strategy(name)
         return existed
 
-    def set_strategy_enabled(self, name: str, enabled: bool) -> Dict[str, Any]:
+    def set_strategy_enabled(self, name: str, enabled: bool) -> dict[str, Any]:
         """启用或停用一个策略实例。"""
 
         if name not in self._strategies:
@@ -265,7 +266,7 @@ class TradingEngine:
         self._persist_strategy(name)
         return config
 
-    def set_strategy_mode(self, name: str, mode: str) -> Dict[str, Any]:
+    def set_strategy_mode(self, name: str, mode: str) -> dict[str, Any]:
         """设置单个策略的执行模式。
 
         接受 "signal" / "paper" / "live"。注意 "live" 是否真的执行
@@ -283,7 +284,7 @@ class TradingEngine:
         self._persist_strategy(name)
         return config
 
-    def get_signal_runner_status(self) -> Dict[str, Any]:
+    def get_signal_runner_status(self) -> dict[str, Any]:
         """返回后台信号运行器状态。"""
 
         return {
@@ -291,12 +292,12 @@ class TradingEngine:
             "running": self._signal_runner_task is not None and not self._signal_runner_task.done(),
         }
 
-    def get_paper_summary(self) -> Dict[str, Any]:
+    def get_paper_summary(self) -> dict[str, Any]:
         """返回模拟盘账户汇总。"""
 
         return self.paper_account.summary()
 
-    def reset_paper_account(self, initial_cash: Optional[float] = None) -> Dict[str, Any]:
+    def reset_paper_account(self, initial_cash: float | None = None) -> dict[str, Any]:
         """重置模拟盘账户并持久化。"""
 
         self.paper_account.reset(initial_cash=initial_cash)
@@ -306,7 +307,7 @@ class TradingEngine:
             self.store.clear_paper_orders()
         return summary
 
-    async def start_signal_runner(self, poll_seconds: int = 60, candle_limit: int = 80) -> Dict[str, Any]:
+    async def start_signal_runner(self, poll_seconds: int = 60, candle_limit: int = 80) -> dict[str, Any]:
         """启动只生成信号、不真实下单的后台循环。"""
 
         if self._signal_runner_task is not None and not self._signal_runner_task.done():
@@ -324,7 +325,7 @@ class TradingEngine:
         )
         return self.get_signal_runner_status()
 
-    async def stop_signal_runner(self) -> Dict[str, Any]:
+    async def stop_signal_runner(self) -> dict[str, Any]:
         """停止后台信号运行器。"""
 
         if self._signal_runner_task is not None:
@@ -334,7 +335,7 @@ class TradingEngine:
         self._signal_runner_status["running"] = False
         return self.get_signal_runner_status()
 
-    def list_strategies(self) -> List[Dict[str, Any]]:
+    def list_strategies(self) -> list[dict[str, Any]]:
         """返回前端仪表盘需要的轻量策略信息。"""
 
         strategies = []
@@ -360,7 +361,7 @@ class TradingEngine:
             )
         return strategies
 
-    def _strategy_snapshot(self, name: str) -> Optional[Dict[str, Any]]:
+    def _strategy_snapshot(self, name: str) -> dict[str, Any] | None:
         """把一个策略转换成 API/SQLite 共用的元数据结构。"""
 
         strategy = self._strategies.get(name)
@@ -431,7 +432,7 @@ class TradingEngine:
             restored += 1
         return restored
 
-    def get_recent_signals(self, limit: int = 50) -> List[Dict[str, Any]]:
+    def get_recent_signals(self, limit: int = 50) -> list[dict[str, Any]]:
         """返回最近生成的策略信号。"""
 
         return self._recent_signals[-limit:]
@@ -452,11 +453,11 @@ class TradingEngine:
         event_type: str,
         message: str,
         level: str = "info",
-        exchange: Optional[str] = None,
-        symbol: Optional[str] = None,
-        strategy: Optional[str] = None,
-        order_id: Optional[str] = None,
-        details: Optional[Dict[str, Any]] = None,
+        exchange: str | None = None,
+        symbol: str | None = None,
+        strategy: str | None = None,
+        order_id: str | None = None,
+        details: dict[str, Any] | None = None,
     ) -> None:
         """持久化审计事件；失败只记日志，不中断交易路径。"""
 
@@ -479,11 +480,11 @@ class TradingEngine:
             )
         except Exception as exc:
             logger.error(f"事件持久化失败：{exc}")
-    
+
     def on_signal(self, callback: Callable):
         """注册信号回调"""
         self._on_signal_callbacks.append(callback)
-    
+
     def on_order(self, callback: Callable):
         """注册订单回调"""
         self._on_order_callbacks.append(callback)
@@ -496,10 +497,10 @@ class TradingEngine:
         """
         self._signal_filters.append(filter_fn)
 
-    def get_rejected_signals(self, limit: int = 20) -> List[Dict[str, Any]]:
+    def get_rejected_signals(self, limit: int = 20) -> list[dict[str, Any]]:
         """返回最近被过滤器拒绝的信号。"""
         return list(self._signal_filter_rejects[-limit:])
-    
+
     async def start(self):
         """启动交易引擎
 
@@ -509,15 +510,15 @@ class TradingEngine:
         if self._running:
             logger.warning("交易引擎已在运行中")
             return
-        
+
         self._running = True
         logger.info("交易引擎启动")
-        
+
         # ── 启动所有策略 ──
         for name, strategy in self._strategies.items():
             await strategy.start()
             logger.info(f"策略 {name} 已启动")
-        
+
         # ── 阶段 5：启动订单同步循环（由引擎驱动；OrderSync 不再自管循环） ──
         self._sync_tasks.append(
             asyncio.create_task(self._order_sync_loop())
@@ -527,7 +528,7 @@ class TradingEngine:
         self._sync_tasks.append(
             asyncio.create_task(self._position_sync_loop())
         )
-        
+
         # ── 阶段 5：启动监控告警 ──
         # 注册标准检查器
         checkers = build_engine_checkers(self._exchanges, self)
@@ -549,50 +550,50 @@ class TradingEngine:
             )
         )
         logger.info("交易引擎 + 实盘子系统已启动")
-    
+
     async def stop(self):
         """停止交易引擎"""
         if not self._running:
             return
-        
+
         self._running = False
         logger.info("交易引擎停止中...")
-        
+
         # 取消所有用户任务
         for task in self._tasks:
             task.cancel()
-        
+
         if self._tasks:
             await asyncio.gather(*self._tasks, return_exceptions=True)
-        
+
         # 停止信号运行器
         await self.stop_signal_runner()
-        
+
         # ── 阶段 5：停止实盘子系统（OrderSync/PositionSync 不再自管循环；引擎统一取消） ──
         await self._observer.stop()
         await self.monitor.stop()
-        
+
         # 取消同步循环
         for task in self._sync_tasks:
             task.cancel()
         if self._sync_tasks:
             await asyncio.gather(*self._sync_tasks, return_exceptions=True)
-        
+
         # 停止所有策略
         for name, strategy in self._strategies.items():
             await strategy.stop()
-        
+
         # 关闭所有交易所连接
         for name, exchange in self._exchanges.items():
             await exchange.close()
-        
+
         logger.info("交易引擎已停止")
-    
+
     async def process_market_data(
         self,
         exchange_name: str,
         symbol: str,
-        data: Dict[str, Any]
+        data: dict[str, Any]
     ):
         """处理行情数据
         
@@ -602,29 +603,29 @@ class TradingEngine:
         price = float(data.get('last_price', data.get('close', 0)))
         if price > 0:
             await self.position_manager.update_price(exchange_name, symbol, price)
-        
+
         # 通知所有策略
         tasks = []
         for name, strategy in self._strategies.items():
             if self._strategy_matches(name, exchange_name, symbol, include_disabled=True):
                 tasks.append(strategy.on_market_data(symbol, data))
-        
+
         if tasks:
             await asyncio.gather(*tasks, return_exceptions=True)
-    
+
     async def check_and_execute_signals(
         self,
         exchange_name: str,
         symbol: str
-    ) -> List[Signal]:
+    ) -> list[Signal]:
         """检查并执行交易信号"""
         if exchange_name not in self._exchanges:
             logger.error(f"交易所 {exchange_name} 未找到")
             return []
-        
+
         exchange = self._exchanges[exchange_name]
         executed_signals = []
-        
+
         # 为每个策略生成信号
         signal_tasks = [
             (name, self._generate_signal(strategy, symbol))
@@ -647,7 +648,7 @@ class TradingEngine:
                             callback(signal)
                     except Exception as e:
                         logger.error(f"信号回调错误：{e}")
-                
+
                 # 注入策略名到 metadata（供过滤器使用）
                 if signal.metadata is None:
                     signal.metadata = {}
@@ -655,7 +656,7 @@ class TradingEngine:
                 # 执行订单
                 await self._execute_signal(exchange, signal)
                 executed_signals.append(signal)
-        
+
         return executed_signals
 
     async def evaluate_signals(
@@ -663,10 +664,10 @@ class TradingEngine:
         exchange_name: str,
         symbol: str,
         record: bool = True,
-    ) -> List[Dict[str, Any]]:
+    ) -> list[dict[str, Any]]:
         """只生成策略信号，不向交易所下单。"""
 
-        generated: List[Dict[str, Any]] = []
+        generated: list[dict[str, Any]] = []
         signal_tasks = [
             (name, self._generate_signal(strategy, symbol))
             for name, strategy in self._strategies.items()
@@ -699,13 +700,13 @@ class TradingEngine:
                 )
         return generated
 
-    async def run_signal_cycle(self, candle_limit: int = 80) -> Dict[str, Any]:
+    async def run_signal_cycle(self, candle_limit: int = 80) -> dict[str, Any]:
         """为所有已启用策略手动运行一轮信号评估。"""
 
         cycle_started = datetime.utcnow()
         processed = 0
-        generated: List[Dict[str, Any]] = []
-        errors: List[Dict[str, str]] = []
+        generated: list[dict[str, Any]] = []
+        errors: list[dict[str, str]] = []
 
         for strategy_name, strategy in list(self._strategies.items()):
             config = self._strategy_configs.get(strategy_name, {})
@@ -838,7 +839,7 @@ class TradingEngine:
         strategy: StrategyBase,
         exchange_name: str,
         symbol: str,
-        data: Dict[str, Any],
+        data: dict[str, Any],
     ) -> None:
         """把一条行情数据喂给匹配的策略实例。"""
 
@@ -847,7 +848,7 @@ class TradingEngine:
             await self.position_manager.update_price(exchange_name, symbol, price)
         await strategy.on_market_data(symbol, data)
 
-    def _serialize_signal(self, exchange_name: str, strategy_name: str, signal: Signal) -> Dict[str, Any]:
+    def _serialize_signal(self, exchange_name: str, strategy_name: str, signal: Signal) -> dict[str, Any]:
         """把 Signal 序列化成 API/UI 使用的字典。"""
 
         return {
@@ -872,7 +873,7 @@ class TradingEngine:
         exchange_name: str,
         strategy_name: str,
         signal: Signal,
-    ) -> Optional[Dict[str, Any]]:
+    ) -> dict[str, Any] | None:
         """策略处于 paper 模式时，把可执行信号应用到模拟盘。"""
 
         config = self._strategy_configs.get(strategy_name, {})
@@ -928,19 +929,19 @@ class TradingEngine:
         if configured_symbol and configured_symbol.upper() != symbol.upper():
             return False
         return True
-    
+
     async def _generate_signal(
         self,
         strategy: StrategyBase,
         symbol: str
-    ) -> Optional[Signal]:
+    ) -> Signal | None:
         """生成交易信号"""
         try:
             return await strategy.generate_signals(symbol)
         except Exception as e:
             logger.error(f"策略 {strategy.name} 生成信号失败：{e}")
             return None
-    
+
     async def _execute_signal(self, exchange: ExchangeBase, signal: Signal):
         """Execute one Signal end-to-end via LiveOrderPipeline.
 
@@ -967,14 +968,14 @@ class TradingEngine:
                         callback(receipt)
                 except Exception as e:
                     logger.error(f"订单回调错误：{e}")
-    
+
     async def sync_positions(self, exchange_name: str):
         """同步交易所持仓 (单次调用版本，建议使用 PositionSync)"""
         if exchange_name not in self._exchanges:
             return
-        
+
         exchange = self._exchanges[exchange_name]
-        
+
         try:
             changed = await self.position_sync.sync(exchange, exchange_name)
             logger.info(f"{exchange_name} 持仓同步完成 ({changed} 项更新)")
@@ -989,12 +990,12 @@ class TradingEngine:
                     exchange=exchange_name,
                 )
             )
-    
-    async def get_status(self) -> Dict[str, Any]:
+
+    async def get_status(self) -> dict[str, Any]:
         """获取引擎状态"""
         risk_status = await self.risk_manager.get_risk_status()
         position_summary = await self.position_manager.get_position_summary()
-        
+
         return {
             'running': self._running,
             'exchanges': list(self._exchanges.keys()),

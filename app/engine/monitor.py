@@ -12,10 +12,11 @@
 """
 
 import asyncio
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
-from typing import Any, Callable, Dict, List, Optional
+from typing import Any
 
 from loguru import logger
 
@@ -45,12 +46,12 @@ class Alert:
     category: AlertCategory
     title: str
     message: str
-    exchange: Optional[str] = None
-    symbol: Optional[str] = None
-    details: Dict[str, Any] = field(default_factory=dict)
+    exchange: str | None = None
+    symbol: str | None = None
+    details: dict[str, Any] = field(default_factory=dict)
     timestamp: datetime = field(default_factory=datetime.utcnow)
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         return {
             "level": self.level.value,
             "category": self.category.value,
@@ -79,13 +80,13 @@ class Monitor:
     def __init__(self, check_interval_seconds: int = 30, max_alerts: int = 100):
         self.check_interval_seconds = check_interval_seconds
         self.max_alerts = max_alerts
-        self._alerts: List[Alert] = []
-        self._callbacks: List[Callable] = []
-        self._task: Optional[asyncio.Task] = None
+        self._alerts: list[Alert] = []
+        self._callbacks: list[Callable] = []
+        self._task: asyncio.Task | None = None
         self._running = False
 
         # 交易引擎注册进来的健康检查函数。
-        self._checkers: List[Callable] = []
+        self._checkers: list[Callable] = []
 
     # ── 生命周期 ──────────────────────────────────────────────
 
@@ -135,7 +136,7 @@ class Monitor:
 
     # ── 告警历史 ──────────────────────────────────────────────
 
-    def recent_alerts(self, level: Optional[AlertLevel] = None, limit: int = 50) -> List[Dict[str, Any]]:
+    def recent_alerts(self, level: AlertLevel | None = None, limit: int = 50) -> list[dict[str, Any]]:
         """返回最近告警，可按级别过滤。"""
 
         filtered = self._alerts
@@ -143,7 +144,7 @@ class Monitor:
             filtered = [a for a in filtered if a.level == level]
         return [a.to_dict() for a in filtered[-limit:]]
 
-    def last_error(self) -> Optional[Dict[str, Any]]:
+    def last_error(self) -> dict[str, Any] | None:
         """返回最近一条 ERROR/CRITICAL 告警，没有则返回 None。"""
 
         for alert in reversed(self._alerts):
@@ -151,10 +152,10 @@ class Monitor:
                 return alert.to_dict()
         return None
 
-    def summary(self) -> Dict[str, Any]:
+    def summary(self) -> dict[str, Any]:
         """返回监控器状态快照。"""
 
-        by_level: Dict[str, int] = {}
+        by_level: dict[str, int] = {}
         for alert in self._alerts:
             by_level[alert.level.value] = by_level.get(alert.level.value, 0) + 1
 
@@ -201,9 +202,9 @@ class Monitor:
         category: AlertCategory,
         title: str,
         message: str,
-        exchange: Optional[str] = None,
-        symbol: Optional[str] = None,
-        details: Optional[Dict[str, Any]] = None,
+        exchange: str | None = None,
+        symbol: str | None = None,
+        details: dict[str, Any] | None = None,
     ) -> None:
         """创建并保存告警，然后触发回调。"""
 
@@ -248,13 +249,13 @@ class Monitor:
 
 # ── 工厂函数 ──────────────────────────────────────────────────
 
-def build_engine_checkers(exchanges: Dict[str, Any], engine) -> List[Callable]:
+def build_engine_checkers(exchanges: dict[str, Any], engine) -> list[Callable]:
     """为 TradingEngine 构建标准健康检查器。
 
     返回一组异步函数，每个函数返回 Optional[Alert]。
     """
 
-    async def _check_exchange_health() -> Optional[Alert]:
+    async def _check_exchange_health() -> Alert | None:
         for name, exchange in exchanges.items():
             try:
                 ok = await exchange.ping()
@@ -276,7 +277,7 @@ def build_engine_checkers(exchanges: Dict[str, Any], engine) -> List[Callable]:
                 )
         return None
 
-    async def _check_risk_status() -> Optional[Alert]:
+    async def _check_risk_status() -> Alert | None:
         risk = await engine.risk_manager.get_risk_status()
         if not risk.get("trading_enabled", True):
             return Alert(

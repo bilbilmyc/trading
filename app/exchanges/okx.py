@@ -10,10 +10,12 @@ import base64
 import contextlib
 import hashlib
 import hmac
-from typing import Dict, List, Optional, Any, Callable
+from collections.abc import Callable
 from datetime import datetime
-import orjson
+from typing import Any
 from urllib.parse import urlencode
+
+import orjson
 
 try:
     import httpx
@@ -26,7 +28,7 @@ from app.exchanges.base import ExchangeBase
 
 class OKXExchange(ExchangeBase):
     """OKX 交易所异步实现"""
-    
+
     def __init__(
         self,
         api_key: str = '',
@@ -35,23 +37,23 @@ class OKXExchange(ExchangeBase):
         use_testnet: bool = True
     ):
         super().__init__(api_key, secret_key, passphrase, use_testnet)
-        
+
         if use_testnet:
             self._base_url = "https://www.okx.com"
             self._ws_url = "wss://ws.okx.com:8443/ws/v5/public"
         else:
             self._base_url = "https://www.okx.com"
             self._ws_url = "wss://ws.okx.com:8443/ws/v5/public"
-        
-        self._client: Optional[httpx.AsyncClient] = None
+
+        self._client: httpx.AsyncClient | None = None
         # socket 和监听任务分开保存，取消订阅时才能同时停止重连循环并关闭当前连接。
-        self._ws_connections: Dict[str, websockets.WebSocketClientProtocol] = {}
-        self._ws_tasks: Dict[str, asyncio.Task] = {}
-    
+        self._ws_connections: dict[str, websockets.WebSocketClientProtocol] = {}
+        self._ws_tasks: dict[str, asyncio.Task] = {}
+
     @property
     def name(self) -> str:
         return 'okx'
-    
+
     @property
     def base_url(self) -> str:
         return self._base_url
@@ -69,7 +71,7 @@ class OKXExchange(ExchangeBase):
             if normalized.endswith(quote) and len(normalized) > len(quote):
                 return f"{normalized[:-len(quote)]}-{quote}"
         return normalized
-    
+
     async def _get_client(self) -> httpx.AsyncClient:
         """获取或创建 HTTP 客户端"""
         if self._client is None or self._client.is_closed:
@@ -88,7 +90,7 @@ class OKXExchange(ExchangeBase):
                 timeout=30.0,
             )
         return self._client
-    
+
     def _generate_signature(
         self,
         timestamp: str,
@@ -106,14 +108,14 @@ class OKXExchange(ExchangeBase):
             digestmod=hashlib.sha256,
         ).digest()
         return base64.b64encode(digest).decode('utf-8')
-    
+
     async def _sign_request(
         self,
         method: str,
         path: str,
-        query: Optional[Dict] = None,
-        body: Optional[Dict] = None,
-    ) -> Dict[str, str]:
+        query: dict | None = None,
+        body: dict | None = None,
+    ) -> dict[str, str]:
         """为请求添加签名头"""
         timestamp = datetime.utcnow().strftime('%Y-%m-%dT%H:%M:%S.000Z')
         request_path = path
@@ -121,9 +123,9 @@ class OKXExchange(ExchangeBase):
             # GET 签名必须包含最终请求路径上的完整 query string。
             request_path = f"{path}?{urlencode(query)}"
         body_text = '' if body is None else orjson.dumps(body).decode('utf-8')
-        
+
         signature = self._generate_signature(timestamp, method.upper(), request_path, body_text)
-        
+
         headers = {
             'OK-ACCESS-SIGN': signature,
             'OK-ACCESS-TIMESTAMP': timestamp,
@@ -133,16 +135,16 @@ class OKXExchange(ExchangeBase):
             # 私有签名接口在模拟盘模式下必须保留这个头。
             headers['x-simulated-trading'] = '1'
         return headers
-    
-    async def get_account_balance(self) -> Dict[str, float]:
+
+    async def get_account_balance(self) -> dict[str, float]:
         """获取账户余额"""
         path = '/api/v5/account/balance'
         headers = await self._sign_request('GET', path)
-        
+
         client = await self._get_client()
         response = await client.get(path, headers=headers)
         response.raise_for_status()
-        
+
         data = response.json()
         if data.get('code') == '0':
             balances = {}
@@ -154,24 +156,24 @@ class OKXExchange(ExchangeBase):
             return balances
         else:
             raise Exception(f"OKX API 错误：{data.get('msg', 'Unknown error')}")
-    
-    async def get_available_balances(self) -> Dict[str, float]:
+
+    async def get_available_balances(self) -> dict[str, float]:
         """获取可用余额"""
         # OKX 的现金余额即为可用余额
         return await self.get_account_balance()
-    
+
     async def place_order(
         self,
         symbol: str,
         side: str,
         order_type: str,
         quantity: float,
-        price: Optional[float] = None,
+        price: float | None = None,
         **kwargs
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """下单交易"""
         path = '/api/v5/trade/order'
-        
+
         params = {
             'instId': self.normalize_symbol(symbol),
             # 这个适配器目前只负责现货 cash 模式。
@@ -181,18 +183,18 @@ class OKXExchange(ExchangeBase):
             'ordType': 'market' if order_type.lower() == 'market' else 'limit',
             'sz': str(quantity),
         }
-        
+
         if order_type.lower() == 'limit' and price is not None:
             params['px'] = str(price)
-        
+
         # 签名计算必须和实际发送的 JSON body 保持同一份字节表示。
         body = orjson.dumps(params)
         headers = await self._sign_request('POST', path, body=params)
-        
+
         client = await self._get_client()
         response = await client.post(path, content=body, headers=headers)
         response.raise_for_status()
-        
+
         data = response.json()
         if data.get('code') == '0':
             return {
@@ -203,8 +205,8 @@ class OKXExchange(ExchangeBase):
             }
         else:
             raise Exception(f"OKX 下单失败：{data.get('msg', 'Unknown error')}")
-    
-    async def cancel_order(self, symbol: str, order_id: str) -> Dict[str, Any]:
+
+    async def cancel_order(self, symbol: str, order_id: str) -> dict[str, Any]:
         """撤销订单"""
         path = '/api/v5/trade/cancel-order'
         params = {
@@ -212,21 +214,21 @@ class OKXExchange(ExchangeBase):
             # OKX REST 订单操作使用 ordId，不是 orderId。
             'ordId': order_id,
         }
-        
+
         body = orjson.dumps(params)
         headers = await self._sign_request('POST', path, body=params)
-        
+
         client = await self._get_client()
         response = await client.post(path, content=body, headers=headers)
         response.raise_for_status()
-        
+
         data = response.json()
         if data.get('code') == '0':
             return {'success': True, 'order_id': order_id}
         else:
             raise Exception(f"OKX 撤单失败：{data.get('msg', 'Unknown error')}")
-    
-    async def cancel_all_orders(self, symbol: Optional[str] = None) -> int:
+
+    async def cancel_all_orders(self, symbol: str | None = None) -> int:
         """批量撤销订单"""
         # OKX 支持批量撤单，这里简化实现
         open_orders = await self.get_open_orders(symbol)
@@ -238,8 +240,8 @@ class OKXExchange(ExchangeBase):
             except Exception:
                 pass
         return count
-    
-    async def get_order(self, symbol: str, order_id: str) -> Dict[str, Any]:
+
+    async def get_order(self, symbol: str, order_id: str) -> dict[str, Any]:
         """查询订单状态"""
         path = '/api/v5/trade/order'
         params = {
@@ -247,12 +249,12 @@ class OKXExchange(ExchangeBase):
             # OKX 私有查询接口同样使用 ordId。
             'ordId': order_id,
         }
-        
+
         headers = await self._sign_request('GET', path, query=params)
         client = await self._get_client()
         response = await client.get(path, params=params, headers=headers)
         response.raise_for_status()
-        
+
         data = response.json()
         if data.get('code') == '0':
             order_data = data.get('data', [{}])[0]
@@ -265,34 +267,34 @@ class OKXExchange(ExchangeBase):
             }
         else:
             raise Exception(f"OKX 查询订单失败：{data.get('msg', 'Unknown error')}")
-    
-    async def get_open_orders(self, symbol: Optional[str] = None) -> List[Dict[str, Any]]:
+
+    async def get_open_orders(self, symbol: str | None = None) -> list[dict[str, Any]]:
         """获取当前挂单"""
         path = '/api/v5/trade/orders-pending'
         params = {}
         if symbol:
             params['instId'] = self.normalize_symbol(symbol)
-        
+
         headers = await self._sign_request('GET', path, query=params)
         client = await self._get_client()
         response = await client.get(path, params=params, headers=headers)
         response.raise_for_status()
-        
+
         data = response.json()
         if data.get('code') == '0':
             return data.get('data', [])
         else:
             raise Exception(f"OKX 查询挂单失败：{data.get('msg', 'Unknown error')}")
-    
-    async def get_ticker(self, symbol: str) -> Dict[str, Any]:
+
+    async def get_ticker(self, symbol: str) -> dict[str, Any]:
         """获取实时行情"""
         path = '/api/v5/market/ticker'
         params = {'instId': self.normalize_symbol(symbol)}
-        
+
         client = await self._get_client()
         response = await client.get(path, params=params)
         response.raise_for_status()
-        
+
         data = response.json()
         if data.get('code') == '0':
             ticker_data = data.get('data', [{}])[0]
@@ -310,15 +312,15 @@ class OKXExchange(ExchangeBase):
             }
         else:
             raise Exception(f"OKX 获取行情失败：{data.get('msg', 'Unknown error')}")
-    
+
     async def get_klines(
         self,
         symbol: str,
         interval: str,
-        start_time: Optional[datetime] = None,
-        end_time: Optional[datetime] = None,
+        start_time: datetime | None = None,
+        end_time: datetime | None = None,
         limit: int = 100
-    ) -> List[Dict[str, Any]]:
+    ) -> list[dict[str, Any]]:
         """获取 K 线数据"""
         path = '/api/v5/market/candles'
         params = {
@@ -327,16 +329,16 @@ class OKXExchange(ExchangeBase):
             # OKX 公开 K 线接口现货单次最多返回 300 条。
             'limit': min(limit, 300),
         }
-        
+
         if start_time:
             params['before'] = int(start_time.timestamp() * 1000)
         if end_time:
             params['after'] = int(end_time.timestamp() * 1000)
-        
+
         client = await self._get_client()
         response = await client.get(path, params=params)
         response.raise_for_status()
-        
+
         data = response.json()
         if data.get('code') == '0':
             klines = []
@@ -356,19 +358,19 @@ class OKXExchange(ExchangeBase):
             return klines
         else:
             raise Exception(f"OKX 获取 K 线失败：{data.get('msg', 'Unknown error')}")
-    
-    async def get_recent_trades(self, symbol: str, limit: int = 100) -> List[Dict[str, Any]]:
+
+    async def get_recent_trades(self, symbol: str, limit: int = 100) -> list[dict[str, Any]]:
         """获取最近成交记录"""
         path = '/api/v5/market/trades'
         params = {
             'instId': self.normalize_symbol(symbol),
             'limit': min(limit, 500),
         }
-        
+
         client = await self._get_client()
         response = await client.get(path, params=params)
         response.raise_for_status()
-        
+
         data = response.json()
         if data.get('code') == '0':
             trades = []
@@ -385,7 +387,7 @@ class OKXExchange(ExchangeBase):
             return trades
         else:
             raise Exception(f"OKX 获取成交记录失败：{data.get('msg', 'Unknown error')}")
-    
+
     async def subscribe_ticker(self, symbol: str, callback: Callable):
         """订阅实时行情"""
         normalized = self.normalize_symbol(symbol)
@@ -434,7 +436,7 @@ class OKXExchange(ExchangeBase):
                     self._ws_connections.pop(normalized, None)
 
         self._ws_tasks[normalized] = asyncio.create_task(_listen())
-    
+
     async def unsubscribe_ticker(self, symbol: str):
         """取消订阅行情"""
         normalized = self.normalize_symbol(symbol)
@@ -448,7 +450,7 @@ class OKXExchange(ExchangeBase):
         if normalized in self._ws_connections:
             await self._ws_connections[normalized].close()
             del self._ws_connections[normalized]
-    
+
     def _normalize_order_status(self, okx_status: str) -> str:
         """转换 OKX 订单状态到统一格式"""
         status_map = {
@@ -459,7 +461,7 @@ class OKXExchange(ExchangeBase):
             'mmp_canceled': 'cancelled',
         }
         return status_map.get(okx_status, 'pending')
-    
+
     def _convert_interval(self, interval: str) -> str:
         """转换 K 线周期到 OKX 格式"""
         interval_map = {
@@ -468,12 +470,12 @@ class OKXExchange(ExchangeBase):
             '6H': '6H', '12H': '12H', '1D': '1D', '1W': '1W', '1M': '1M',
         }
         return interval_map.get(interval, interval)
-    
+
     async def close(self):
         """关闭连接"""
         if self._client and not self._client.is_closed:
             await self._client.aclose()
-        
+
         # 关闭 socket 前先停止监听任务，否则关闭过程中监听任务可能再次重连。
         for task in self._ws_tasks.values():
             task.cancel()

@@ -1,0 +1,15 @@
+# Pre-commit hooks for the Web3 Trading repo.
+# Install once with: `pre-commit install`
+# Run on demand:   `pre-commit run --all-files`
+#
+# We keep hooks minimal: lint + format on commit. Tests + type-check
+# stay in CI (they're slow and need the full env).
+repos:
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.6.9
+    hooks:
+      - id: ruff
+        args: ["--fix", "--exit-non-zero-on-fix"]
+        files: '^(app|config)/.*\.py$'
+      - id: ruff-format
+        files: '^(app|config|tests)/.*\.py$'

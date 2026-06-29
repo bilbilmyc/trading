@@ -8,31 +8,31 @@ The result feeds into a StrategyInfo the user can accept and register.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 
 @dataclass
 class StrategySuggestion:
     kind: str                # "sma_crossover" | "rsi_mean_reversion"
-    params: Dict[str, Any]
+    params: dict[str, Any]
     rationale: str
 
 
-def _stddev(values: List[float]) -> float:
+def _stddev(values: list[float]) -> float:
     if not values:
         return 0.0
     mean = sum(values) / len(values)
     return (sum((v - mean) ** 2 for v in values) / len(values)) ** 0.5
 
 
-def _returns(closes: List[float]) -> List[float]:
+def _returns(closes: list[float]) -> list[float]:
     return [closes[i] - closes[i - 1] for i in range(1, len(closes))]
 
 
 def suggest_strategy(
-    candles: List[Dict[str, Any]],
+    candles: list[dict[str, Any]],
     *,
-    prefer: Optional[str] = None,    # "sma" | "rsi" | None (auto)
+    prefer: str | None = None,    # "sma" | "rsi" | None (auto)
 ) -> StrategySuggestion:
     """Pick a strategy + parameters based on recent kline behavior."""
     closes = [float(c.get("close", 0)) for c in candles]
@@ -44,8 +44,6 @@ def suggest_strategy(
             rationale="数据不足 30 根，使用默认 SMA(5,20)。",
         )
 
-    rets = _returns(closes)
-    vol = _stddev(rets)
     last = closes[-1]
     first = closes[0]
     trend_strength = abs(last - first) / first

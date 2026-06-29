@@ -47,7 +47,7 @@ def kelly_fraction(
     b = odds
     f = (b * win_prob - q) / b  # full Kelly
     f = max(0.0, min(f, 1.0))
-    f_half = f * fractional
+    _f_half = f * fractional  # exposed via KellyResult fields below
 
     # Continuous-distribution Kelly (edge / variance) — alternative.
     expected = win_prob * odds - q
@@ -73,6 +73,5 @@ def kelly_fraction(
 
 
 import math  # noqa: E402
-
 
 __all__ = ["KellyResult", "kelly_fraction"]

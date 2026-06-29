@@ -7,10 +7,7 @@ and a future dashboard.
 
 from __future__ import annotations
 
-import math
-import time
 from dataclasses import dataclass, field
-from typing import Dict, List, Optional
 
 
 @dataclass
@@ -38,7 +35,7 @@ class StrategyPerformance:
     avg_loss: float
     profit_factor: float          # |sum(wins)| / |sum(losses)|
     max_drawdown: float
-    equity_curve: List[float] = field(default_factory=list)
+    equity_curve: list[float] = field(default_factory=list)
 
 
 class StrategyPerformanceTracker:
@@ -50,15 +47,15 @@ class StrategyPerformanceTracker:
     """
 
     def __init__(self) -> None:
-        self._trades: List[TradeOutcome] = []
+        self._trades: list[TradeOutcome] = []
 
     def record(self, outcome: TradeOutcome) -> None:
         self._trades.append(outcome)
 
-    def for_strategy(self, strategy: str) -> List[TradeOutcome]:
+    def for_strategy(self, strategy: str) -> list[TradeOutcome]:
         return [t for t in self._trades if t.strategy == strategy]
 
-    def all_strategies(self) -> List[str]:
+    def all_strategies(self) -> list[str]:
         return sorted({t.strategy for t in self._trades})
 
     def performance(

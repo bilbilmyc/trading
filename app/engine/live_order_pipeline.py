@@ -21,7 +21,7 @@ Returns:
 from __future__ import annotations
 
 import asyncio
-from typing import Mapping, Sequence
+from collections.abc import Sequence
 
 from app.core.result import Err, Ok
 from app.engine.pipeline_types import (
@@ -31,8 +31,8 @@ from app.engine.pipeline_types import (
     PositionRecorder,
     RiskGate,
     SignalFilter,
-    TradeEvent,
     TradeError,
+    TradeEvent,
     TradeReceipt,
     TradingGuard,
 )
@@ -89,7 +89,7 @@ class LiveOrderPipeline:
                     return Err(
                         TradeError(stage="filter", reason=f"rejected by {name}")
                     )
-            except Exception as exc:
+            except Exception:
                 # Filter exception = pass-through (per existing engine semantics).
                 continue
 

@@ -6,8 +6,8 @@ Range: [-1, 1]. Positive = buy pressure, negative = sell pressure.
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass
-from typing import List, Sequence
 
 
 @dataclass

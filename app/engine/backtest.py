@@ -8,7 +8,7 @@ no async — purely synchronous for ease of testing.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any, Dict, List
+from typing import Any
 
 
 @dataclass
@@ -19,12 +19,12 @@ class BacktestResult:
     trades: int
     win_rate: float            # 0.0 - 1.0
     max_drawdown: float        # 0.0 - 1.0
-    equity_curve: List[float] = field(default_factory=list)
+    equity_curve: list[float] = field(default_factory=list)
 
 
-def _sma(values: List[float], window: int) -> List[float]:
+def _sma(values: list[float], window: int) -> list[float]:
     """Simple moving average; first window-1 entries are None."""
-    out: List[float] = []
+    out: list[float] = []
     s = 0.0
     for i, v in enumerate(values):
         s += v
@@ -38,7 +38,7 @@ def _sma(values: List[float], window: int) -> List[float]:
 
 
 def run_sma_backtest(
-    candles: List[Dict[str, Any]],
+    candles: list[dict[str, Any]],
     short_window: int = 5,
     long_window: int = 20,
     initial_capital: float = 10_000.0,
@@ -68,9 +68,8 @@ def run_sma_backtest(
     cash = initial_capital
     position_qty = 0.0
     position_entry = 0.0
-    equity = initial_capital
-    equity_curve: List[float] = []
-    trades: List[float] = []  # realized PnL per closed trade
+    equity_curve: list[float] = []
+    trades: list[float] = []  # realized PnL per closed trade
     peak = initial_capital
     max_dd = 0.0
 

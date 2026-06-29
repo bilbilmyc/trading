@@ -8,7 +8,6 @@ ranked list. Ranking score = sharpe * 0.5 + (win_rate - 0.5) * 2 * 0.3
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import List
 
 from app.engine.portfolio_metrics import PortfolioMetrics, compute_metrics
 from app.engine.strategy_performance import StrategyPerformanceTracker
@@ -30,12 +29,12 @@ def _score(metrics: PortfolioMetrics) -> float:
     return sharpe_component + winrate_component + drawdown_component
 
 
-def build_leaderboard(tracker: StrategyPerformanceTracker) -> List[LeaderboardEntry]:
+def build_leaderboard(tracker: StrategyPerformanceTracker) -> list[LeaderboardEntry]:
     """Build ranked leaderboard from trade outcomes.
 
     Returns strategies sorted by composite score (descending).
     """
-    entries: List[LeaderboardEntry] = []
+    entries: list[LeaderboardEntry] = []
     for name in tracker.all_strategies():
         perf = tracker.performance(name)
         # Convert trade PnLs to a sequence of returns.
