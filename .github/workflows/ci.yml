@@ -24,8 +24,6 @@ jobs:
       - name: Run backend tests with coverage
         run: |
           uv run pytest tests/ \
-            --ignore=tests/test_sse_endpoint.py \
-            --ignore=tests/test_anthropic_provider.py::test_timeout_returns_timeout_error \
             --cov=app --cov-report=term --cov-report=xml --cov-fail-under=60
 
       - name: Build backend smoke
