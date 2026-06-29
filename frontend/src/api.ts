@@ -4,6 +4,22 @@ export type Liquidity = "maker" | "taker";
 export type MarginMode = "cross" | "isolated";
 export type PositionSide = "net" | "long" | "short";
 
+import { API_BASE, request } from "./api/_client";
+import {
+  marketApi,
+  type Ticker,
+  type ContractMarket,
+  type RecentTrade,
+  type Candle,
+  type OpenOrder,
+  type FeeRate,
+  type CostEstimate,
+} from "./api/market";
+
+// Re-exported from the market module so existing `import { Ticker } from "./api"`
+// keeps working while the types live next to the methods that return them.
+export type { Ticker, ContractMarket, RecentTrade, Candle, OpenOrder, FeeRate, CostEstimate };
+
 export interface HealthResponse {
   status: string;
   env: string;
@@ -173,15 +189,6 @@ export interface AuditEvent {
   timestamp: string;
 }
 
-export interface FeeRate {
-  exchange: string;
-  symbol: string;
-  maker: number;
-  taker: number;
-  timestamp: string;
-  raw: Record<string, unknown>;
-}
-
 export interface LLMAnalysisResult {
   decision: string;
   confidence: number;
@@ -195,76 +202,6 @@ export interface LLMAnalysisResult {
   candle_count?: number;
   cache_hit?: boolean;
   error_kind?: string | null;
-}
-
-export interface CostEstimate {
-  exchange: string;
-  symbol: string;
-  notional: number;
-  liquidity: Liquidity;
-  fee_rate: number;
-  estimated_fee: number;
-  raw_fee: FeeRate;
-  notes: string[];
-}
-
-export interface Ticker {
-  symbol: string;
-  exchange: string;
-  last_price: number;
-  bid_price?: number | null;
-  ask_price?: number | null;
-  high_24h?: number;
-  low_24h?: number;
-  volume_24h?: number;
-  quote_volume_24h?: number;
-  price_change_24h?: number;
-  price_change_pct_24h?: number;
-  timestamp: string;
-}
-
-export interface ContractMarket {
-  exchange: ExchangeName;
-  symbol: string;
-  base_asset: string;
-  quote_asset: string;
-  status: string;
-  contract_type: string;
-  price_tick?: number | null;
-  quantity_step?: number | null;
-  min_quantity?: number | null;
-  raw: Record<string, unknown>;
-}
-
-export interface RecentTrade {
-  symbol: string;
-  exchange: string;
-  trade_id: string;
-  price: number;
-  quantity: number;
-  side: "buy" | "sell" | string;
-  timestamp: string;
-}
-
-export interface Candle {
-  open_time: string | number;
-  open: number;
-  high: number;
-  low: number;
-  close: number;
-  volume?: number;
-}
-
-export interface OpenOrder {
-  order_id?: string;
-  orderId?: string | number;
-  symbol?: string;
-  side?: string;
-  price?: string | number;
-  quantity?: string | number;
-  origQty?: string | number;
-  status?: string;
-  raw?: Record<string, unknown>;
 }
 
 export interface ContractOrderPayload {
@@ -305,14 +242,6 @@ export interface ContractOrderPreview {
   request: ContractOrderPayload;
 }
 
-function resolveApiBase() {
-  if (import.meta.env.VITE_API_BASE_URL) return import.meta.env.VITE_API_BASE_URL;
-  if (window.location.port === "5173") return "http://127.0.0.1:8000";
-  return window.location.origin;
-}
-
-const API_BASE = resolveApiBase();
-
 function formatApiError(message: unknown, fallback: string) {
   if (!message) return fallback;
   if (typeof message === "string") return message;
@@ -325,25 +254,9 @@ function formatApiError(message: unknown, fallback: string) {
   return String(message);
 }
 
-async function request<T>(path: string, init?: RequestInit): Promise<T> {
-  const response = await fetch(`${API_BASE}${path}`, {
-    headers: {
-      "Content-Type": "application/json",
-      ...(init?.headers ?? {}),
-    },
-    ...init,
-  });
-
-  const text = await response.text();
-  const payload = text ? JSON.parse(text) : null;
-  if (!response.ok) {
-    throw new Error(formatApiError(payload?.detail, response.statusText));
-  }
-  return payload as T;
-}
-
 export const api = {
   baseUrl: API_BASE,
+  ...marketApi,
 
   health: () => request<HealthResponse>("/health"),
 
@@ -443,49 +356,6 @@ export const api = {
       signals: StrategySignal[];
       recent_signals: StrategySignal[];
     }>(`/api/v1/signals/evaluate?${params}`, { method: "POST" });
-  },
-
-  ticker: (exchange: ExchangeName, symbol: string) =>
-    request<Ticker>(`/api/v1/ticker/${exchange}/${encodeURIComponent(symbol)}`),
-
-  klines: (exchange: ExchangeName, symbol: string, interval = "1h", limit = 80) => {
-    const params = new URLSearchParams({ interval, limit: String(limit) });
-    return request<Candle[]>(`/api/v1/klines/${exchange}/${encodeURIComponent(symbol)}?${params}`);
-  },
-
-  contracts: (exchange: ExchangeName, search = "", limit = 200) => {
-    const params = new URLSearchParams({ quote_asset: "USDT", search, limit: String(limit) });
-    return request<{ contracts: ContractMarket[]; total: number }>(`/api/v1/contracts/${exchange}?${params}`);
-  },
-
-  recentTrades: (exchange: ExchangeName, symbol: string, limit = 8) => {
-    const params = new URLSearchParams({ limit: String(limit) });
-    return request<RecentTrade[]>(`/api/v1/trades/${exchange}/${encodeURIComponent(symbol)}?${params}`);
-  },
-
-  openOrders: (exchange: ExchangeName, symbol: string) => {
-    const params = new URLSearchParams({ symbol });
-    return request<OpenOrder[]>(`/api/v1/orders/${exchange}/open?${params}`);
-  },
-
-  feeRate: (exchange: ExchangeName, symbol: string) =>
-    request<FeeRate>(`/api/v1/contracts/${exchange}/${encodeURIComponent(symbol)}/fee-rate`),
-
-  costEstimate: (
-    exchange: ExchangeName,
-    symbol: string,
-    quantity: number,
-    price: number,
-    liquidity: Liquidity,
-  ) => {
-    const params = new URLSearchParams({
-      quantity: String(quantity),
-      price: String(price),
-      liquidity,
-    });
-    return request<CostEstimate>(
-      `/api/v1/contracts/${exchange}/${encodeURIComponent(symbol)}/cost-estimate?${params}`,
-    );
   },
 
   closePosition: (payload: { exchange: string; symbol: string; exit_quantity?: number }) =>
