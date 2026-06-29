@@ -266,12 +266,17 @@ class TradingEngine:
         return config
 
     def set_strategy_mode(self, name: str, mode: str) -> Dict[str, Any]:
-        """设置单个策略的执行模式。"""
+        """设置单个策略的执行模式。
+
+        接受 "signal" / "paper" / "live"。注意 "live" 是否真的执行
+        实盘，仍受全局 `enable_live_trading` 和 `LiveTradingGuard`
+        约束——mode 只是"想要 live"，真做不做要看风控闸门。
+        """
 
         if name not in self._strategies:
             raise KeyError(name)
-        if mode not in {"signal", "paper"}:
-            raise ValueError("mode must be signal or paper")
+        if mode not in {"signal", "paper", "live"}:
+            raise ValueError("mode must be one of: signal, paper, live")
         config = self._strategy_configs.setdefault(name, {})
         config["mode"] = mode
         config["updated_at"] = datetime.utcnow().isoformat()

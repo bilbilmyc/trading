@@ -86,9 +86,13 @@ class PaperResetRequest(BaseModel):
 
 
 class StrategyModeRequest(BaseModel):
-    """切换策略运行模式的请求体。"""
+    """切换策略运行模式的请求体。
 
-    mode: str = Field(..., pattern="^(signal|paper)$")
+    `live` 表示策略希望执行实盘（仍受全局 `enable_live_trading` 开关
+    与 `LiveTradingGuard` 熔断保护）。
+    """
+
+    mode: str = Field(..., pattern="^(signal|paper|live)$")
 
 
 class KillSwitchRequest(BaseModel):
