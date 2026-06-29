@@ -33,6 +33,10 @@ class OllamaProvider:
         base_url: str = "http://localhost:11434",
         timeout_seconds: float = 60.0,
         retry_policy: Optional[RetryPolicy] = None,
+        # Ollama doesn't require auth; accept (and ignore) `api_key` so
+        # callers using the standard `LLMAnalyzer._select_provider` path
+        # can construct an OllamaProvider without special-casing.
+        api_key: str = "",
     ) -> None:
         self._base_url = base_url.rstrip("/")
         self._timeout = timeout_seconds
