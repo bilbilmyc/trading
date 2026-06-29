@@ -1,6 +1,10 @@
 import { useState } from "react";
+import { ClipboardList } from "lucide-react";
+
 import { useEngine } from "../contexts/EngineContext";
-import { EmptyState, Metric, SectionTitle } from "../components/atoms";
+import { Metric } from "../components/atoms";
+import { ListRow, type ListRowLevel } from "../components/ListRow";
+import { PageHeader } from "../components/PageHeader";
 
 const EVENT_LABELS: Record<string, string> = {
   live_trading_blocked: "实盘守卫拦截",
@@ -20,6 +24,13 @@ function formatEventType(t: string): string {
 const LEVELS = ["all", "critical", "error", "warning", "info"] as const;
 type Level = (typeof LEVELS)[number];
 
+function levelToRowLevel(level: string): ListRowLevel | undefined {
+  if (level === "critical" || level === "error" || level === "warning" || level === "info") {
+    return level;
+  }
+  return undefined;
+}
+
 export function AuditPage() {
   const { events } = useEngine();
   const [filter, setFilter] = useState<Level>("all");
@@ -33,13 +44,12 @@ export function AuditPage() {
 
   return (
     <div className="page page--audit">
-      <header className="page__header">
-        <div>
-          <p className="eyebrow">审计事件</p>
-          <h1>Audit</h1>
-          <span className="page__subtitle">完整事件流 · 按级别过滤 · 倒序</span>
-        </div>
-      </header>
+      <PageHeader
+        icon={<ClipboardList size={18} />}
+        eyebrow="审计事件"
+        title="Audit"
+        subtitle="完整事件流 · 按级别过滤 · 倒序"
+      />
 
       <div className="metric-grid">
         <Metric label="critical" value={String(byLevel.critical ?? 0)} tone="negative" />
@@ -52,6 +62,7 @@ export function AuditPage() {
         {LEVELS.map((l) => (
           <button
             key={l}
+            type="button"
             className={`filter-chip ${filter === l ? "is-active" : ""}`}
             onClick={() => setFilter(l)}
           >
@@ -60,27 +71,25 @@ export function AuditPage() {
         ))}
       </div>
 
-      <SectionTitle title="事件流" subtitle={`${filtered.length} 条`} />
+      <h2 className="section-title-inline">事件流 · {filtered.length} 条</h2>
       <div className="event-list">
         {filtered.length ? (
           filtered
             .slice()
             .reverse()
             .map((event) => (
-              <div className={`event-row event-row--${event.level}`} key={event.id}>
-                <div className="event-row__marker" />
-                <div>
-                  <strong>{formatEventType(event.event_type)}</strong>
-                  <span>
-                    {event.exchange ?? "--"} · {event.symbol ?? "--"} ·{" "}
-                    {new Date(event.timestamp).toLocaleString()}
-                  </span>
-                  <p>{event.message}</p>
-                </div>
-              </div>
+              <ListRow
+                key={event.id}
+                leading={<span className="event-row__marker" />}
+                level={levelToRowLevel(event.level)}
+                title={formatEventType(event.event_type)}
+                subtitle={`${event.exchange ?? "--"} · ${event.symbol ?? "--"} · ${new Date(
+                  event.timestamp,
+                ).toLocaleString()}${event.message ? ` · ${event.message}` : ""}`}
+              />
             ))
         ) : (
-          <EmptyState>暂无该级别事件</EmptyState>
+          <div className="empty-state">暂无该级别事件</div>
         )}
       </div>
     </div>

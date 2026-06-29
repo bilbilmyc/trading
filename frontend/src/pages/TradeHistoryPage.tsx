@@ -1,7 +1,11 @@
 import { useEffect, useState } from "react";
+import { History, RefreshCw } from "lucide-react";
 
 import { api } from "../api";
-import { Metric, SectionTitle } from "../components/atoms";
+import { Metric } from "../components/atoms";
+import { Card } from "../components/Card";
+import { DataTable, type Column } from "../components/DataTable";
+import { PageHeader } from "../components/PageHeader";
 
 interface Trade {
   order_id: string;
@@ -24,10 +28,10 @@ interface Trade {
 }
 
 function pnlClass(pnl: number | undefined): string {
-  if (pnl === undefined || pnl === null) return "";
+  if (pnl === undefined || pnl === null) return "text-muted";
   if (pnl > 0) return "text-positive";
   if (pnl < 0) return "text-negative";
-  return "";
+  return "text-muted";
 }
 
 function formatPnl(pnl: number | undefined): string {
@@ -69,76 +73,135 @@ export function TradeHistoryPage() {
 
   useEffect(() => {
     refresh();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [filterStrategy, filterExchange]);
 
-  // Summary stats
-  const totalPnl = trades.reduce(
-    (sum, t) => sum + (t.realized_pnl ?? 0),
-    0
-  );
+  const totalPnl = trades.reduce((sum, t) => sum + (t.realized_pnl ?? 0), 0);
   const wins = trades.filter((t) => (t.realized_pnl ?? 0) > 0).length;
   const losses = trades.filter((t) => (t.realized_pnl ?? 0) < 0).length;
-  const strategies = Array.from(new Set(trades.map((t) => t.strategy).filter(Boolean) as string[]));
-  const exchanges = Array.from(new Set(trades.map((t) => t.exchange).filter(Boolean) as string[]));
+  const strategies = Array.from(
+    new Set(trades.map((t) => t.strategy).filter(Boolean) as string[]),
+  );
+  const exchanges = Array.from(
+    new Set(trades.map((t) => t.exchange).filter(Boolean) as string[]),
+  );
+
+  const columns: Column<Trade>[] = [
+    {
+      key: "time",
+      header: "时间",
+      width: "1.5fr",
+      render: (t) => (
+        <span className="data-table__cell--mono" title={t.timestamp ?? ""}>
+          {formatTime(t.timestamp ?? t.opened_at ?? "")}
+        </span>
+      ),
+    },
+    {
+      key: "symbol",
+      header: "合约",
+      width: "1.2fr",
+      render: (t) => (
+        <div>
+          <strong>{t.symbol}</strong>
+          <small className="data-table__cell--muted">
+            {t.exchange}
+            {t.strategy ? ` · ${t.strategy}` : ""}
+          </small>
+        </div>
+      ),
+    },
+    {
+      key: "side",
+      header: "方向",
+      width: "0.7fr",
+      render: (t) => (
+        <span
+          className={t.side === "buy" ? "text-positive" : "text-negative"}
+          style={{ fontWeight: 600 }}
+        >
+          {t.side === "buy" ? "买入" : "卖出"}
+        </span>
+      ),
+    },
+    {
+      key: "qty",
+      header: "数量",
+      width: "0.8fr",
+      align: "right",
+      render: (t) => <span className="data-table__cell--num">{t.quantity}</span>,
+    },
+    {
+      key: "price",
+      header: "价格",
+      width: "0.8fr",
+      align: "right",
+      render: (t) => (
+        <span className="data-table__cell--num">
+          {(t.price ?? t.entry_price ?? 0).toFixed(2)}
+        </span>
+      ),
+    },
+    {
+      key: "pnl",
+      header: "盈亏",
+      width: "0.8fr",
+      align: "right",
+      render: (t) => (
+        <span className={pnlClass(t.realized_pnl)} style={{ fontWeight: 600 }}>
+          {formatPnl(t.realized_pnl)}
+        </span>
+      ),
+    },
+    {
+      key: "status",
+      header: "状态",
+      width: "0.7fr",
+      render: (t) => <span className="data-table__cell--muted">{t.status}</span>,
+    },
+  ];
 
   return (
     <div className="page page--trade-history">
-      <header className="page__header">
-        <div>
-          <p className="eyebrow">交易历史</p>
-          <h1>Trade History</h1>
-          <span className="page__subtitle">模拟 / 实盘成交记录 · 按时间倒序</span>
-        </div>
-        <button
-          className="action action--primary"
-          onClick={refresh}
-          disabled={loading}
-        >
-          {loading ? "刷新中..." : "刷新"}
-        </button>
-      </header>
+      <PageHeader
+        icon={<History size={18} />}
+        eyebrow="交易历史"
+        title="Trade History"
+        subtitle="模拟 / 实盘成交记录 · 按时间倒序"
+        actions={
+          <button
+            type="button"
+            className="action action--primary"
+            onClick={refresh}
+            disabled={loading}
+          >
+            <RefreshCw size={14} className={loading ? "spin" : ""} />
+            {loading ? "刷新中..." : "刷新"}
+          </button>
+        }
+      />
 
       <div className="metric-grid">
-        <Metric
-          label="成交笔数"
-          value={String(trades.length)}
-          tone="muted"
-        />
+        <Metric label="成交笔数" value={String(trades.length)} tone="muted" />
         <Metric
           label="总盈亏"
           value={formatPnl(totalPnl)}
           tone={totalPnl > 0 ? "positive" : totalPnl < 0 ? "negative" : "muted"}
         />
-        <Metric
-          label="盈利"
-          value={String(wins)}
-          tone="positive"
-        />
-        <Metric
-          label="亏损"
-          value={String(losses)}
-          tone="negative"
-        />
+        <Metric label="盈利" value={String(wins)} tone="positive" />
+        <Metric label="亏损" value={String(losses)} tone="negative" />
         <Metric
           label="胜率"
-          value={
-            trades.length > 0
-              ? `${((wins / trades.length) * 100).toFixed(1)}%`
-              : "--"
-          }
+          value={trades.length > 0 ? `${((wins / trades.length) * 100).toFixed(1)}%` : "--"}
           tone="muted"
         />
       </div>
 
-      <section className="panel">
-        <SectionTitle title="筛选" subtitle="按策略 / 交易所过滤" />
+      <Card title="筛选" subtitle="按策略 / 交易所过滤">
         <div className="form-grid form-grid--inline">
           <label className="field">
             <span>策略</span>
-            <select
-              value={filterStrategy}
-              onChange={(e) => setFilterStrategy(e.target.value)}
-            >
+            <select value={filterStrategy} onChange={(e) => setFilterStrategy(e.target.value)}>
               <option value="">全部</option>
               {strategies.map((s) => (
                 <option key={s} value={s}>
@@ -149,10 +212,7 @@ export function TradeHistoryPage() {
           </label>
           <label className="field">
             <span>交易所</span>
-            <select
-              value={filterExchange}
-              onChange={(e) => setFilterExchange(e.target.value)}
-            >
+            <select value={filterExchange} onChange={(e) => setFilterExchange(e.target.value)}>
               <option value="">全部</option>
               {exchanges.map((s) => (
                 <option key={s} value={s}>
@@ -162,73 +222,20 @@ export function TradeHistoryPage() {
             </select>
           </label>
         </div>
-      </section>
+      </Card>
 
-      <section className="panel">
-        <SectionTitle title="成交明细" subtitle={`${trades.length} 笔`} />
-        {error && <div className="notice notice--error">{error}</div>}
+      <Card title="成交明细" subtitle={`${trades.length} 笔`}>
+        {error ? <div className="notice notice--error">{error}</div> : null}
         {trades.length === 0 && !loading ? (
-          <div className="empty-state">
-            暂无成交记录 — 启动策略后自动记录
-          </div>
+          <div className="empty-state">暂无成交记录 — 启动策略后自动记录</div>
         ) : (
-          <div className="trade-history">
-            <div className="trade-history__row trade-history__row--head">
-              <span>时间</span>
-              <span>合约</span>
-              <span>方向</span>
-              <span>数量</span>
-              <span>价格</span>
-              <span>盈亏</span>
-              <span>状态</span>
-            </div>
-            {trades.map((t) => (
-              <div
-                key={t.order_id}
-                className="trade-history__row lift-hover"
-              >
-                <span className="trade-history__cell" title={t.timestamp ?? ""}>
-                  {formatTime(t.timestamp ?? t.opened_at ?? "")}
-                </span>
-                <span className="trade-history__cell">
-                  <strong>{t.symbol}</strong>
-                  <small style={{ color: "var(--text-muted)", display: "block", fontSize: 10 }}>
-                    {t.exchange} {t.strategy && `· ${t.strategy}`}
-                  </small>
-                </span>
-                <span
-                  className="trade-history__cell"
-                  style={{
-                    color:
-                      t.side === "buy" ? "var(--positive)" : "var(--negative)",
-                    fontWeight: 600,
-                  }}
-                >
-                  {t.side === "buy" ? "买入" : "卖出"}
-                </span>
-                <span className="trade-history__cell">{t.quantity}</span>
-                <span className="trade-history__cell">
-                  {(t.price ?? t.entry_price ?? 0).toFixed(2)}
-                </span>
-                <span className={`trade-history__cell ${pnlClass(t.realized_pnl)}`}
-                  style={{ fontWeight: 600 }}
-                >
-                  {formatPnl(t.realized_pnl)}
-                </span>
-                <span
-                  className="trade-history__cell"
-                  style={{
-                    color: "var(--text-muted)",
-                    fontSize: 11,
-                  }}
-                >
-                  {t.status}
-                </span>
-              </div>
-            ))}
-          </div>
+          <DataTable
+            columns={columns}
+            rows={trades}
+            rowKey={(t) => t.order_id}
+          />
         )}
-      </section>
+      </Card>
     </div>
   );
 }

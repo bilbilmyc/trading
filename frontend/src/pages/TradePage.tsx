@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
+import { ArrowLeftRight } from "lucide-react";
 import { useStatus } from "../contexts/StatusContext";
 import { api } from "../api";
 import type {
@@ -17,6 +18,7 @@ import type {
 import { ErrorPanel } from "../components/ErrorPanel";
 import { OrderPanel } from "../components/OrderPanel";
 import { MarketPanel } from "../components/MarketPanel";
+import { PageHeader } from "../components/PageHeader";
 
 export function TradePage() {
   const { apiOnline } = useStatus();
@@ -37,13 +39,12 @@ export function TradePage() {
   if (tradingReady === false) {
     return (
       <div className="page page--trade">
-        <header className="page__header">
-          <div>
-            <p className="eyebrow">合约下单</p>
-            <h1>Trade</h1>
-            <span className="page__subtitle">人工下单 / 合约预览 / 风险闸门</span>
-          </div>
-        </header>
+        <PageHeader
+          icon={<ArrowLeftRight size={18} />}
+          eyebrow="合约下单"
+          title="Trade"
+          subtitle="人工下单 / 合约预览 / 风险闸门"
+        />
         <ErrorPanel
           title="未配置交易交易所"
           message="要执行真实下单，需要在 .env 中配置至少一个交易所的 API Key 并启用 ENABLE_LIVE_TRADING=true。公开市场数据无需 Key，可在「行情」和「数据源」页面查询。"
@@ -168,13 +169,12 @@ export function TradePage() {
 
   return (
     <div className="page page--trade">
-      <header className="page__header">
-        <div>
-          <p className="eyebrow">人工下单</p>
-          <h1>下单单</h1>
-          <span className="page__subtitle">合约预览 · 一键提交 · 预览后才下单</span>
-        </div>
-      </header>
+      <PageHeader
+        icon={<ArrowLeftRight size={18} />}
+        eyebrow="人工下单"
+        title="下单"
+        subtitle="合约预览 · 一键提交 · 预览后才下单"
+      />
 
       <div className="page__grid page__grid--two-thirds">
         <OrderPanel

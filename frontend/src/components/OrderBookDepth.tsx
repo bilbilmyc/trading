@@ -98,7 +98,7 @@ export function OrderBookDepth({
           x2={xFor(midPrice)}
           y1={padTop}
           y2={padTop + plotH}
-          stroke="#475569"
+          stroke="var(--chart-axis)"
           strokeWidth={1}
           strokeDasharray="2 3"
         />
@@ -115,8 +115,8 @@ export function OrderBookDepth({
             `L ${xFor(midPrice)} ${yFor(0)}`,
             "Z",
           ].join(" ")}
-          fill="rgba(34, 197, 94, 0.25)"
-          stroke="#22c55e"
+          fill="var(--chart-bull-soft)"
+          stroke="var(--chart-bull)"
           strokeWidth={1.5}
         />
       )}
@@ -132,8 +132,8 @@ export function OrderBookDepth({
             `L ${xFor(midPrice)} ${yFor(0)}`,
             "Z",
           ].join(" ")}
-          fill="rgba(239, 68, 68, 0.25)"
-          stroke="#ef4444"
+          fill="var(--chart-bear-soft)"
+          stroke="var(--chart-bear)"
           strokeWidth={1.5}
         />
       )}

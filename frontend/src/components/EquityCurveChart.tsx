@@ -13,12 +13,12 @@ interface EquityCurveChartProps {
 }
 
 const SERIES_COLORS = [
-  "#6366f1",   // indigo
-  "#22c55e",   // green
-  "#f59e0b",   // amber
-  "#ec4899",   // pink
-  "#06b6d4",   // cyan
-  "#a78bfa",   // violet
+  "var(--chart-series-1)",
+  "var(--chart-series-2)",
+  "var(--chart-series-3)",
+  "var(--chart-series-4)",
+  "var(--chart-series-5)",
+  "var(--chart-series-6)",
 ];
 
 function useMemoLayout(curves: Record<string, CurvePoint[]>, width: number, height: number) {
@@ -94,7 +94,7 @@ const EquityCurveChartInner = memo(function EquityCurveChartInner({
           x2={width - padRight}
           y1={t.y}
           y2={t.y}
-          stroke="#1f2a55"
+          stroke="var(--chart-grid)"
           strokeWidth={0.5}
           strokeDasharray="2 4"
         />

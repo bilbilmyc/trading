@@ -1,8 +1,10 @@
 import { useCallback, useEffect, useState } from "react";
 import { Link } from "wouter";
+import { RefreshCw, Star, X } from "lucide-react";
 
 import { api } from "../api";
-import { Metric, SectionTitle } from "../components/atoms";
+import { Card } from "../components/Card";
+import { PageHeader } from "../components/PageHeader";
 
 interface Ticker {
   symbol: string;
@@ -20,9 +22,11 @@ const KNOWN_SOURCES = [
 
 const STORAGE_KEY = "quant_trader_watchlist_v1";
 
+type Exchange = "binance_usdm" | "okx_swap" | "bitget_usdt_futures";
+
 interface WatchlistItem {
   symbol: string;
-  exchange: string;
+  exchange: Exchange;
 }
 
 function loadWatchlist(): WatchlistItem[] {
@@ -49,13 +53,18 @@ function saveWatchlist(items: WatchlistItem[]) {
   localStorage.setItem(STORAGE_KEY, JSON.stringify(items));
 }
 
+function formatPrice(v: number | undefined): string {
+  if (v === undefined) return "--";
+  return `$${v.toFixed(v > 1000 ? 1 : 4)}`;
+}
+
 export function WatchlistPage() {
   const [items, setItems] = useState<WatchlistItem[]>(loadWatchlist);
   const [prices, setPrices] = useState<Record<string, Ticker | null>>({});
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState("");
   const [newSymbol, setNewSymbol] = useState("");
-  const [newExchange, setNewExchange] = useState<"binance_usdm" | "okx_swap" | "bitget_usdt_futures">("binance_usdm");
+  const [newExchange, setNewExchange] = useState<Exchange>("binance_usdm");
 
   const refresh = useCallback(async () => {
     setRefreshing(true);
@@ -64,10 +73,7 @@ export function WatchlistPage() {
       const next: Record<string, Ticker | null> = {};
       for (const item of items) {
         try {
-          const t = await api.ticker(
-            item.exchange as "binance_usdm" | "okx_swap" | "bitget_usdt_futures",
-            item.symbol
-          );
+          const t = await api.ticker(item.exchange, item.symbol);
           next[`${item.exchange}:${item.symbol}`] = t as Ticker;
         } catch {
           next[`${item.exchange}:${item.symbol}`] = null;
@@ -83,7 +89,7 @@ export function WatchlistPage() {
 
   useEffect(() => {
     refresh();
-    const id = window.setInterval(refresh, 10_000);  // 10s refresh
+    const id = window.setInterval(refresh, 10_000);
     return () => window.clearInterval(id);
   }, [refresh]);
 
@@ -104,25 +110,25 @@ export function WatchlistPage() {
 
   return (
     <div className="page page--watchlist">
-      <header className="page__header">
-        <div>
-          <p className="eyebrow">自选观察</p>
-          <h1>Watchlist</h1>
-          <span className="page__subtitle">
-            多币种多交易所实时行情 · 10s 自动刷新
-          </span>
-        </div>
-        <button
-          className="action action--primary"
-          onClick={refresh}
-          disabled={refreshing}
-        >
-          {refreshing ? "刷新中..." : "刷新"}
-        </button>
-      </header>
+      <PageHeader
+        icon={<Star size={18} />}
+        eyebrow="自选观察"
+        title="Watchlist"
+        subtitle="多币种多交易所实时行情 · 10s 自动刷新"
+        actions={
+          <button
+            type="button"
+            className="action action--primary"
+            onClick={refresh}
+            disabled={refreshing}
+          >
+            <RefreshCw size={14} className={refreshing ? "spin" : ""} />
+            {refreshing ? "刷新中..." : "刷新"}
+          </button>
+        }
+      />
 
-      <section className="panel">
-        <SectionTitle title="添加自选" subtitle="输入合约代码 + 选择交易所" />
+      <Card title="添加自选" subtitle="输入合约代码 + 选择交易所">
         <div className="form-grid form-grid--inline">
           <label className="field">
             <span>合约代码</span>
@@ -137,15 +143,18 @@ export function WatchlistPage() {
             <span>交易所</span>
             <select
               value={newExchange}
-              onChange={(e) => setNewExchange(e.target.value as typeof newExchange)}
+              onChange={(e) => setNewExchange(e.target.value as Exchange)}
             >
               {KNOWN_SOURCES.map((s) => (
-                <option key={s.value} value={s.value}>{s.label}</option>
+                <option key={s.value} value={s.value}>
+                  {s.label}
+                </option>
               ))}
             </select>
           </label>
           <div className="field">
             <button
+              type="button"
               className="action action--primary"
               onClick={addItem}
               disabled={!newSymbol.trim()}
@@ -154,14 +163,10 @@ export function WatchlistPage() {
             </button>
           </div>
         </div>
-        {error && <div className="notice notice--error">{error}</div>}
-      </section>
+        {error ? <div className="notice notice--error">{error}</div> : null}
+      </Card>
 
-      <section className="panel">
-        <SectionTitle
-          title={`自选 (${items.length})`}
-          subtitle="点击合约代码进入行情"
-        />
+      <Card title={`自选 (${items.length})`} subtitle="点击合约代码进入行情">
         {items.length === 0 ? (
           <div className="empty-state">尚无自选 — 上方添加</div>
         ) : (
@@ -172,7 +177,7 @@ export function WatchlistPage() {
               const change = t?.price_change_pct_24h;
               const positive = change !== undefined && change >= 0;
               return (
-                <div key={key} className="watchlist-card">
+                <article key={key} className="card card--padded card--hoverable">
                   <div className="watchlist-card__head">
                     <Link
                       href={`/markets?source=${item.exchange}&symbol=${item.symbol}`}
@@ -182,35 +187,35 @@ export function WatchlistPage() {
                       <small>{item.exchange}</small>
                     </Link>
                     <button
+                      type="button"
                       className="watchlist-card__remove"
                       onClick={() => removeItem(idx)}
                       title="移除"
+                      aria-label={`移除 ${item.symbol}`}
                     >
-                      ×
+                      <X size={14} />
                     </button>
                   </div>
                   {t ? (
                     <div className="watchlist-card__price">
-                      <span className="watchlist-card__last">
-                        ${t.last_price?.toFixed(t.last_price > 1000 ? 1 : 4) ?? "--"}
-                      </span>
-                      {change !== undefined && (
+                      <span className="watchlist-card__last">{formatPrice(t.last_price)}</span>
+                      {change !== undefined ? (
                         <span
                           className={`watchlist-card__change ${positive ? "text-positive" : "text-negative"}`}
                         >
                           {positive ? "▲" : "▼"} {Math.abs(change).toFixed(2)}%
                         </span>
-                      )}
+                      ) : null}
                     </div>
                   ) : (
                     <div className="watchlist-card__loading">加载中…</div>
                   )}
-                </div>
+                </article>
               );
             })}
           </div>
         )}
-      </section>
+      </Card>
     </div>
   );
 }

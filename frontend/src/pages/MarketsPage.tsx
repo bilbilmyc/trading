@@ -1,5 +1,7 @@
 import { useEffect, useState, useCallback } from "react";
 import { useLocation } from "wouter";
+import { TrendingUp } from "lucide-react";
+
 import { useStatus } from "../contexts/StatusContext";
 import { api } from "../api";
 import type {
@@ -13,17 +15,11 @@ import type {
   Ticker,
 } from "../api";
 import { CandleChart, type Candle } from "../components/CandleChart";
-import { EmptyState, Metric, SectionTitle } from "../components/atoms";
-
-function formatNumber(value: number | undefined, digits = 4): string {
-  if (value === undefined || Number.isNaN(value)) return "--";
-  return new Intl.NumberFormat("en-US", { maximumFractionDigits: digits, minimumFractionDigits: 0 }).format(value);
-}
-
-function formatPercent(value: number | undefined): string {
-  if (value === undefined || Number.isNaN(value)) return "--";
-  return `${(value * 100).toFixed(4)}%`;
-}
+import { Card } from "../components/Card";
+import { ListRow } from "../components/ListRow";
+import { Metric } from "../components/atoms";
+import { PageHeader } from "../components/PageHeader";
+import { formatNumber, formatPercent } from "../utils/format";
 
 export function MarketsPage() {
   const [location] = useLocation();
@@ -44,8 +40,8 @@ export function MarketsPage() {
   const [trades, setTrades] = useState<RecentTrade[]>([]);
   const [openOrders, setOpenOrders] = useState<OpenOrder[]>([]);
   const [feeRate, setFeeRate] = useState<FeeRate | null>(null);
-  const [estimate, setEstimate] = useState<CostEstimate | null>(null);
-  const [liquidity, setLiquidity] = useState<Liquidity>("maker");
+  const [_estimate, setEstimate] = useState<CostEstimate | null>(null);
+  const [_liquidity, setLiquidity] = useState<Liquidity>("maker");
   const [candles, setCandles] = useState<Candle[]>([]);
 
   const refreshKlines = useCallback(async () => {
@@ -67,7 +63,9 @@ export function MarketsPage() {
     }
   }, [apiOnline, exchange, symbol, interval]);
 
-  useEffect(() => { refreshKlines(); }, [refreshKlines]);
+  useEffect(() => {
+    refreshKlines();
+  }, [refreshKlines]);
 
   const refreshContracts = useCallback(async () => {
     if (!apiOnline) return;
@@ -97,8 +95,12 @@ export function MarketsPage() {
     }
   }, [apiOnline, exchange, symbol]);
 
-  useEffect(() => { refreshContracts(); }, [refreshContracts]);
-  useEffect(() => { refreshMarket(); }, [refreshMarket]);
+  useEffect(() => {
+    refreshContracts();
+  }, [refreshContracts]);
+  useEffect(() => {
+    refreshMarket();
+  }, [refreshMarket]);
   useEffect(() => {
     if (!ticker || !apiOnline || !symbol) return;
     const id = window.setInterval(refreshMarket, 3000);
@@ -107,18 +109,20 @@ export function MarketsPage() {
 
   return (
     <div className="page page--markets">
-      <header className="page__header">
-        <div>
-          <p className="eyebrow">行情监控</p>
-          <h1>Markets</h1>
-          <span className="page__subtitle">Ticker · 成交 · 挂单 · 费率 · 成本估算 · 3s 刷新</span>
-        </div>
-      </header>
+      <PageHeader
+        icon={<TrendingUp size={18} />}
+        eyebrow="行情监控"
+        title="Markets"
+        subtitle="Ticker · 成交 · 挂单 · 费率 · 成本估算 · 3s 刷新"
+      />
 
       <div className="form-grid form-grid--inline">
         <label className="field">
           <span>交易所</span>
-          <select value={exchange} onChange={(e) => setExchange(e.target.value as ExchangeName)}>
+          <select
+            value={exchange}
+            onChange={(e) => setExchange(e.target.value as ExchangeName)}
+          >
             <option value="binance_usdm">Binance U 本位</option>
             <option value="bitget_usdt_futures">Bitget U 本位</option>
             <option value="okx_swap">OKX 永续</option>
@@ -130,10 +134,14 @@ export function MarketsPage() {
         </label>
         <label className="field">
           <span>搜索</span>
-          <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="BTC, ETH..." />
+          <input
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            placeholder="BTC, ETH..."
+          />
         </label>
         <div className="field">
-          <button className="action action--ghost" onClick={refreshMarket}>
+          <button type="button" className="action action--ghost" onClick={refreshMarket}>
             刷新
           </button>
         </div>
@@ -159,13 +167,22 @@ export function MarketsPage() {
         </label>
       </div>
 
-      <SectionTitle title={`${symbol} K 线`} subtitle={`${interval} · 最近 80 根`} />
-      <CandleChart candles={candles} />
+      <Card title={`${symbol} K 线`} subtitle={`${interval} · 最近 80 根`} padded={false}>
+        <CandleChart candles={candles} />
+      </Card>
 
       <div className="metric-grid">
         <Metric label="最新价" value={`$${formatNumber(ticker?.last_price, 2)}`} />
-        <Metric label="24h 涨跌" value={`${formatNumber(ticker?.price_change_pct_24h, 2)}%`} tone={(ticker?.price_change_pct_24h ?? 0) >= 0 ? "positive" : "negative"} />
-        <Metric label="24h 成交额" value={`$${formatNumber(ticker?.quote_volume_24h, 0)}`} tone="muted" />
+        <Metric
+          label="24h 涨跌"
+          value={`${formatNumber(ticker?.price_change_pct_24h, 2)}%`}
+          tone={(ticker?.price_change_pct_24h ?? 0) >= 0 ? "positive" : "negative"}
+        />
+        <Metric
+          label="24h 成交额"
+          value={`$${formatNumber(ticker?.quote_volume_24h, 0)}`}
+          tone="muted"
+        />
         <Metric label="Maker" value={formatPercent(feeRate?.maker)} tone="muted" />
         <Metric label="Taker" value={formatPercent(feeRate?.taker)} tone="muted" />
       </div>
@@ -174,9 +191,9 @@ export function MarketsPage() {
         {contracts.slice(0, 12).map((c) => (
           <button
             key={c.symbol}
+            type="button"
             className={`market-picker__chip ${symbol === c.symbol ? "active" : ""}`}
             onClick={() => setSymbol(c.symbol)}
-            type="button"
           >
             <strong>{c.base_asset}</strong>
             <small>{c.symbol}</small>
@@ -185,41 +202,43 @@ export function MarketsPage() {
       </div>
 
       <div className="page__grid page__grid--two-thirds">
-        <section className="panel">
-          <SectionTitle title="最近成交" subtitle={`${trades.length} 条`} />
-          <div className="trade-list">
-            {trades.length ? (
-              trades.slice(0, 20).map((t) => (
-                <div className="trade-row" key={t.trade_id}>
-                  <span className={`tag ${t.side === "buy" ? "tag--buy" : "tag--sell"}`}>
-                    {t.side === "buy" ? "买" : "卖"}
-                  </span>
-                  <strong>${formatNumber(t.price, 2)}</strong>
-                  <small>{formatNumber(t.quantity, 6)}</small>
-                </div>
-              ))
-            ) : (
-              <EmptyState>暂无成交</EmptyState>
-            )}
-          </div>
-        </section>
+        <Card title="最近成交" subtitle={`${trades.length} 条`}>
+          {trades.length ? (
+            <div className="trade-list">
+              {trades.slice(0, 20).map((t) => (
+                <ListRow
+                  key={t.trade_id}
+                  leading={
+                    <span className={`tag ${t.side === "buy" ? "tag--buy" : "tag--sell"}`}>
+                      {t.side === "buy" ? "买" : "卖"}
+                    </span>
+                  }
+                  title={`$${formatNumber(t.price, 2)}`}
+                  subtitle={formatNumber(t.quantity, 6)}
+                />
+              ))}
+            </div>
+          ) : (
+            <div className="empty-state">暂无成交</div>
+          )}
+        </Card>
 
-        <section className="panel">
-          <SectionTitle title="当前挂单" subtitle={`${openOrders.length} 个`} />
-          <div className="trade-list">
-            {openOrders.length ? (
-              openOrders.slice(0, 12).map((o, i) => (
-                <div className="trade-row" key={String(o.order_id ?? o.orderId ?? i)}>
-                  <span className="tag tag--neutral">{String(o.side ?? "--")}</span>
-                  <strong>${String(o.price ?? "--")}</strong>
-                  <small>{String(o.status ?? o.quantity ?? "--")}</small>
-                </div>
-              ))
-            ) : (
-              <EmptyState>暂无挂单</EmptyState>
-            )}
-          </div>
-        </section>
+        <Card title="当前挂单" subtitle={`${openOrders.length} 个`}>
+          {openOrders.length ? (
+            <div className="trade-list">
+              {openOrders.slice(0, 12).map((o, i) => (
+                <ListRow
+                  key={String(o.order_id ?? o.orderId ?? i)}
+                  leading={<span className="tag tag--neutral">{String(o.side ?? "--")}</span>}
+                  title={`$${String(o.price ?? "--")}`}
+                  subtitle={String(o.status ?? o.quantity ?? "--")}
+                />
+              ))}
+            </div>
+          ) : (
+            <div className="empty-state">暂无挂单</div>
+          )}
+        </Card>
       </div>
     </div>
   );

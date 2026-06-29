@@ -1,8 +1,12 @@
 import { useEffect, useState } from "react";
+import { PieChart } from "lucide-react";
 
 import { api } from "../api";
 import { EquityCurveChart } from "../components/EquityCurveChart";
-import { Metric, SectionTitle } from "../components/atoms";
+import { Metric } from "../components/atoms";
+import { Card } from "../components/Card";
+import { DataTable, type Column } from "../components/DataTable";
+import { PageHeader } from "../components/PageHeader";
 
 interface PortfolioMetrics {
   sharpe_ratio: number;
@@ -45,7 +49,10 @@ function money(v: number): string {
   return v.toFixed(2);
 }
 
-function toneFor(value: number, threshold: number = 0): "default" | "positive" | "negative" | "warning" | "muted" {
+function toneFor(
+  value: number,
+  threshold = 0,
+): "default" | "positive" | "negative" | "warning" | "muted" {
   if (!isFinite(value)) return "muted";
   if (value > threshold) return "positive";
   if (value < -threshold) return "negative";
@@ -72,21 +79,60 @@ export function PortfolioPage() {
       .catch(() => setCurves({}));
   }, []);
 
+  const columns: Column<LeaderboardEntry>[] = [
+    { key: "rank", header: "排名", width: "0.6fr", align: "right", render: (e) => String(e.rank) },
+    { key: "strategy", header: "策略", width: "1.4fr", render: (e) => <strong>{e.strategy}</strong> },
+    {
+      key: "score",
+      header: "得分",
+      width: "0.8fr",
+      align: "right",
+      render: (e) => <span className="data-table__cell--num">{e.score.toFixed(2)}</span>,
+    },
+    {
+      key: "sharpe",
+      header: "Sharpe",
+      width: "0.8fr",
+      align: "right",
+      render: (e) => <span className="data-table__cell--num">{e.metrics.sharpe_ratio.toFixed(2)}</span>,
+    },
+    {
+      key: "win",
+      header: "胜率",
+      width: "0.7fr",
+      align: "right",
+      render: (e) => <span className="data-table__cell--num">{pct(e.metrics.win_rate)}</span>,
+    },
+    {
+      key: "dd",
+      header: "回撤",
+      width: "0.7fr",
+      align: "right",
+      render: (e) => (
+        <span className="data-table__cell--num text-negative">
+          {pct(e.metrics.max_drawdown)}
+        </span>
+      ),
+    },
+    {
+      key: "trades",
+      header: "交易数",
+      width: "0.7fr",
+      align: "right",
+      render: (e) => <span className="data-table__cell--num">{e.metrics.total_trades}</span>,
+    },
+  ];
+
   return (
     <div className="page page--portfolio">
-      <header className="page__header">
-        <div>
-          <p className="eyebrow">投资组合分析</p>
-          <h1>Portfolio</h1>
-          <span className="page__subtitle">Sharpe · Sortino · 最大回撤 · 策略排行榜</span>
-        </div>
-      </header>
+      <PageHeader
+        icon={<PieChart size={18} />}
+        eyebrow="投资组合分析"
+        title="Portfolio"
+        subtitle="Sharpe · Sortino · 最大回撤 · 策略排行榜"
+      />
 
-      <section className="panel">
-        <SectionTitle
-          title="风险调整收益"
-          subtitle="Sharpe / Sortino / Profit Factor / Expectancy"
-        />
+      <Card title="风险调整收益" subtitle="Sharpe / Sortino / Profit Factor / Expectancy">
         {metrics ? (
           <div className="metric-grid">
             <Metric
@@ -109,11 +155,7 @@ export function PortfolioPage() {
               value={money(metrics.expectancy)}
               tone={toneFor(metrics.expectancy)}
             />
-            <Metric
-              label="Max Drawdown"
-              value={pct(metrics.max_drawdown)}
-              tone="negative"
-            />
+            <Metric label="Max Drawdown" value={pct(metrics.max_drawdown)} tone="negative" />
             <Metric
               label="DD Periods"
               value={String(metrics.max_drawdown_periods)}
@@ -129,11 +171,7 @@ export function PortfolioPage() {
               value={pct(metrics.annualized_return)}
               tone={toneFor(metrics.annualized_return)}
             />
-            <Metric
-              label="Total Trades"
-              value={String(metrics.total_trades)}
-              tone="muted"
-            />
+            <Metric label="Total Trades" value={String(metrics.total_trades)} tone="muted" />
             <Metric
               label="Win Streak"
               value={String(metrics.max_consecutive_wins)}
@@ -153,56 +191,25 @@ export function PortfolioPage() {
         ) : (
           <div className="empty-state">尚无交易历史 — 启动策略或回测后查看分析</div>
         )}
-      </section>
+      </Card>
 
-      <section className="panel">
-        <SectionTitle
-          title="策略排行榜"
-          subtitle="按综合得分（Sharpe + 胜率 + 反回撤）排序"
-        />
+      <Card title="策略排行榜" subtitle="按综合得分（Sharpe + 胜率 + 反回撤）排序">
         {leaderboard.length === 0 ? (
           <div className="empty-state">暂无策略数据</div>
         ) : (
-          <table className="leaderboard-table">
-            <thead>
-              <tr>
-                <th>排名</th>
-                <th>策略</th>
-                <th>得分</th>
-                <th>Sharpe</th>
-                <th>胜率</th>
-                <th>回撤</th>
-                <th>交易数</th>
-              </tr>
-            </thead>
-            <tbody>
-              {leaderboard.map((entry) => (
-                <tr key={entry.strategy}>
-                  <td>{entry.rank}</td>
-                  <td><strong>{entry.strategy}</strong></td>
-                  <td>{entry.score.toFixed(2)}</td>
-                  <td>{entry.metrics.sharpe_ratio.toFixed(2)}</td>
-                  <td>{pct(entry.metrics.win_rate)}</td>
-                  <td>{pct(entry.metrics.max_drawdown)}</td>
-                  <td>{entry.metrics.total_trades}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+          <DataTable columns={columns} rows={leaderboard} rowKey={(e) => e.strategy} />
         )}
-      </section>
+      </Card>
 
-      <section className="panel">
-        <SectionTitle
-          title="权益曲线"
-          subtitle="各策略历史净值变化"
-        />
+      <Card title="权益曲线" subtitle="各策略历史净值变化" padded={false}>
         {Object.keys(curves).length === 0 ? (
-          <div className="empty-state">暂无权益曲线 — 策略交易后自动记录</div>
+          <div className="empty-state" style={{ padding: "var(--space-6)" }}>
+            暂无权益曲线 — 策略交易后自动记录
+          </div>
         ) : (
           <EquityCurveChart curves={curves} width={960} height={320} />
         )}
-      </section>
+      </Card>
     </div>
   );
 }

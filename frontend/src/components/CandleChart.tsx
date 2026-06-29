@@ -13,7 +13,9 @@ interface CandleChartProps {
   candles: Candle[];
   width?: number;
   height?: number;
+  /** Override bull color (defaults to var(--chart-bull)). */
   bullColor?: string;
+  /** Override bear color (defaults to var(--chart-bear)). */
   bearColor?: string;
   /** Show moving average overlays. Defaults to [20, 60]. Pass [] to disable. */
   ma_periods?: number[];
@@ -21,7 +23,8 @@ interface CandleChartProps {
   show_volume?: boolean;
 }
 
-const MA_COLORS = ["#f59e0b", "#ec4899", "#06b6d4"];
+/** Token-based MA palette — auto-adapts to current theme via CSS variables. */
+const MA_COLORS = ["var(--chart-ma-1)", "var(--chart-ma-2)", "var(--chart-ma-3)"];
 
 function sma(values: number[], period: number): (number | null)[] {
   const out: (number | null)[] = [];
@@ -132,7 +135,7 @@ const ChartSvg = memo(function ChartSvg({
           x2={width - 8}
           y1={t.y}
           y2={t.y}
-          stroke="#25305a"
+          stroke="var(--chart-grid)"
           strokeWidth={0.5}
           strokeDasharray="2 4"
         />
@@ -235,8 +238,8 @@ export function CandleChart({
   candles,
   width = 720,
   height = 240,
-  bullColor = "#22c55e",
-  bearColor = "#ef4444",
+  bullColor = "var(--chart-bull)",
+  bearColor = "var(--chart-bear)",
   ma_periods = [20, 60],
   show_volume = true,
 }: CandleChartProps) {

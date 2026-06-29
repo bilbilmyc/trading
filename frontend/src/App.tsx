@@ -3,6 +3,7 @@ import { Redirect, Route, Switch } from "wouter";
 
 import { EngineProvider } from "./contexts/EngineContext";
 import { StatusProvider } from "./contexts/StatusContext";
+import { ThemeProvider } from "./contexts/ThemeContext";
 import { LoadingFallback } from "./components/LoadingFallback";
 import { Sidebar } from "./components/Sidebar";
 import { Topbar } from "./components/Topbar";
@@ -24,42 +25,44 @@ export default function App() {
   const [sidebarOpen, setSidebarOpen] = useState(false);
 
   return (
-    <StatusProvider>
-      <EngineProvider>
-        <div className="app-shell app-shell--with-sidebar">
-          <Sidebar open={sidebarOpen} onClose={() => setSidebarOpen(false)} />
+    <ThemeProvider>
+      <StatusProvider>
+        <EngineProvider>
+          <div className="app-shell app-shell--with-sidebar">
+            <Sidebar open={sidebarOpen} onClose={() => setSidebarOpen(false)} />
 
-          <div className="app-main">
-            <button
-              className="hamburger"
-              onClick={() => setSidebarOpen(true)}
-              aria-label="打开导航"
-            >
-              ☰
-            </button>
-            <Topbar />
-            <Suspense fallback={<LoadingFallback title="加载中" hint="请稍候" />}>
-              <Switch>
-                <Route path="/" component={() => <Redirect to="/data" />} />
-                <Route path="/data" component={DataPage} />
-                <Route path="/watchlist" component={WatchlistPage} />
-                <Route path="/portfolio" component={PortfolioPage} />
-                <Route path="/trade" component={TradePage} />
-                <Route path="/trade-history" component={TradeHistoryPage} />
-                <Route path="/markets" component={MarketsPage} />
-                <Route path="/strategies" component={StrategiesPage} />
-                <Route path="/risk" component={RiskPage} />
-                <Route path="/audit" component={AuditPage} />
-                <Route path="/settings" component={SettingsPage} />
-                <Route path="/404" component={NotFoundPage} />
-                <Route>
-                  <NotFoundPage />
-                </Route>
-              </Switch>
-            </Suspense>
+            <div className="app-main">
+              <button
+                className="hamburger"
+                onClick={() => setSidebarOpen(true)}
+                aria-label="打开导航"
+              >
+                ☰
+              </button>
+              <Topbar />
+              <Suspense fallback={<LoadingFallback title="加载中" hint="请稍候" />}>
+                <Switch>
+                  <Route path="/" component={() => <Redirect to="/data" />} />
+                  <Route path="/data" component={DataPage} />
+                  <Route path="/watchlist" component={WatchlistPage} />
+                  <Route path="/portfolio" component={PortfolioPage} />
+                  <Route path="/trade" component={TradePage} />
+                  <Route path="/trade-history" component={TradeHistoryPage} />
+                  <Route path="/markets" component={MarketsPage} />
+                  <Route path="/strategies" component={StrategiesPage} />
+                  <Route path="/risk" component={RiskPage} />
+                  <Route path="/audit" component={AuditPage} />
+                  <Route path="/settings" component={SettingsPage} />
+                  <Route path="/404" component={NotFoundPage} />
+                  <Route>
+                    <NotFoundPage />
+                  </Route>
+                </Switch>
+              </Suspense>
+            </div>
           </div>
-        </div>
-      </EngineProvider>
-    </StatusProvider>
+        </EngineProvider>
+      </StatusProvider>
+    </ThemeProvider>
   );
 }
