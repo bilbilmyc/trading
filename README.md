@@ -41,7 +41,7 @@
 - [Docker](#docker)
 - [API 参考](#api-参考)
 - [项目结构](#项目结构)
-- [后续开发](#后续开发)
+- [后续开发](#后续开发) · [文档索引](#文档索引)
 - [常见问题](#常见问题)
 
 ---
@@ -627,7 +627,20 @@ POST  /api/v1/sync/positions/{exchange}
 
 ## 后续开发
 
-后续任务以专业量化系统为目标拆分在 [TODO.md](TODO.md)，包括数据层、回测、组合风控、OMS/EMS、监控运维和测试体系。下次继续开发时优先从 `Next Best Task` 开始。
+详细规划与项目状态见 [`docs/STATUS.md`](docs/STATUS.md)（2026-06-29 审计，约 70-75% 完成度）。
+近期完成 / 进行中：[`CHANGELOG.md`](CHANGELOG.md)。
+
+## 文档索引
+
+- [`docs/STATUS.md`](docs/STATUS.md) — 项目完成度 5 维度审计报告
+- [`docs/architecture.svg`](docs/architecture.svg) — 系统架构图
+- [`docs/llm-architecture.svg`](docs/llm-architecture.svg) — LLM D→B→A 三层架构图
+- [`docs/api.md`](docs/api.md) — HTTP API 参考 + 鉴权说明
+- [`docs/deployment.md`](docs/deployment.md) — 部署指南（开发/生产/Docker）
+- [`docs/security.md`](docs/security.md) — 安全指南与 5 重 LLM 风控闸门
+- [`CHANGELOG.md`](CHANGELOG.md) — 版本变更日志
+- [`CONTRIBUTING.md`](CONTRIBUTING.md) — 贡献指南
+- [`SECURITY.md`](SECURITY.md) — 漏洞报告策略
 
 ---
 
@@ -668,9 +681,29 @@ echo <GITHUB_TOKEN> | docker login ghcr.io -u <USER> --password-stdin
 
 ## 后续路线
 
-- [ ] 单元测试：交易所签名、symbol 标准化、风控拦截
-- [x] 订单/风控事件持久化：SQLite
-- [ ] 完整 OMS 订单状态持久化：PostgreSQL/SQLite migration
+按 ROI 排序（详见 [`docs/STATUS.md`](docs/STATUS.md) §3）：
+
+### P0（核心安全/质量门禁）
+- [x] API 鉴权中间件（`AUTH_API_KEY` 可选 Bearer token）— commit `a856a36`
+- [x] LLM Prompt 风险上下文 + few-shot — commit `8b28b41` + `91a019c`
+- [x] LLM symbol 白名单 — commit `73f333d`
+- [x] CI 移除 `--ignore=` 死配置 — commit `4e007e2`
+- [x] paper_trading / llm_analyzer 单元测试 — commit `e334f41` + `a8d11c6`
+
+### P1（已规划 / 部分完成）
+- [x] ruff + mypy + pre-commit 工具链 — commit `cbcdf5f`
+- [x] 修 set_strategy_mode live 模式矛盾 — commit `9d5b206`
+- [x] server.py 抽 schemas + helpers（1848 → 1705 行）— commit `6917863`
+- [ ] 前端加 vitest 基础（**待做**）
+- [ ] server.py 路由分组（第二阶段，需 APIRouter 重构）
+
+### P2（长期 / 不阻塞）
 - [ ] 私有 WebSocket：订单成交推送
-- [ ] 多用户认证
-- [ ] 策略回测框架
+- [ ] 完整 OMS 状态机（PostgreSQL + Alembic）
+- [ ] 多用户认证（JWT + RBAC）
+- [ ] 策略回测框架可视化
+- [ ] Prometheus / OTel metrics 端点
+
+近期不再添加的项（明确不投入）：
+- 自动化测试覆盖率门槛（P1-2 已剔除）—— 代码健康看 reviewer，不靠门槛
+- 公网部署方案 —— 项目定位是个人 localhost 使用

@@ -1,0 +1,75 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 720 480" font-family="ui-sans-serif, system-ui, sans-serif" font-size="13">
+  <style>
+    .box { fill: #1A2440; stroke: #2A365C; stroke-width: 1.5; }
+    .box-accent { fill: #0E2230; stroke: #38BDF8; stroke-width: 2; }
+    .text { fill: #F1F5F9; }
+    .text-dim { fill: #7B86A3; font-size: 11px; }
+    .arrow { stroke: #38BDF8; stroke-width: 1.5; fill: none; marker-end: url(#arr); }
+    .arrow-dim { stroke: #4F5874; stroke-width: 1; fill: none; marker-end: url(#arrd); }
+  </style>
+  <defs>
+    <marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#38BDF8"/>
+    </marker>
+    <marker id="arrd" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#4F5874"/>
+    </marker>
+  </defs>
+
+  <text x="20" y="28" class="text" font-size="18" font-weight="600">Web3 Trading — 系统架构</text>
+  <text x="20" y="48" class="text-dim">React 19 前端 · FastAPI 后端 · 3 交易所适配器 · 5 LLM provider</text>
+
+  <!-- Frontend layer -->
+  <rect x="20"  y="80"  class="box" width="200" height="80" rx="10"/>
+  <text x="120" y="105" class="text" text-anchor="middle" font-weight="600">React 19 Frontend</text>
+  <text x="120" y="125" class="text-dim" text-anchor="middle">11 pages · 双主题 · Vite</text>
+  <text x="120" y="142" class="text-dim" text-anchor="middle">vite proxy → :8000</text>
+
+  <!-- FastAPI layer -->
+  <rect x="260" y="80"  class="box-accent" width="200" height="80" rx="10"/>
+  <text x="360" y="105" class="text" text-anchor="middle" font-weight="600">FastAPI Backend</text>
+  <text x="360" y="125" class="text-dim" text-anchor="middle">70+ routes · 6 端口 LiveOrderPipeline</text>
+  <text x="360" y="142" class="text-dim" text-anchor="middle">auth · risk · pydantic</text>
+
+  <!-- Right column: Engine -->
+  <rect x="500" y="80"  class="box" width="200" height="80" rx="10"/>
+  <text x="600" y="105" class="text" text-anchor="middle" font-weight="600">TradingEngine</text>
+  <text x="600" y="125" class="text-dim" text-anchor="middle">信号分发 · 订单同步</text>
+  <text x="600" y="142" class="text-dim" text-anchor="middle">position mgr · monitor</text>
+
+  <!-- Strategies -->
+  <rect x="500" y="200" class="box" width="200" height="60" rx="10"/>
+  <text x="600" y="225" class="text" text-anchor="middle" font-weight="600">Strategies</text>
+  <text x="600" y="245" class="text-dim" text-anchor="middle">SMA · LLM (5 providers) · registry</text>
+
+  <!-- Exchange adapters -->
+  <rect x="20"  y="320" class="box" width="240" height="80" rx="10"/>
+  <text x="140" y="345" class="text" text-anchor="middle" font-weight="600">Exchange Adapters</text>
+  <text x="140" y="365" class="text-dim" text-anchor="middle">Binance USDⓈ-M · OKX Swap · Bitget USDT</text>
+  <text x="140" y="382" class="text-dim" text-anchor="middle">ContractBase ABC · factory pattern</text>
+
+  <!-- Risk + SQLite -->
+  <rect x="280" y="320" class="box" width="200" height="80" rx="10"/>
+  <text x="380" y="345" class="text" text-anchor="middle" font-weight="600">Risk + Kill Switch</text>
+  <text x="380" y="365" class="text-dim" text-anchor="middle">5 重保险 · 限速 · 日亏 · 回撤</text>
+  <text x="380" y="382" class="text-dim" text-anchor="middle">per-symbol override</text>
+
+  <!-- SQLite -->
+  <rect x="500" y="320" class="box" width="200" height="80" rx="10"/>
+  <text x="600" y="345" class="text" text-anchor="middle" font-weight="600">SQLite (WAL)</text>
+  <text x="600" y="365" class="text-dim" text-anchor="middle">trades · signals · events</text>
+  <text x="600" y="382" class="text-dim" text-anchor="middle">paper_account · positions</text>
+
+  <!-- Arrows -->
+  <line x1="220" y1="120" x2="260" y2="120" class="arrow"/>
+  <line x1="460" y1="120" x2="500" y2="120" class="arrow"/>
+  <line x1="600" y1="160" x2="600" y2="200" class="arrow"/>
+  <line x1="360" y1="160" x2="360" y2="320" class="arrow-dim"/>
+  <line x1="460" y1="360" x2="500" y2="360" class="arrow-dim"/>
+  <line x1="480" y1="360" x2="500" y2="360" class="arrow-dim"/>
+  <line x1="140" y1="320" x2="360" y2="360" class="arrow-dim"/>
+  <line x1="140" y1="160" x2="140" y2="320" class="arrow"/>
+
+  <text x="20"  y="450" class="text-dim">本地个人使用 · localhost · Pydantic + FastAPI + SQLite + loguru · 738 测试</text>
+</svg>
