@@ -6,9 +6,8 @@ source control and prefer testnet/simulated trading until the whole flow has
 been verified.
 """
 
-from functools import lru_cache
 import os
-from typing import Optional
+from functools import lru_cache
 
 from pydantic import BaseModel, Field
 
@@ -25,7 +24,7 @@ except ImportError:
         values: dict[str, str] = {}
         if not os.path.exists(path):
             return values
-        with open(path, "r", encoding="utf-8") as env_file:
+        with open(path, encoding="utf-8") as env_file:
             for line in env_file:
                 stripped = line.strip()
                 if not stripped or stripped.startswith("#") or "=" not in stripped:
@@ -262,7 +261,7 @@ class Settings(BaseSettings):
             max_orders_per_minute=self.max_orders_per_minute,
         )
 
-    def exchange(self, name: str) -> Optional[ExchangeSettings]:
+    def exchange(self, name: str) -> ExchangeSettings | None:
         """Return settings for an exchange by its public name."""
 
         exchanges = {
