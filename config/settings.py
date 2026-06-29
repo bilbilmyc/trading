@@ -165,6 +165,15 @@ class Settings(BaseSettings):
     # should set it.
     auth_api_key: str = ""
 
+    # Alert dispatch. Each URL is a custom-bot webhook. Empty = provider
+    # disabled. min_level filters which alerts are forwarded (info/warning/
+    # error/critical). See docs/alerts.md for setup instructions.
+    alert_min_level: str = "warning"
+    alert_feishu_webhook: str = ""
+    alert_dingtalk_webhook: str = ""
+    alert_wecom_webhook: str = ""
+    alert_http_timeout: float = 10.0
+
     # Symbol whitelist for LLM-driven strategies. Empty (default) = the
     # LLM may decide on any symbol it sees. Set to a JSON list in .env
     # to restrict to explicit symbols, e.g.:

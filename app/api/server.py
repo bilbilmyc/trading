@@ -225,6 +225,33 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     setup_logger(settings.log_level)
     state = AppState(settings)
 
+    # Wire alert dispatcher (Feishu / DingTalk / WeCom webhooks) into
+    # the monitor. Disabled-by-default — providers are only enabled when
+    # their webhook URL is set in .env. See docs/alerts.md.
+    from loguru import logger as _loguru_logger
+
+    from app.engine.alert_dispatcher import AlertDispatcher, DispatcherConfig
+    from app.engine.monitor import AlertLevel as _AlertLevel
+
+    try:
+        min_level = _AlertLevel(settings.alert_min_level.lower())
+    except ValueError:
+        min_level = _AlertLevel.WARNING
+
+    _dispatcher = AlertDispatcher(DispatcherConfig(
+        min_level=min_level,
+        feishu_url=settings.alert_feishu_webhook,
+        dingtalk_url=settings.alert_dingtalk_webhook,
+        wecom_url=settings.alert_wecom_webhook,
+        http_timeout=settings.alert_http_timeout,
+    ))
+    if _dispatcher.providers:
+        state.engine.monitor.on_alert(_dispatcher.handle_alert)
+        _loguru_logger.info(
+            f"Alert dispatcher wired to {len(_dispatcher.providers)} provider(s) "
+            f"(min_level={min_level.value})"
+        )
+
     @asynccontextmanager
     async def lifespan(app: FastAPI):
         # lifespan 是 FastAPI 的启动/关闭钩子。
