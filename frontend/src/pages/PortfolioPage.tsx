@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 
 import { api } from "../api";
+import { EquityCurveChart } from "../components/EquityCurveChart";
 import { Metric, SectionTitle } from "../components/atoms";
 
 interface PortfolioMetrics {
@@ -28,6 +29,12 @@ interface LeaderboardEntry {
   metrics: PortfolioMetrics;
 }
 
+interface CurvePoint {
+  timestamp: string;
+  equity: number;
+  trade_id?: string | null;
+}
+
 function pct(v: number, digits = 2): string {
   if (!isFinite(v)) return "∞";
   return `${(v * 100).toFixed(digits)}%`;
@@ -48,6 +55,7 @@ function toneFor(value: number, threshold: number = 0): "default" | "positive" |
 export function PortfolioPage() {
   const [metrics, setMetrics] = useState<PortfolioMetrics | null>(null);
   const [leaderboard, setLeaderboard] = useState<LeaderboardEntry[]>([]);
+  const [curves, setCurves] = useState<Record<string, CurvePoint[]>>({});
 
   useEffect(() => {
     api
@@ -58,6 +66,10 @@ export function PortfolioPage() {
       .strategiesLeaderboard()
       .then((data) => setLeaderboard((data as { strategies: LeaderboardEntry[] }).strategies ?? []))
       .catch(() => setLeaderboard([]));
+    api
+      .portfolioEquityCurves()
+      .then((data) => setCurves((data as { curves: Record<string, CurvePoint[]> }).curves ?? {}))
+      .catch(() => setCurves({}));
   }, []);
 
   return (
@@ -177,6 +189,18 @@ export function PortfolioPage() {
               ))}
             </tbody>
           </table>
+        )}
+      </section>
+
+      <section className="panel">
+        <SectionTitle
+          title="权益曲线"
+          subtitle="各策略历史净值变化"
+        />
+        {Object.keys(curves).length === 0 ? (
+          <div className="empty-state">暂无权益曲线 — 策略交易后自动记录</div>
+        ) : (
+          <EquityCurveChart curves={curves} width={960} height={320} />
         )}
       </section>
     </div>

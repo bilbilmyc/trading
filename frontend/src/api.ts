@@ -494,6 +494,35 @@ export const api = {
       { method: "POST", body: JSON.stringify(payload) }
     ),
 
+  portfolioEquityCurves: () =>
+    request<{ curves: Record<string, Array<{ timestamp: string; equity: number }>> }>(
+      "/api/v1/portfolio/equity-curves"
+    ),
+
+  tradeHistory: (params: { limit?: number; strategy?: string; exchange?: string } = {}) => {
+    const search = new URLSearchParams();
+    if (params.limit) search.set("limit", String(params.limit));
+    if (params.strategy) search.set("strategy", params.strategy);
+    if (params.exchange) search.set("exchange", params.exchange);
+    const qs = search.toString();
+    return request<{
+      trades: Array<{
+        id: string;
+        strategy: string;
+        exchange: string;
+        symbol: string;
+        side: string;
+        quantity: number;
+        entry_price: number;
+        exit_price: number | null;
+        pnl: number;
+        opened_at: string;
+        closed_at: string | null;
+        status: string;
+      }>;
+    }>(`/api/v1/trade-history${qs ? `?${qs}` : ""}`);
+  },
+
   portfolioMetrics: () =>
     request<{
       sharpe_ratio: number;

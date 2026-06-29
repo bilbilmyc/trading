@@ -14,8 +14,9 @@ interface NavItem {
 const NAV_ITEMS: NavItem[] = [
   { href: "/data", label: "数据源", icon: "≣", description: "公开行情 · 数据分析" },
   { href: "/watchlist", label: "自选", icon: "★", description: "多币种实时行情" },
-  { href: "/markets", label: "行情", icon: "↗", description: "Ticker · 成交 · 挂单" },
+  { href: "/markets", label: "行情", icon: "↗", description: "K线 · MA · 成交量" },
   { href: "/trade", label: "下单单", icon: "→", description: "人工下单 / 合约预览" },
+  { href: "/trade-history", label: "交易历史", icon: "⊞", description: "成交 · 盈亏 · 筛选" },
   { href: "/strategies", label: "策略", icon: "◊", description: "策略配置 · 信号流" },
   { href: "/portfolio", label: "投资组合", icon: "∑", description: "Sharpe · Sortino · 排行榜" },
   { href: "/risk", label: "风控", icon: "!", description: "Kill switch · 风险指标" },

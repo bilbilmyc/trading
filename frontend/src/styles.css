@@ -1604,3 +1604,133 @@ input, select, button, textarea {
   transform: translateY(-2px);
   box-shadow: var(--shadow-md);
 }
+
+/* Equity curve chart */
+.equity-curve {
+  width: 100%;
+  height: auto;
+  max-height: 360px;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+}
+
+.equity-curve--empty {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 240px;
+  color: var(--text-muted);
+  font-size: 13px;
+}
+
+.equity-curve__label {
+  font-size: 10px;
+  font-family: var(--font-mono);
+  fill: var(--text-muted);
+  text-anchor: end;
+}
+
+.equity-curve__legend {
+  font-size: 10px;
+  font-family: var(--font-mono);
+  fill: var(--text-secondary);
+}
+
+/* Trade history table */
+.trade-history {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.trade-history__row {
+  display: grid;
+  grid-template-columns: 1.5fr 1fr 0.8fr 0.8fr 1fr 0.8fr 0.6fr;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 14px;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  font-size: 13px;
+  transition: border-color var(--transition-fast);
+}
+
+.trade-history__row:hover {
+  border-color: var(--border-strong);
+}
+
+.trade-history__row--head {
+  background: transparent;
+  border: 0;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-muted);
+  font-weight: 500;
+  padding: 0 14px 8px;
+}
+
+.trade-history__cell {
+  font-variant-numeric: tabular-nums;
+}
+
+/* Data sources table */
+.data-sources-table {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.data-sources-table__row {
+  display: grid;
+  grid-template-columns: 1.2fr 0.6fr 0.6fr 1.4fr auto;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 14px;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  font-size: 13px;
+  transition: border-color var(--transition-fast);
+}
+
+.data-sources-table__row:hover {
+  border-color: var(--border-strong);
+}
+
+.data-sources-table__row--head {
+  background: transparent;
+  border: 0;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-muted);
+  font-weight: 500;
+  padding: 0 14px 8px;
+}
+
+.data-sources-table__status {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+.data-sources-table__status::before {
+  content: "";
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--positive);
+}
+
+.data-sources-table__status--builtin::before {
+  background: var(--accent);
+}
+
+.data-sources-table__status--custom::before {
+  background: var(--positive);
+}

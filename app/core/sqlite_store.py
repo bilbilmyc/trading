@@ -427,6 +427,32 @@ class SQLiteStore:
             self._conn.execute("DELETE FROM paper_orders")
             self._conn.commit()
 
+    def recent_paper_orders(
+        self,
+        *,
+        limit: int = 100,
+        strategy: Optional[str] = None,
+        exchange: Optional[str] = None,
+    ) -> List[Dict[str, Any]]:
+        """List recent paper orders, newest first."""
+        clauses: List[str] = []
+        params: List[Any] = []
+        if strategy:
+            clauses.append("strategy = ?")
+            params.append(strategy)
+        if exchange:
+            clauses.append("exchange = ?")
+            params.append(exchange)
+        where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
+        params.append(limit)
+        with self._lock:
+            rows = self._conn.execute(
+                f"SELECT * FROM paper_orders {where} "
+                f"ORDER BY timestamp DESC LIMIT ?",
+                tuple(params),
+            ).fetchall()
+        return [dict(r) for r in rows]
+
     def load_paper_state(self) -> Dict[str, Any]:
         with self._lock:
             account = self._conn.execute("SELECT * FROM paper_account WHERE id = 1").fetchone()

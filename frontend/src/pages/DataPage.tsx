@@ -89,33 +89,71 @@ export function DataPage() {
           subtitle="公开行情无需鉴权；私有操作需要单独配置 key"
         />
         {dataSources.length ? (
-          <div className="source-grid">
+          <div className="data-sources-table">
+            <div className="data-sources-table__row data-sources-table__row--head">
+              <span>名称</span>
+              <span>类型</span>
+              <span>状态</span>
+              <span>地址</span>
+              <span>操作</span>
+            </div>
             {dataSources.map((name) => {
               const known = KNOWN_SOURCES.find((s) => s.value === name);
               const custom = customSources.find((s) => s.name === name);
               const isCustom = Boolean(custom);
+              const display = known?.label ?? custom?.name ?? name;
               return (
-                <div key={name} className="source-card">
-                  <div className="source-card__head">
-                    <strong>{known?.label ?? custom?.name ?? name}</strong>
-                    <span className="source-card__id">{name}</span>
-                  </div>
-                  {custom?.base_url && (
-                    <small className="source-card__url">{custom.base_url}</small>
-                  )}
-                  <div className="source-card__actions">
-                    <Link href={`/markets?source=${name}`} className="action action--ghost">
+                <div
+                  key={name}
+                  className="data-sources-table__row lift-hover"
+                >
+                  <span>
+                    <strong>{display}</strong>
+                    <small style={{ color: "var(--text-muted)", display: "block", fontSize: 11 }}>
+                      {name}
+                    </small>
+                  </span>
+                  <span
+                    className={`data-sources-table__status data-sources-table__status--${isCustom ? "custom" : "builtin"}`}
+                  >
+                    {isCustom ? "自定义" : "系统默认"}
+                  </span>
+                  <span
+                    style={{
+                      color: "var(--positive)",
+                      fontSize: 12,
+                    }}
+                  >
+                    ● 在线
+                  </span>
+                  <span
+                    style={{
+                      color: "var(--text-muted)",
+                      fontFamily: "var(--font-mono)",
+                      fontSize: 12,
+                      wordBreak: "break-all",
+                    }}
+                  >
+                    {custom?.base_url || "(系统默认路由)"}
+                  </span>
+                  <span style={{ display: "flex", gap: 6 }}>
+                    <Link
+                      href={`/markets?source=${name}`}
+                      className="action action--ghost"
+                      style={{ fontSize: 12, padding: "4px 10px" }}
+                    >
                       浏览行情
                     </Link>
                     {isCustom && (
                       <button
                         className="action action--ghost"
+                        style={{ fontSize: 12, padding: "4px 10px" }}
                         onClick={() => removeCustom(name)}
                       >
                         移除
                       </button>
                     )}
-                  </div>
+                  </span>
                 </div>
               );
             })}

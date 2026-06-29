@@ -1342,6 +1342,53 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
         from app.engine.portfolio_metrics import compute_metrics
         return compute_metrics([]).__dict__
 
+    @app.get("/api/v1/portfolio/equity-curves")
+    async def portfolio_equity_curves(
+        since: Optional[str] = None,
+        state: AppState = Depends(get_state),
+    ):
+        """Multi-strategy equity curves for portfolio chart."""
+        from app.engine.equity_curve import EquityCurveStore
+
+        store = EquityCurveStore(state.settings.sqlite_path)
+        curves = store.all_strategies_equity_curves(since=since)
+        # Return as JSON-serializable dict.
+        out: Dict[str, Any] = {}
+        for strategy, snaps in curves.items():
+            out[strategy] = [
+                {"timestamp": s.timestamp, "equity": s.equity, "trade_id": s.trade_id}
+                for s in snaps
+            ]
+        return {"curves": out}
+
+    @app.get("/api/v1/strategies/{name}/equity-curve")
+    async def strategy_equity_curve(name: str, state: AppState = Depends(get_state)):
+        """Single strategy equity curve time series."""
+        from app.engine.equity_curve import EquityCurveStore
+
+        store = EquityCurveStore(state.settings.sqlite_path)
+        history = store.history(name)
+        return {
+            "strategy": name,
+            "history": [
+                {"timestamp": s.timestamp, "equity": s.equity, "trade_id": s.trade_id}
+                for s in history
+            ],
+        }
+
+    @app.get("/api/v1/trade-history")
+    async def trade_history(
+        limit: int = 100,
+        strategy: Optional[str] = None,
+        exchange: Optional[str] = None,
+        state: AppState = Depends(get_state),
+    ):
+        """List paper (or live) trade history — newest first."""
+        orders = state.store.recent_paper_orders(
+            limit=limit, strategy=strategy, exchange=exchange
+        )
+        return {"trades": orders}
+
 
     @app.post("/api/v1/atr-sizing")
     async def atr_sizing_endpoint(request: AIAnalyzeRequest):

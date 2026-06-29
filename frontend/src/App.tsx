@@ -13,6 +13,7 @@ const MarketsPage = lazy(() => import("./pages/MarketsPage").then((m) => ({ defa
 const DataPage = lazy(() => import("./pages/DataPage").then((m) => ({ default: m.DataPage })));
 const WatchlistPage = lazy(() => import("./pages/WatchlistPage").then((m) => ({ default: m.WatchlistPage })));
 const PortfolioPage = lazy(() => import("./pages/PortfolioPage").then((m) => ({ default: m.PortfolioPage })));
+const TradeHistoryPage = lazy(() => import("./pages/TradeHistoryPage").then((m) => ({ default: m.TradeHistoryPage })));
 const StrategiesPage = lazy(() => import("./pages/StrategiesPage").then((m) => ({ default: m.StrategiesPage })));
 const RiskPage = lazy(() => import("./pages/RiskPage").then((m) => ({ default: m.RiskPage })));
 const AuditPage = lazy(() => import("./pages/AuditPage").then((m) => ({ default: m.AuditPage })));
@@ -44,6 +45,7 @@ export default function App() {
                 <Route path="/watchlist" component={WatchlistPage} />
                 <Route path="/portfolio" component={PortfolioPage} />
                 <Route path="/trade" component={TradePage} />
+                <Route path="/trade-history" component={TradeHistoryPage} />
                 <Route path="/markets" component={MarketsPage} />
                 <Route path="/strategies" component={StrategiesPage} />
                 <Route path="/risk" component={RiskPage} />
