@@ -627,7 +627,7 @@ POST  /api/v1/sync/positions/{exchange}
 
 ## 后续开发
 
-详细规划与项目状态见 [`docs/STATUS.md`](docs/STATUS.md)（2026-06-29 审计，约 70-75% 完成度）。
+详细规划与项目状态见 [`docs/STATUS.md`](docs/STATUS.md)（2026-06-29 审计，约 82% 完成度）。
 近期完成 / 进行中：[`CHANGELOG.md`](CHANGELOG.md)。
 
 ## 文档索引
@@ -638,6 +638,8 @@ POST  /api/v1/sync/positions/{exchange}
 - [`docs/api.md`](docs/api.md) — HTTP API 参考 + 鉴权说明
 - [`docs/deployment.md`](docs/deployment.md) — 部署指南（开发/生产/Docker）
 - [`docs/security.md`](docs/security.md) — 安全指南与 5 重 LLM 风控闸门
+- [`docs/alerts.md`](docs/alerts.md) — 告警外发（飞书/钉钉/企微）配置
+- [`docs/observability.md`](docs/observability.md) — Prometheus /metrics 端点与 Grafana 仪表盘建议
 - [`CHANGELOG.md`](CHANGELOG.md) — 版本变更日志
 - [`CONTRIBUTING.md`](CONTRIBUTING.md) — 贡献指南
 - [`SECURITY.md`](SECURITY.md) — 漏洞报告策略
@@ -681,21 +683,26 @@ echo <GITHUB_TOKEN> | docker login ghcr.io -u <USER> --password-stdin
 
 ## 后续路线
 
-按 ROI 排序（详见 [`docs/STATUS.md`](docs/STATUS.md) §3）：
+详见 [`docs/STATUS.md`](docs/STATUS.md) §3 与 [`CHANGELOG.md`](CHANGELOG.md) v0.2.0 段。
 
-### P0（核心安全/质量门禁）
-- [x] API 鉴权中间件（`AUTH_API_KEY` 可选 Bearer token）— commit `a856a36`
-- [x] LLM Prompt 风险上下文 + few-shot — commit `8b28b41` + `91a019c`
-- [x] LLM symbol 白名单 — commit `73f333d`
-- [x] CI 移除 `--ignore=` 死配置 — commit `4e007e2`
-- [x] paper_trading / llm_analyzer 单元测试 — commit `e334f41` + `a8d11c6`
+### v0.2.0 已完成（13 个 commit）
+- [x] API 鉴权中间件 — `a856a36`
+- [x] LLM Prompt 风险 + few-shot + 数据接入 — `8b28b41` `91a019c`
+- [x] LLM symbol 白名单 — `73f333d`
+- [x] paper_trading / llm_analyzer 单测 — `e334f41` `a8d11c6`
+- [x] ruff + mypy + pre-commit — `cbcdf5f`
+- [x] 修 set_strategy_mode live 矛盾 — `9d5b206`
+- [x] server.py 抽 schemas + helpers — `6917863`
+- [x] 前端 api.ts 拆 9 个 domain（560 → 66 行）— `62f4850` 系列
+- [x] 告警外发飞书/钉钉/企微 — `7d4eee1`
+- [x] Prometheus /metrics 端点 — `0963ff3`
+- [x] CI 移除 `--ignore=` 死配置 — `4e007e2`
 
-### P1（已规划 / 部分完成）
-- [x] ruff + mypy + pre-commit 工具链 — commit `cbcdf5f`
-- [x] 修 set_strategy_mode live 模式矛盾 — commit `9d5b206`
-- [x] server.py 抽 schemas + helpers（1848 → 1705 行）— commit `6917863`
-- [ ] 前端加 vitest 基础（**待做**）
-- [ ] server.py 路由分组（第二阶段，需 APIRouter 重构）
+### v0.3 候选（按 ROI 排，不承诺时间）
+- 4 个 metrics 埋点深度接入（见 `docs/observability.md`）
+- 前端 Settings 加"测试告警"按钮
+- 钉钉加签 / 飞书签名校验（生产安全加固）
+- server.py 路由分组（需 APIRouter 重构）
 
 ### P2（长期 / 不阻塞）
 - [ ] 私有 WebSocket：订单成交推送
