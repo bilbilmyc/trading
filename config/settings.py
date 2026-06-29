@@ -159,6 +159,12 @@ class Settings(BaseSettings):
     llm_max_candles: int = 100
     llm_default_order_amount: float = 50.0
 
+    # Optional API auth. Empty (default) = no check; set AUTH_API_KEY=... in
+    # .env to require `Authorization: Bearer <key>` on dangerous endpoints.
+    # Local personal use can keep this empty; expose to a network and you
+    # should set it.
+    auth_api_key: str = ""
+
     model_config = SettingsConfigDict(
         env_file=".env",
         env_file_encoding="utf-8",

@@ -24,6 +24,7 @@ from fastapi.responses import StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
+from app.api.auth import require_api_key
 from app.api.cache import TTLCache
 from app.core.sqlite_store import SQLiteStore
 from app.engine.risk_manager import RiskConfig
@@ -680,7 +681,7 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
             "risk": risk,
         }
 
-    @app.post("/api/v1/risk/kill-switch")
+    @app.post("/api/v1/risk/kill-switch", dependencies=[Depends(require_api_key)])
     async def set_kill_switch(
         request: KillSwitchRequest,
         state: AppState = Depends(get_state),
@@ -835,7 +836,10 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
         )
         return preview
 
-    @app.post("/api/v1/contracts/{exchange}/{symbol}/leverage")
+    @app.post(
+        "/api/v1/contracts/{exchange}/{symbol}/leverage",
+        dependencies=[Depends(require_api_key)],
+    )
     async def set_contract_leverage(
         exchange: str,
         symbol: str,
@@ -883,7 +887,7 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
         )
         return result
 
-    @app.post("/api/v1/order")
+    @app.post("/api/v1/order", dependencies=[Depends(require_api_key)])
     async def place_order(request: OrderRequest, state: AppState = Depends(get_state)):
         # 默认只允许读操作；真实下单必须在 .env 里显式开启 ENABLE_LIVE_TRADING。
         if not state.settings.enable_live_trading:
@@ -924,7 +928,7 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
         )
         return result
 
-    @app.post("/api/v1/contracts/order")
+    @app.post("/api/v1/contracts/order", dependencies=[Depends(require_api_key)])
     async def place_contract_order(
         request: ContractOrderRequest,
         state: AppState = Depends(get_state),
@@ -959,7 +963,10 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
         )
         return result
 
-    @app.delete("/api/v1/order/{exchange}/{symbol}/{order_id}")
+    @app.delete(
+        "/api/v1/order/{exchange}/{symbol}/{order_id}",
+        dependencies=[Depends(require_api_key)],
+    )
     async def cancel_order(
         exchange: str,
         symbol: str,
@@ -994,7 +1001,10 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
         )
         return result
 
-    @app.delete("/api/v1/orders/{exchange}/open")
+    @app.delete(
+        "/api/v1/orders/{exchange}/open",
+        dependencies=[Depends(require_api_key)],
+    )
     async def cancel_all_orders(
         exchange: str,
         symbol: Optional[str] = None,
@@ -1032,7 +1042,7 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
     async def signal_runner_status(state: AppState = Depends(get_state)):
         return state.engine.get_signal_runner_status()
 
-    @app.post("/api/v1/runner/start")
+    @app.post("/api/v1/runner/start", dependencies=[Depends(require_api_key)])
     async def start_signal_runner(
         request: SignalRunnerRequest,
         state: AppState = Depends(get_state),
@@ -1043,7 +1053,7 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
             candle_limit=request.candle_limit,
         )
 
-    @app.post("/api/v1/runner/stop")
+    @app.post("/api/v1/runner/stop", dependencies=[Depends(require_api_key)])
     async def stop_signal_runner(state: AppState = Depends(get_state)):
         return await state.engine.stop_signal_runner()
 
@@ -1059,7 +1069,7 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
     async def paper_summary(state: AppState = Depends(get_state)):
         return state.engine.get_paper_summary()
 
-    @app.post("/api/v1/paper/reset")
+    @app.post("/api/v1/paper/reset", dependencies=[Depends(require_api_key)])
     async def reset_paper_account(
         request: PaperResetRequest,
         state: AppState = Depends(get_state),
@@ -1083,7 +1093,7 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
     async def list_strategies(state: AppState = Depends(get_state)):
         return {"strategies": state.engine.list_strategies()}
 
-    @app.post("/api/v1/strategies/sma")
+    @app.post("/api/v1/strategies/sma", dependencies=[Depends(require_api_key)])
     async def create_sma_strategy(
         request: SMAStrategyRequest,
         state: AppState = Depends(get_state),
@@ -1434,7 +1444,7 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
         return feed.latest_dict()
 
 
-    @app.post("/api/v1/ai/analyze")
+    @app.post("/api/v1/ai/analyze", dependencies=[Depends(require_api_key)])
     async def ai_analyze(
         request: AIAnalyzeRequest,
         state: AppState = Depends(get_state),
@@ -1689,7 +1699,7 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
             del state.data_sources[name]
         return {"name": name, "removed": True}
 
-    @app.post("/api/v1/positions/close")
+    @app.post("/api/v1/positions/close", dependencies=[Depends(require_api_key)])
     async def close_position_endpoint(
         request: ClosePositionRequest,
         state: AppState = Depends(get_state),
