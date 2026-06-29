@@ -25,6 +25,7 @@ import { marketApi } from "./api/market";
 import { ordersApi } from "./api/orders";
 import { engineApi } from "./api/engine";
 import { strategiesApi } from "./api/strategies";
+import { portfolioApi } from "./api/portfolio";
 
 // Re-exported so existing `import { Ticker } from "./api"` keeps working
 // while the types live next to the methods that return them.
@@ -56,6 +57,7 @@ export type {
   CreateSMAStrategyPayload,
   SignalRunnerStatus,
 } from "./api/strategies";
+export type { TradeRecord, EquityPoint, LeaderboardEntry } from "./api/portfolio";
 
 // ── Types that still live here (haven't been split yet) ──────────
 
@@ -114,6 +116,7 @@ export const api = {
   ...ordersApi,
   ...engineApi,
   ...strategiesApi,
+  ...portfolioApi,
 
   health: () => request<HealthResponse>("/health"),
 
@@ -134,52 +137,6 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ enabled }),
     }),
-
-  portfolioEquityCurves: () =>
-    request<{ curves: Record<string, Array<{ timestamp: string; equity: number }>> }>(
-      "/api/v1/portfolio/equity-curves",
-    ),
-
-  tradeHistory: (params: { limit?: number; strategy?: string; exchange?: string } = {}) => {
-    const search = new URLSearchParams();
-    if (params.limit) search.set("limit", String(params.limit));
-    if (params.strategy) search.set("strategy", params.strategy);
-    if (params.exchange) search.set("exchange", params.exchange);
-    const qs = search.toString();
-    return request<{
-      trades: Array<{
-        id: string;
-        strategy: string;
-        exchange: string;
-        symbol: string;
-        side: string;
-        quantity: number;
-        entry_price: number;
-        exit_price: number | null;
-        pnl: number;
-        opened_at: string;
-        closed_at: string | null;
-        status: string;
-      }>;
-    }>(`/api/v1/trade-history${qs ? `?${qs}` : ""}`);
-  },
-
-  portfolioMetrics: () =>
-    request<{
-      sharpe_ratio: number;
-      sortino_ratio: number;
-      max_drawdown: number;
-      profit_factor: number;
-      expectancy: number;
-      win_rate: number;
-      total_trades: number;
-      annualized_return: number;
-    }>("/api/v1/portfolio/metrics"),
-
-  strategiesLeaderboard: () =>
-    request<{ strategies: Array<{ rank: number; strategy: string; score: number }> }>(
-      "/api/v1/strategies/leaderboard",
-    ),
 
   aiAnalyze: (payload: { exchange: string; symbol: string; interval: string; limit: number }) =>
     request<LLMAnalysisResult>("/api/v1/ai/analyze", {
