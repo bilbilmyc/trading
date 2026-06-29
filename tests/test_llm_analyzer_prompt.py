@@ -12,6 +12,8 @@ def test_prompt_includes_key_data_fields() -> None:
         volume_24h=1000.0,
         quote_volume_24h=50000000.0,
         position_info="无持仓",
+        risk_section="(无风控数据)",
+        trade_history_section="(无历史交易记录)",
         candle_data="t:1700000000 o:50000 h:50100 l:49900 c:50050 v:100",
     )
     assert "BTCUSDT" in rendered
@@ -27,7 +29,7 @@ def test_prompt_requires_json_only() -> None:
     rendered = PROMPT_TEMPLATE.format(
         symbol="BTCUSDT", interval="1h", current_price=50000.0,
         price_change_24h=2.5, volume_24h=1000.0, quote_volume_24h=50000000.0,
-        position_info="-", candle_data="-",
+        position_info="-", risk_section="-", trade_history_section="-", candle_data="-",
     )
     # Should mention "JSON" prominently
     assert "JSON" in rendered
@@ -40,7 +42,7 @@ def test_prompt_json_template_includes_required_fields() -> None:
     rendered = PROMPT_TEMPLATE.format(
         symbol="BTCUSDT", interval="1h", current_price=50000.0,
         price_change_24h=2.5, volume_24h=1000.0, quote_volume_24h=50000000.0,
-        position_info="-", candle_data="-",
+        position_info="-", risk_section="-", trade_history_section="-", candle_data="-",
     )
     # All required fields are mentioned in the spec.
     for field in ("decision", "confidence", "stop_loss", "take_profit", "risk_level", "entry_zone"):
@@ -72,6 +74,8 @@ def test_prompt_renders_with_empty_position() -> None:
         symbol="ETHUSDT", interval="15m", current_price=3000.0,
         price_change_24h=-1.0, volume_24h=500.0, quote_volume_24h=1500000.0,
         position_info="- 当前无持仓",
+        risk_section="- (无风控数据)",
+        trade_history_section="- (无历史交易记录)",
         candle_data="t:1700000000 o:3000 h:3050 l:2950 c:3000 v:50",
     )
     assert "ETHUSDT" in rendered
