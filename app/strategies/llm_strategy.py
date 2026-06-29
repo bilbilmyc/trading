@@ -35,6 +35,7 @@ class LLMStrategy(StrategyBase):
         min_confidence: float = 0.5,
         min_candles: int = 10,
         max_candles: int = 80,
+        allowed_symbols: Optional[List[str]] = None,
     ):
         super().__init__(name=name)
         self.analyzer = analyzer
@@ -42,6 +43,11 @@ class LLMStrategy(StrategyBase):
         self.min_confidence = min_confidence
         self.min_candles = min_candles
         self.max_candles = max_candles
+        # None or empty list = all symbols allowed. Otherwise an exact-match
+        # set (case-sensitive) of symbol codes the LLM may trade.
+        self.allowed_symbols: Optional[set] = (
+            set(allowed_symbols) if allowed_symbols else None
+        )
 
         # 缓存最近的 K 线数据，键为 symbol
         self._klines: Dict[str, List[Dict[str, Any]]] = {}
@@ -76,6 +82,12 @@ class LLMStrategy(StrategyBase):
 
     async def generate_signals(self, symbol: str) -> Optional[Signal]:
         """调用 LLM 分析并生成交易信号。"""
+
+        # Symbol whitelist gate: refuse symbols not on the configured list
+        # *before* spending tokens on the LLM. An empty/None whitelist
+        # means "no restriction" (backward compat for personal use).
+        if self.allowed_symbols is not None and symbol not in self.allowed_symbols:
+            return None
 
         klines = self._klines.get(symbol, [])
         if not klines:

@@ -61,6 +61,7 @@ class TradingEngine:
         monitor_max_alerts: int = 100,
         store: Optional[SQLiteStore] = None,
         trading_guard: Optional["LiveTradingGuard"] = None,
+        llm_allowed_symbols: Optional[List[str]] = None,
     ):
         self._exchanges: Dict[str, ExchangeBase] = {}
         self._pipelines: Dict[str, LiveOrderPipeline] = {}
@@ -70,6 +71,12 @@ class TradingEngine:
         self._running = False
         self.store = store
         self.trading_guard = trading_guard
+        # Snapshot of the symbol whitelist at engine-construction time.
+        # Restored LLM strategies get this passed in so they remain gated
+        # after a process restart.
+        self._llm_allowed_symbols: Optional[List[str]] = (
+            list(llm_allowed_symbols) if llm_allowed_symbols else None
+        )
 
         # 核心组件
         self.risk_manager = RiskManager(risk_config, trading_guard=trading_guard)
@@ -186,6 +193,10 @@ class TradingEngine:
                         decision_prompt=llm.get("decision_prompt", ""),
                     )
                     strategy._config = cfg
+                # Re-apply the configured symbol whitelist so restored
+                # strategies respect the same gate as freshly-created ones.
+                if self._llm_allowed_symbols is not None:
+                    strategy.allowed_symbols = set(self._llm_allowed_symbols)
                 return strategy
 
             self.strategy_registry.register(

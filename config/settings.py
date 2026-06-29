@@ -165,6 +165,12 @@ class Settings(BaseSettings):
     # should set it.
     auth_api_key: str = ""
 
+    # Symbol whitelist for LLM-driven strategies. Empty (default) = the
+    # LLM may decide on any symbol it sees. Set to a JSON list in .env
+    # to restrict to explicit symbols, e.g.:
+    #   LLM_ALLOWED_SYMBOLS=["BTCUSDT","ETHUSDT","SOLUSDT"]
+    llm_allowed_symbols: list = []
+
     model_config = SettingsConfigDict(
         env_file=".env",
         env_file_encoding="utf-8",

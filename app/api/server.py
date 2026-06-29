@@ -123,6 +123,7 @@ class AppState:
             trading_guard=self.trading_guard,
             max_concurrent_orders=5,
             store=self.store,
+            llm_allowed_symbols=settings.llm_allowed_symbols or None,
         )
         if self.engine.restore_persisted_strategies() == 0:
             self.engine.add_strategy(
@@ -1549,6 +1550,7 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
             name=strategy_name,
             default_order_amount_usdt=amount,
             min_confidence=request.min_confidence,
+            allowed_symbols=state.settings.llm_allowed_symbols or None,
         )
         state.engine.add_strategy(
             strategy_name,
