@@ -18,7 +18,7 @@ from pathlib import Path
 from typing import Any, TypeVar
 
 import httpx
-from fastapi import Depends, FastAPI, HTTPException, Query, Request
+from fastapi import Depends, FastAPI, HTTPException, Query, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from fastapi.staticfiles import StaticFiles
@@ -508,6 +508,22 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     @app.get("/health")
     async def health() -> dict[str, Any]:
         return {"status": "ok", "env": settings.app_env}
+
+    @app.get("/metrics")
+    async def metrics() -> Response:
+        """Prometheus exposition endpoint.
+
+        Returns `qt_orders_total`, `qt_risk_rejections_total`,
+        `qt_llm_call_duration_seconds`, `qt_llm_tokens_total`,
+        `qt_monitor_alerts_total`, `qt_paper_orders_total`,
+        `qt_engine_loop_duration_seconds`, `qt_positions_active`,
+        `qt_app_info`. Body is the standard Prometheus text format —
+        no auth (assumes the endpoint is reachable only from the
+        monitoring network, e.g. behind a Prometheus IP allowlist).
+        """
+        from app.engine.metrics import render as render_metrics
+        body, content_type = render_metrics()
+        return Response(content=body, media_type=content_type)
 
     @app.get("/api/v1/health/venues")
     async def venue_health(state: AppState = Depends(get_state)) -> dict[str, Any]:
