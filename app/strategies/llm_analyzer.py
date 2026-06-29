@@ -167,9 +167,47 @@ class LLMAnalyzer:
         self.config = config or LLMAnalyzerConfig()
         if not self.config.api_key:
             self.config.api_key = os.environ.get("LLM_API_KEY", "")
-        self._provider = provider or OpenAIProvider(
-            api_key=self.config.api_key,
-            base_url=self.config.base_url,
+        # Provider selection by base_url when not explicitly given.
+        # DeepSeek / MiniMax are OpenAI-compatible, so the same class
+        # works for all of them. We pick the subclass by URL prefix.
+        if provider is None:
+            provider = self._select_provider()
+        self._provider = provider
+        self._cache = cache or LLMFingerprintCache(
+            ttl_seconds=self.config.cache_ttl_seconds,
+            max_entries=self.config.cache_max_entries,
+        )
+
+    def _select_provider(self) -> OpenAIProvider:
+        """Pick provider class by config.base_url prefix."""
+        url = (self.config.base_url or "").lower()
+        key = self.config.api_key
+        if "deepseek" in url:
+            from app.engine.deepseek_provider import DeepSeekProvider
+            return DeepSeekProvider(
+                api_key=key, base_url=self.config.base_url,
+                timeout_seconds=self.config.request_timeout,
+            )
+        if "minimax" in url or "minimax" in url:
+            from app.engine.minimax_provider import MiniMaxProvider
+            return MiniMaxProvider(
+                api_key=key, base_url=self.config.base_url,
+                timeout_seconds=self.config.request_timeout,
+            )
+        if "anthropic" in url or "claude" in url:
+            from app.engine.anthropic_provider import AnthropicProvider
+            return AnthropicProvider(
+                api_key=key, base_url=self.config.base_url,
+                timeout_seconds=self.config.request_timeout,
+            )
+        if "ollama" in url or url.endswith(":11434") or "localhost" in url:
+            from app.engine.ollama_provider import OllamaProvider
+            return OllamaProvider(
+                api_key=key, base_url=self.config.base_url,
+                timeout_seconds=self.config.request_timeout,
+            )
+        return OpenAIProvider(
+            api_key=key, base_url=self.config.base_url,
             timeout_seconds=self.config.request_timeout,
             retry_policy=RetryPolicy(),
         )
