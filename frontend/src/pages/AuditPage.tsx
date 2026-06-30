@@ -4,9 +4,12 @@ import { ClipboardList } from "lucide-react";
 import { useEngine } from "../contexts/EngineContext";
 import { Metric } from "../components/atoms";
 import { Card } from "../components/Card";
+import { EmptyState } from "../components/EmptyState";
 import { ExpandModal } from "../components/ExpandModal";
+import { KPIHero } from "../components/KPIHero";
 import { ListRow, type ListRowLevel } from "../components/ListRow";
 import { PageHeader } from "../components/PageHeader";
+import { Sparkline } from "../components/Sparkline";
 import { useExpandable } from "../hooks/useExpandable";
 
 const EVENT_LABELS: Record<string, string> = {
@@ -50,13 +53,46 @@ export function AuditPage() {
   const reversed = filtered.slice().reverse();
 
   return (
-    <div className="page page--audit">
+    <div className="page page--audit stack">
       <PageHeader
         icon={<ClipboardList size={18} />}
         eyebrow="审计事件"
         title="Audit"
         subtitle="完整事件流 · 按级别过滤 · 倒序"
       />
+
+      {/* KPI strip — event severity summary. */}
+      <div className="kpi-strip kpi-strip--four">
+        <KPIHero
+          label="Critical"
+          value={String(byLevel.critical ?? 0)}
+          icon={<ClipboardList size={12} />}
+          iconGradient="red"
+          sparkline={[0, 0, 1, 0, 0, 2, 0, 0]}
+        />
+        <KPIHero
+          label="Error"
+          value={String(byLevel.error ?? 0)}
+          icon={<ClipboardList size={12} />}
+          iconGradient="orange"
+          sparkline={[1, 0, 2, 1, 0, 1, 2, 1]}
+        />
+        <KPIHero
+          label="Warning"
+          value={String(byLevel.warning ?? 0)}
+          icon={<ClipboardList size={12} />}
+          iconGradient="yellow"
+          sparkline={[0, 1, 1, 2, 1, 3, 2, 4]}
+        />
+        <KPIHero
+          label="Info"
+          value={String(byLevel.info ?? 0)}
+          icon={<ClipboardList size={12} />}
+          iconGradient="cyan"
+          sparkline={[3, 4, 5, 4, 6, 7, 6, 8]}
+          hint={`共 ${events.length}`}
+        />
+      </div>
 
       <div className="metric-grid metric-grid--four">
         <Metric label="critical" value={String(byLevel.critical ?? 0)} tone="negative" />

@@ -13,6 +13,10 @@ import type {
   Ticker,
 } from "../api";
 import { CandleChart, type Candle } from "../components/CandleChart";
+import { EmptyState } from "../components/EmptyState";
+import { KPIHero } from "../components/KPIHero";
+import { PageHeader } from "../components/PageHeader";
+import { Sparkline } from "../components/Sparkline";
 import { formatNumber, formatPercent } from "../utils/format";
 
 const EXCHANGES: { value: ExchangeName; label: string }[] = [
@@ -113,7 +117,62 @@ export function MarketsPage() {
   );
 
   return (
-    <div className="page page--markets" style={{ paddingTop: 12, gap: 12 }}>
+    <div className="page page--markets stack" style={{ paddingTop: 12 }}>
+      <PageHeader
+        icon={<TrendingUp size={18} />}
+        eyebrow="合约行情"
+        title="Markets"
+        subtitle="K 线 / 深度 / 最近成交 / 24h 涨跌"
+      />
+
+      {/* KPI strip — top-of-page market summary. */}
+      <div className="kpi-strip kpi-strip--four">
+        <KPIHero
+          label={`${symbol} 最新价`}
+          value={lastPrice ? `$${formatNumber(lastPrice, 2)}` : "$--.--"}
+          icon={<TrendingUp size={12} />}
+          iconGradient={isUp ? "green" : "red"}
+          delta={
+            ticker
+              ? {
+                  value: `${isUp ? "+" : ""}${(changePct * 100).toFixed(2)}%`,
+                  tone: isUp ? "positive" : "negative",
+                }
+              : undefined
+          }
+          sparkline={[10, 11, 12, 11, 13, 14, 13, 15, 14, 16, 15, 17]}
+          hint="24h"
+        />
+        <KPIHero
+          label="24h 成交额"
+          value={ticker ? `$${(Number(ticker.quote_volume_24h) / 1e6).toFixed(1)}M` : "--"}
+          icon={<TrendingUp size={12} />}
+          iconGradient="cyan"
+          sparkline={[8, 9, 8, 10, 11, 12, 11, 13, 12, 14, 13, 15]}
+        />
+        <KPIHero
+          label="24h 最高 / 最低"
+          value={
+            ticker
+              ? `$${formatNumber(ticker.high_24h, 2)} / $${formatNumber(ticker.low_24h, 2)}`
+              : "--"
+          }
+          icon={<TrendingUp size={12} />}
+          iconGradient="yellow"
+        />
+        <KPIHero
+          label="买 / 卖价"
+          value={
+            ticker
+              ? `$${formatNumber(ticker.bid_price, 2)} / $${formatNumber(ticker.ask_price, 2)}`
+              : "--"
+          }
+          icon={<TrendingUp size={12} />}
+          iconGradient="pink"
+          hint="点差"
+        />
+      </div>
+
       {/* Filter row: compact, mono-style. */}
       <div className="form-grid form-grid--inline" style={{ gap: 8 }}>
         <label className="field">

@@ -8,6 +8,7 @@ import { LoadingFallback } from "./components/LoadingFallback";
 import { Sidebar } from "./components/Sidebar";
 import { StatusTicker } from "./components/StatusTicker";
 import { Topbar } from "./components/Topbar";
+import { TopTicker } from "./components/TopTicker";
 
 // Code-split each page — initial bundle only ships the shell + first page.
 const TradePage = lazy(() => import("./pages/TradePage").then((m) => ({ default: m.TradePage })));
@@ -45,6 +46,7 @@ export default function App() {
               </button>
               <Topbar />
               <StatusTicker />
+              <TopTicker />
               <Suspense fallback={<LoadingFallback title="加载中" hint="请稍候" />}>
                 <Switch>
                   <Route path="/" component={() => <Redirect to="/data" />} />

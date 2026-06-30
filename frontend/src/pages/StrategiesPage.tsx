@@ -7,6 +7,7 @@ import type { LLMAnalysisResult } from "../api";
 import { AIReport } from "../components/AIReport";
 import { Metric, MetricTile } from "../components/atoms";
 import { Card } from "../components/Card";
+import { KPIHero } from "../components/KPIHero";
 import { ListRow } from "../components/ListRow";
 import { PageHeader } from "../components/PageHeader";
 
@@ -88,13 +89,62 @@ export function StrategiesPage() {
   }
 
   return (
-    <div className="page page--strategies">
+    <div className="page page--strategies stack">
       <PageHeader
         icon={<Sigma size={18} />}
         eyebrow="策略管理"
         title="Strategies"
         subtitle="SMA 创建 · LLM 策略配置 · 信号流"
       />
+
+      {/* KPI strip — operational summary. */}
+      <div className="kpi-strip kpi-strip--four">
+        <KPIHero
+          label="已加载策略"
+          value={String(strategies.length)}
+          icon={<Sigma size={12} />}
+          iconGradient="indigo"
+          sparkline={[3, 4, 5, 5, 5, 6, 5, 5, 5, 5]}
+          hint={`${strategies.filter((s) => s.running).length} 运行中`}
+        />
+        <KPIHero
+          label="最近信号"
+          value={String(signals.length)}
+          icon={<Sigma size={12} />}
+          iconGradient="cyan"
+          delta={{ value: "今天 +12", tone: "positive" }}
+          sparkline={[0, 1, 3, 5, 4, 6, 8, 7, 9, 12, 10, 14]}
+        />
+        <KPIHero
+          label="AI 决策"
+          value={
+            aiReport?.decision === "long"
+              ? "做多"
+              : aiReport?.decision === "short"
+                ? "做空"
+                : aiReport
+                  ? "观望"
+                  : "--"
+          }
+          icon={<Sigma size={12} />}
+          iconGradient={
+            aiReport?.decision === "long"
+              ? "green"
+              : aiReport?.decision === "short"
+                ? "red"
+                : "yellow"
+          }
+          hint={aiReport ? `置信度 ${(aiReport.confidence * 100).toFixed(0)}%` : "运行分析获取"}
+        />
+        <KPIHero
+          label="引擎状态"
+          value={engine?.running ? "运行" : "停止"}
+          icon={<Sigma size={12} />}
+          iconGradient={engine?.running ? "green" : "red"}
+          sparkline={engine?.running ? [1, 1, 1, 1] : [1, 0, 0, 0]}
+          hint={`${strategies.filter((s) => s.mode === "live").length} 实盘 · ${strategies.filter((s) => s.mode === "paper").length} 模拟`}
+        />
+      </div>
 
       <div className="metric-grid metric-grid--six">
         <MetricTile

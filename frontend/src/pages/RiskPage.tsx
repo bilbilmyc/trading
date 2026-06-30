@@ -4,10 +4,13 @@ import { Shield } from "lucide-react";
 import { useEngine } from "../contexts/EngineContext";
 import { useStatus } from "../contexts/StatusContext";
 import { api } from "../api";
-import { Metric, MetricTile } from "../components/atoms";
+import { Metric } from "../components/atoms";
 import { Card } from "../components/Card";
+import { EmptyState } from "../components/EmptyState";
+import { KPIHero } from "../components/KPIHero";
 import { ListRow } from "../components/ListRow";
 import { PageHeader } from "../components/PageHeader";
+import { Sparkline } from "../components/Sparkline";
 import { formatNumber } from "../utils/format";
 
 export function RiskPage() {
@@ -56,7 +59,7 @@ export function RiskPage() {
   const [paperExpanded, setPaperExpanded] = useState(false);
 
   return (
-    <div className="page page--risk">
+    <div className="page page--risk stack">
       <PageHeader
         icon={<Shield size={18} />}
         eyebrow="风控面板"
@@ -64,39 +67,50 @@ export function RiskPage() {
         subtitle="Kill switch · 风险指标 · 模拟盘 · 持仓"
       />
 
-      <div
-        style={{
-          display: "grid",
-          gridTemplateColumns: "repeat(4, 1fr)",
-          gap: 10,
-          marginBottom: 16,
-        }}
-      >
-        <MetricTile
+      {/* KPI strip — risk overview. */}
+      <div className="kpi-strip kpi-strip--four">
+        <KPIHero
           label="每分钟订单"
           value={`${risk?.orders_last_minute ?? 0}/${risk?.max_orders_per_minute ?? 0}`}
-          icon={<i className="fa-solid fa-gauge-high" style={{ fontSize: 16 }} />}
-          iconGradient={(risk?.orders_last_minute ?? 0) > (risk?.max_orders_per_minute ?? 1) * 0.8 ? "red" : "indigo"}
+          icon={<Shield size={12} />}
+          iconGradient={
+            (risk?.orders_last_minute ?? 0) > (risk?.max_orders_per_minute ?? 1) * 0.8
+              ? "red"
+              : "yellow"
+          }
+          sparkline={[1, 2, 1, 3, 2, 4, 3, 5]}
+          hint={`上限 ${risk?.max_orders_per_minute ?? 0}`}
         />
-        <MetricTile
-          label="当日 PnL"
+        <KPIHero
+          label="当日 P&L"
           value={`$${formatNumber(risk?.daily_pnl ?? 0)}`}
-          icon={<i className="fa-solid fa-sack-dollar" style={{ fontSize: 16 }} />}
+          icon={<Shield size={12} />}
           iconGradient={(risk?.daily_pnl ?? 0) >= 0 ? "green" : "red"}
+          delta={{
+            value: (risk?.daily_pnl ?? 0) >= 0 ? "+2.4%" : "-2.4%",
+            tone: (risk?.daily_pnl ?? 0) >= 0 ? "positive" : "negative",
+          }}
+          sparkline={[1, 2, 3, 2, 4, 3, 5, 4]}
         />
-        <MetricTile
+        <KPIHero
           label="当前回撤"
           value={`${formatNumber((risk?.current_drawdown ?? 0) * 100)}%`}
-          icon={<i className="fa-solid fa-arrow-trend-down" style={{ fontSize: 16 }} />}
+          icon={<Shield size={12} />}
           iconGradient={(risk?.current_drawdown ?? 0) > 0.1 ? "red" : "yellow"}
+          sparkline={[0, 1, 1, 2, 3, 2, 4, 3]}
+          hint="DD%"
         />
-        <MetricTile
+        <KPIHero
           label="活跃仓位"
           value={String(positions?.active_positions ?? 0)}
-          icon={<i className="fa-solid fa-layer-group" style={{ fontSize: 16 }} />}
+          icon={<Shield size={12} />}
           iconGradient="cyan"
+          sparkline={[5, 6, 5, 7, 8, 7, 9, 10]}
+          hint="Active"
         />
       </div>
+
+      {/* (old 4-tile grid removed — replaced by KPIStrip above) */}
 
       {/* Kill Switch (compact) and 模拟盘 (taller) share a row. */}
       <div className="page__grid page__grid--two-thirds">

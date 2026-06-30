@@ -6,7 +6,9 @@ import { useTheme, type Theme } from "../contexts/ThemeContext";
 import { api } from "../api";
 import { Metric } from "../components/atoms";
 import { Card } from "../components/Card";
+import { KPIHero } from "../components/KPIHero";
 import { PageHeader } from "../components/PageHeader";
+import { Sparkline } from "../components/Sparkline";
 
 export function SettingsPage() {
   const { config, refresh } = useStatus();
@@ -71,13 +73,38 @@ export function SettingsPage() {
   }
 
   return (
-    <div className="page page--settings">
+    <div className="page page--settings stack">
       <PageHeader
         icon={<SettingsIcon size={18} />}
         eyebrow="系统配置"
         title="设置"
         subtitle="外观 · 实盘开关 · 交易所能力 · 通知 webhook"
       />
+
+      {/* KPI strip — runtime summary. */}
+      <div className="kpi-strip kpi-strip--three">
+        <KPIHero
+          label="实盘"
+          value={config?.live_trading_enabled ? "已开启" : "已关闭"}
+          icon={<SettingsIcon size={12} />}
+          iconGradient={config?.live_trading_enabled ? "red" : "green"}
+          hint={config?.live_trading_enabled ? "警告：所有实盘下单活跃" : "默认 paper"}
+        />
+        <KPIHero
+          label="Webhook"
+          value={webhookEnabled ? "已启用" : "已禁用"}
+          icon={<SettingsIcon size={12} />}
+          iconGradient={webhookEnabled ? "yellow" : "muted" as unknown as "yellow"}
+          hint={webhookUrl ? webhookUrl.slice(0, 32) + "..." : "未设置"}
+        />
+        <KPIHero
+          label="主题"
+          value={theme === "dark" ? "深色" : "浅色"}
+          icon={<SettingsIcon size={12} />}
+          iconGradient="indigo"
+          hint="外观偏好"
+        />
+      </div>
 
       <div className="page__grid page__grid--two-thirds">
         <Card title="外观" subtitle="主题">

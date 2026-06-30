@@ -15,6 +15,8 @@ interface CardProps {
   accent?: boolean;
   /** Removes inner border-radius padding for content (e.g. tables). */
   flush?: boolean;
+  /** Visual density — controls inner padding + header gap. */
+  density?: "compact" | "normal" | "loose";
   /** Additional CSS class on the card root. */
   className?: string;
   children: ReactNode;
@@ -33,12 +35,15 @@ export function Card({
   hoverable = false,
   accent = false,
   flush = false,
+  density = "normal",
   className = "",
   children,
 }: CardProps) {
   const cls = [
     "card",
     padded ? "card--padded" : "",
+    density === "compact" ? "card--compact" : "",
+    density === "loose" ? "card--loose" : "",
     hoverable ? "card--hoverable" : "",
     accent ? "card--accent" : "",
     flush ? "card--flush" : "",
