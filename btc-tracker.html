@@ -1,0 +1,904 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>BTC Live Tracker — 比特币实时行情</title>
+
+    <!-- Chart.js for the 24h price chart -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+
+    <!-- Inter (sans) + JetBrains Mono (numbers) -->
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@fontsource/inter@5.0.8/index.css">
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@fontsource/jetbrains-mono@5.0.6/index.css">
+
+    <!-- FontAwesome for icons (the BTC logo, arrows, refresh) -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css">
+
+    <style>
+        /* ==== Base ==== */
+        * { box-sizing: border-box; }
+        html, body { margin: 0; padding: 0; }
+
+        /* Layered dark navy palette — matches the reference design. */
+        :root {
+            --bg-base: #0B1120;
+            --bg-elevated: #111827;
+            --bg-card: #1A2332;
+            --bg-input: #0F172A;
+            --bg-overlay: rgba(17, 24, 39, 0.7);
+            --bg-overlay-soft: rgba(17, 24, 39, 0.4);
+            --scrim: rgba(0, 0, 0, 0.6);
+            --border: rgba(99, 102, 241, 0.08);
+            --border-strong: rgba(99, 102, 241, 0.18);
+            --text-primary: #F1F5F9;
+            --text-secondary: #CBD5E1;
+            --text-muted: #94A3B8;
+            --text-faint: #64748B;
+            --accent: #6366F1;
+            --accent-hover: #818CF8;
+            --accent-soft: rgba(99, 102, 241, 0.12);
+            --accent-purple: #8B5CF6;
+            --neon-green: #22C55E;
+            --neon-green-soft: rgba(34, 197, 94, 0.14);
+            --neon-red: #EF4444;
+            --neon-red-soft: rgba(239, 68, 68, 0.14);
+            --neon-yellow: #EAB308;
+            --neon-yellow-soft: rgba(234, 179, 8, 0.14);
+            --neon-cyan: #06B6D4;
+            --neon-cyan-soft: rgba(6, 182, 212, 0.14);
+            --neon-orange: #F97316;
+            --neon-orange-soft: rgba(249, 115, 22, 0.14);
+        }
+
+        body {
+            background: var(--bg-base);
+            color: var(--text-primary);
+            font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+            min-height: 100vh;
+            overflow-x: hidden;
+            line-height: 1.5;
+        }
+
+        /* ==== Scrollbar (subtle) ==== */
+        ::-webkit-scrollbar { width: 6px; height: 6px; }
+        ::-webkit-scrollbar-track { background: var(--bg-base); }
+        ::-webkit-scrollbar-thumb { background: var(--border-strong); border-radius: 3px; }
+        * { scrollbar-width: thin; scrollbar-color: var(--border-strong) var(--bg-base); }
+
+        /* ==== Glassmorphism core ==== */
+        .glass {
+            background: var(--bg-overlay);
+            backdrop-filter: blur(20px) saturate(180%);
+            -webkit-backdrop-filter: blur(20px) saturate(180%);
+            border: 1px solid var(--border);
+        }
+        .glass-card {
+            background: rgba(30, 41, 59, 0.5);
+            backdrop-filter: blur(12px);
+            -webkit-backdrop-filter: blur(12px);
+            border: 1px solid var(--border);
+        }
+
+        /* ==== Decorative effects ==== */
+        .glow { box-shadow: 0 0 24px rgba(99, 102, 241, 0.20); }
+        .glow-green { box-shadow: 0 0 18px rgba(34, 197, 94, 0.25); }
+        .glow-red   { box-shadow: 0 0 18px rgba(239, 68, 68, 0.25); }
+
+        .pulse-dot { animation: pulse-dot 1.6s ease-in-out infinite; }
+        @keyframes pulse-dot {
+            0%, 100% { opacity: 1; transform: scale(1); }
+            50% { opacity: 0.45; transform: scale(0.92); }
+        }
+
+        .hover-lift { transition: transform 0.2s ease, box-shadow 0.2s ease, border-color 0.2s ease; }
+        .hover-lift:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 12px 32px rgba(0, 0, 0, 0.35);
+            border-color: var(--border-strong);
+        }
+
+        /* ==== Brand gradient (indigo → purple) ==== */
+        .gradient-brand {
+            background: linear-gradient(135deg, var(--accent) 0%, var(--accent-purple) 100%);
+        }
+        .text-gradient-brand {
+            background: linear-gradient(135deg, var(--accent) 0%, var(--accent-purple) 100%);
+            -webkit-background-clip: text;
+            background-clip: text;
+            -webkit-text-fill-color: transparent;
+        }
+
+        /* ==== Layout ==== */
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 24px 20px 48px;
+        }
+
+        /* ==== Status badge (translucent bg + colored text) ==== */
+        .badge {
+            display: inline-flex;
+            align-items: center;
+            gap: 4px;
+            padding: 2px 10px;
+            border-radius: 999px;
+            font-size: 11px;
+            font-weight: 500;
+            letter-spacing: 0.04em;
+        }
+        .badge--green { background: var(--neon-green-soft); color: var(--neon-green); }
+        .badge--red   { background: var(--neon-red-soft);   color: var(--neon-red); }
+        .badge--yellow{ background: var(--neon-yellow-soft);color: var(--neon-yellow); }
+        .badge--cyan  { background: var(--neon-cyan-soft);  color: var(--neon-cyan); }
+        .badge--orange{ background: var(--neon-orange-soft);color: var(--neon-orange); }
+
+        /* ==== Big price display ==== */
+        .price-mega {
+            font-family: 'JetBrains Mono', monospace;
+            font-size: clamp(40px, 6vw, 64px);
+            font-weight: 600;
+            font-variant-numeric: tabular-nums;
+            letter-spacing: -0.03em;
+            line-height: 1.05;
+            color: var(--text-primary);
+        }
+        .price-delta {
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 18px;
+            font-weight: 500;
+            font-variant-numeric: tabular-nums;
+        }
+        .price-delta--up   { color: var(--neon-green); }
+        .price-delta--down { color: var(--neon-red); }
+
+        /* ==== Stat tiles ==== */
+        .stat {
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            border-radius: 16px;
+            padding: 18px 20px;
+        }
+        .stat__label {
+            font-size: 11px;
+            text-transform: uppercase;
+            letter-spacing: 0.08em;
+            color: var(--text-muted);
+            margin-bottom: 6px;
+            display: flex;
+            align-items: center;
+            gap: 6px;
+        }
+        .stat__value {
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 20px;
+            font-weight: 600;
+            font-variant-numeric: tabular-nums;
+            color: var(--text-primary);
+        }
+        .stat__sub {
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 12px;
+            color: var(--text-faint);
+            margin-top: 4px;
+        }
+
+        /* ==== Chart wrapper ==== */
+        .chart-wrap {
+            position: relative;
+            height: 360px;
+        }
+
+        /* ==== Animated Bitcoin background (CSS only) ==== */
+        .btc-bg {
+            position: fixed;
+            inset: 0;
+            pointer-events: none;
+            z-index: 0;
+            overflow: hidden;
+        }
+        .btc-bg::before, .btc-bg::after {
+            content: "";
+            position: absolute;
+            width: 480px;
+            height: 480px;
+            border-radius: 50%;
+            filter: blur(120px);
+            opacity: 0.45;
+            animation: float 16s ease-in-out infinite alternate;
+        }
+        .btc-bg::before {
+            background: radial-gradient(circle, var(--accent) 0%, transparent 70%);
+            top: -10%;
+            left: -10%;
+        }
+        .btc-bg::after {
+            background: radial-gradient(circle, var(--accent-purple) 0%, transparent 70%);
+            bottom: -10%;
+            right: -10%;
+            animation-delay: -8s;
+        }
+        .btc-bg .btc-symbol {
+            position: absolute;
+            inset: 0;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-family: 'JetBrains Mono', monospace;
+            font-size: clamp(280px, 40vw, 520px);
+            font-weight: 700;
+            color: rgba(99, 102, 241, 0.04);
+            letter-spacing: -0.05em;
+            user-select: none;
+            animation: float 20s ease-in-out infinite alternate;
+        }
+        @keyframes float {
+            0%   { transform: translate(0, 0) rotate(-2deg); }
+            100% { transform: translate(40px, -30px) rotate(2deg); }
+        }
+
+        /* ==== Topbar (glass, sticky) ==== */
+        .topbar {
+            position: sticky;
+            top: 0;
+            z-index: 30;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 14px 24px;
+            border-bottom: 1px solid var(--border);
+        }
+        .brand {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+        .brand__mark {
+            width: 40px;
+            height: 40px;
+            border-radius: 12px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: #fff;
+            font-size: 18px;
+        }
+        .brand__name {
+            font-size: 17px;
+            font-weight: 700;
+            line-height: 1.1;
+        }
+        .brand__sub {
+            font-size: 10px;
+            text-transform: uppercase;
+            letter-spacing: 0.18em;
+            color: var(--text-muted);
+        }
+
+        .topbar__actions {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        /* ==== Buttons ==== */
+        .btn {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            padding: 8px 14px;
+            border-radius: 10px;
+            font-size: 13px;
+            font-weight: 500;
+            cursor: pointer;
+            border: 1px solid transparent;
+            transition: all 0.15s ease;
+            font-family: inherit;
+        }
+        .btn--primary {
+            background: linear-gradient(135deg, #4F46E5 0%, #7C3AED 100%);
+            color: #fff;
+            box-shadow: 0 4px 14px rgba(99, 102, 241, 0.30);
+        }
+        .btn--primary:hover {
+            transform: translateY(-1px);
+            box-shadow: 0 6px 20px rgba(99, 102, 241, 0.40);
+        }
+        .btn--ghost {
+            background: transparent;
+            color: var(--text-secondary);
+            border-color: var(--border);
+        }
+        .btn--ghost:hover {
+            background: var(--bg-elevated);
+            color: var(--text-primary);
+        }
+        .btn--icon {
+            padding: 8px;
+            width: 36px;
+            height: 36px;
+            justify-content: center;
+        }
+
+        /* ==== Layout grid ==== */
+        .stats-grid {
+            display: grid;
+            grid-template-columns: repeat(4, 1fr);
+            gap: 14px;
+        }
+        .stats-grid--3 { grid-template-columns: repeat(3, 1fr); }
+        .stats-grid--2 { grid-template-columns: repeat(2, 1fr); }
+
+        @media (max-width: 900px) {
+            .stats-grid { grid-template-columns: repeat(2, 1fr); }
+        }
+        @media (max-width: 540px) {
+            .stats-grid,
+            .stats-grid--3,
+            .stats-grid--2 { grid-template-columns: 1fr; }
+            .topbar { flex-direction: column; gap: 12px; align-items: stretch; }
+            .topbar__actions { justify-content: space-between; }
+        }
+
+        /* ==== Status bar (top, under topbar) ==== */
+        .statusbar {
+            display: flex;
+            align-items: center;
+            gap: 14px;
+            padding: 8px 24px;
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 12px;
+            color: var(--text-secondary);
+            border-bottom: 1px solid var(--border);
+        }
+        .statusbar__cell {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            padding-right: 14px;
+            border-right: 1px solid var(--border);
+        }
+        .statusbar__cell:last-child { border-right: none; padding-right: 0; margin-left: auto; }
+        .statusbar__label {
+            font-size: 10px;
+            text-transform: uppercase;
+            letter-spacing: 0.1em;
+            color: var(--text-muted);
+        }
+        .statusbar__pos { color: var(--neon-green); }
+        .statusbar__neg { color: var(--neon-red); }
+
+        /* ==== Loading / Error overlays ==== */
+        .overlay {
+            position: absolute;
+            inset: 0;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            gap: 12px;
+            background: rgba(11, 17, 32, 0.7);
+            backdrop-filter: blur(8px);
+            color: var(--text-muted);
+            font-size: 13px;
+            z-index: 5;
+            border-radius: inherit;
+        }
+        .overlay__icon { font-size: 28px; color: var(--accent); }
+        .overlay--error .overlay__icon { color: var(--neon-red); }
+
+        .spinner {
+            width: 28px;
+            height: 28px;
+            border: 3px solid var(--border);
+            border-top-color: var(--accent);
+            border-radius: 50%;
+            animation: spin 0.8s linear infinite;
+        }
+        @keyframes spin { to { transform: rotate(360deg); } }
+
+        /* ==== Skeleton ==== */
+        .skeleton {
+            background: linear-gradient(90deg,
+                var(--bg-card) 0%,
+                var(--bg-elevated) 50%,
+                var(--bg-card) 100%);
+            background-size: 200% 100%;
+            animation: shimmer 1.4s ease-in-out infinite;
+            border-radius: 4px;
+            color: transparent;
+        }
+        @keyframes shimmer { 0% { background-position: 200% 0; } 100% { background-position: -200% 0; } }
+
+        /* ==== Trend arrow ==== */
+        .trend-arrow {
+            display: inline-flex;
+            align-items: center;
+            gap: 4px;
+        }
+        .trend-arrow--up   i { color: var(--neon-green); }
+        .trend-arrow--down i { color: var(--neon-red); }
+
+        /* ==== Footer ==== */
+        .footer {
+            text-align: center;
+            padding: 24px 20px;
+            color: var(--text-faint);
+            font-size: 12px;
+        }
+        .footer a { color: var(--text-muted); text-decoration: none; border-bottom: 1px dotted var(--text-faint); }
+        .footer a:hover { color: var(--text-secondary); }
+    </style>
+</head>
+<body>
+
+    <!-- Animated Bitcoin-themed background: 2 blur orbs + a giant BTC glyph. -->
+    <div class="btc-bg" aria-hidden="true">
+        <div class="btc-symbol">₿</div>
+    </div>
+
+    <!-- ============== TOPBAR ============== -->
+    <header class="topbar glass">
+        <div class="brand">
+            <div class="brand__mark gradient-brand glow">
+                <i class="fa-brands fa-bitcoin"></i>
+            </div>
+            <div>
+                <div class="brand__name text-gradient-brand">BTC Live Tracker</div>
+                <div class="brand__sub">Bitcoin · Real-time Market</div>
+            </div>
+        </div>
+        <div class="topbar__actions">
+            <button id="refresh-btn" class="btn btn--ghost btn--icon" title="手动刷新" aria-label="Refresh">
+                <i class="fa-solid fa-arrows-rotate"></i>
+            </button>
+            <a href="https://www.coingecko.com/en/coins/bitcoin" target="_blank" rel="noopener" class="btn btn--primary">
+                <i class="fa-solid fa-arrow-up-right-from-square"></i>
+                <span>CoinGecko</span>
+            </a>
+        </div>
+    </header>
+
+    <!-- ============== STATUS BAR ============== -->
+    <div class="statusbar glass" role="status" aria-live="polite">
+        <span class="statusbar__cell">
+            <span id="status-dot" class="pulse-dot" style="width:8px; height:8px; border-radius:50%; background: var(--neon-yellow);"></span>
+            <span id="status-text" class="statusbar__label">加载中…</span>
+        </span>
+        <span class="statusbar__cell">
+            <span class="statusbar__label">Last Update</span>
+            <span id="last-update" class="data-mono">—</span>
+        </span>
+        <span class="statusbar__cell">
+            <span class="statusbar__label">Next Refresh</span>
+            <span id="next-update" class="data-mono">30s</span>
+        </span>
+        <span class="statusbar__cell">
+            <span class="statusbar__label">Source</span>
+            <span>CoinGecko API</span>
+        </span>
+    </div>
+
+    <!-- ============== MAIN ============== -->
+    <main class="container" style="position: relative; z-index: 1;">
+
+        <!-- HERO: big price + 24h delta -->
+        <section class="glass-card hover-lift" style="border-radius: 20px; padding: 32px; margin-bottom: 20px; position: relative; overflow: hidden;">
+            <div style="display:flex; align-items:center; justify-content:space-between; gap: 16px; flex-wrap: wrap;">
+                <div>
+                    <div style="font-size: 12px; text-transform: uppercase; letter-spacing: 0.16em; color: var(--text-muted); margin-bottom: 6px;">
+                        Bitcoin / USD
+                    </div>
+                    <div class="price-mega" id="price-mega">$--,---.--</div>
+                </div>
+                <div style="display:flex; align-items:center; gap: 10px;">
+                    <span id="price-delta" class="price-delta price-delta--up" style="display:none;">
+                        <i class="fa-solid fa-arrow-up"></i>
+                        <span id="price-delta-text">+0.00%</span>
+                    </span>
+                    <span id="price-delta-abs" style="font-family:'JetBrains Mono',monospace; font-size:14px; color:var(--text-muted); display:none;">
+                        ($0.00)
+                    </span>
+                </div>
+            </div>
+        </section>
+
+        <!-- 4 STAT TILES -->
+        <section class="stats-grid" style="margin-bottom: 20px;">
+            <div class="stat hover-lift">
+                <div class="stat__label">
+                    <i class="fa-solid fa-chart-line" style="color: var(--accent);"></i>
+                    24h 最高
+                </div>
+                <div class="stat__value" id="stat-high">$--,---.--</div>
+                <div class="stat__sub" id="stat-high-sub">—</div>
+            </div>
+            <div class="stat hover-lift">
+                <div class="stat__label">
+                    <i class="fa-solid fa-chart-line" style="color: var(--neon-red);"></i>
+                    24h 最低
+                </div>
+                <div class="stat__value" id="stat-low">$--,---.--</div>
+                <div class="stat__sub" id="stat-low-sub">—</div>
+            </div>
+            <div class="stat hover-lift">
+                <div class="stat__label">
+                    <i class="fa-solid fa-building-columns" style="color: var(--neon-cyan);"></i>
+                    市值
+                </div>
+                <div class="stat__value" id="stat-mcap">$---.--B</div>
+                <div class="stat__sub" id="stat-mcap-rank">Rank #—</div>
+            </div>
+            <div class="stat hover-lift">
+                <div class="stat__label">
+                    <i class="fa-solid fa-arrow-right-arrow-left" style="color: var(--neon-orange);"></i>
+                    24h 成交量
+                </div>
+                <div class="stat__value" id="stat-vol">$---.--B</div>
+                <div class="stat__sub" id="stat-vol-sub">—</div>
+            </div>
+        </section>
+
+        <!-- PRICE CHART (last 24h) -->
+        <section class="glass-card hover-lift" style="border-radius: 20px; padding: 24px; position: relative;">
+            <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom: 16px;">
+                <div>
+                    <h2 style="margin: 0; font-size: 16px; font-weight: 600;">24 小时价格走势</h2>
+                    <p style="margin: 4px 0 0; font-size: 12px; color: var(--text-muted);">每 5 分钟一个采样点 · 数据源: CoinGecko</p>
+                </div>
+                <div style="display:flex; gap: 6px; align-items: center;">
+                    <span class="badge badge--cyan">24H</span>
+                    <span id="chart-range-sub" style="font-size: 12px; color: var(--text-muted); font-family: 'JetBrains Mono', monospace;">—</span>
+                </div>
+            </div>
+            <div class="chart-wrap">
+                <canvas id="price-chart"></canvas>
+                <div id="chart-loading" class="overlay">
+                    <div class="spinner"></div>
+                    <div>正在加载价格曲线…</div>
+                </div>
+            </div>
+        </section>
+
+        <div class="footer">
+            Data: <a href="https://www.coingecko.com" target="_blank" rel="noopener">CoinGecko Public API</a> ·
+            30s 自动刷新 ·
+            Built with vanilla JS + Chart.js
+        </div>
+    </main>
+
+    <script>
+    /**
+     * BTC Live Tracker
+     * --------------------------------------------------------------
+     *  - Fetches Bitcoin market data from the public CoinGecko API:
+     *      GET /coins/bitcoin?localization=false&tickers=false
+     *      GET /coins/bitcoin/market_chart?vs_currency=usd&days=1
+     *  - Auto-refreshes every 30 seconds.
+     *  - Renders a 24-hour line chart with Chart.js.
+     *  - Shows loading + error overlays gracefully.
+     *  - All numbers are formatted via Intl.NumberFormat (USD).
+     *
+     *  Requirements honored:
+     *    - No fake mining / hashrate / terminal / fake BTC
+     *    - Real Bitcoin data (price, 24h change, market cap, volume, high, low)
+     *    - Auto-refresh 30s
+     *    - Modern dark theme + glassmorphism
+     *    - 24h price chart (Chart.js)
+     *    - Green up / red down indicators
+     *    - Loading + error states
+     *    - Last update timestamp
+     *    - Responsive
+     *    - Animated Bitcoin background
+     */
+
+    // ==== Config ====
+    const REFRESH_INTERVAL_MS = 30 * 1000;     // 30 seconds
+    const COINGECKO_BASE = 'https://api.coingecko.com/api/v3';
+
+    // ==== DOM refs ====
+    const $ = (id) => document.getElementById(id);
+    const els = {
+        priceMega: $('price-mega'),
+        priceDelta: $('price-delta'),
+        priceDeltaText: $('price-delta-text'),
+        priceDeltaAbs: $('price-delta-abs'),
+        statHigh: $('stat-high'),
+        statLow: $('stat-low'),
+        statHighSub: $('stat-high-sub'),
+        statLowSub: $('stat-low-sub'),
+        statMcap: $('stat-mcap'),
+        statMcapRank: $('stat-mcap-rank'),
+        statVol: $('stat-vol'),
+        statVolSub: $('stat-vol-sub'),
+        lastUpdate: $('last-update'),
+        nextUpdate: $('next-update'),
+        statusDot: $('status-dot'),
+        statusText: $('status-text'),
+        chartCanvas: $('price-chart'),
+        chartLoading: $('chart-loading'),
+        chartRangeSub: $('chart-range-sub'),
+        refreshBtn: $('refresh-btn'),
+    };
+
+    // ==== Formatters ====
+    const fmtUsd = new Intl.NumberFormat('en-US', {
+        style: 'currency', currency: 'USD',
+        minimumFractionDigits: 2, maximumFractionDigits: 2,
+    });
+    const fmtUsdShort = new Intl.NumberFormat('en-US', {
+        style: 'currency', currency: 'USD',
+        notation: 'compact', maximumFractionDigits: 2,
+    });
+    const fmtPct = new Intl.NumberFormat('en-US', {
+        style: 'percent', minimumFractionDigits: 2, maximumFractionDigits: 2,
+    });
+    const fmtTime = new Intl.DateTimeFormat('zh-CN', {
+        hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false,
+    });
+    const fmtDateTime = new Intl.DateTimeFormat('zh-CN', {
+        year: 'numeric', month: '2-digit', day: '2-digit',
+        hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false,
+    });
+
+    // ==== Chart ====
+    let priceChart = null;
+
+    function initChart() {
+        const ctx = els.chartCanvas.getContext('2d');
+        // Gradient fill below the line — green if last point is above first, else red.
+        const gradient = ctx.createLinearGradient(0, 0, 0, 360);
+        gradient.addColorStop(0, 'rgba(99, 102, 241, 0.30)');
+        gradient.addColorStop(1, 'rgba(99, 102, 241, 0.00)');
+
+        priceChart = new Chart(ctx, {
+            type: 'line',
+            data: {
+                labels: [],
+                datasets: [{
+                    label: 'BTC / USD',
+                    data: [],
+                    borderColor: '#6366F1',
+                    backgroundColor: gradient,
+                    fill: true,
+                    tension: 0.35,
+                    borderWidth: 2,
+                    pointRadius: 0,
+                    pointHoverRadius: 5,
+                    pointHoverBackgroundColor: '#6366F1',
+                    pointHoverBorderColor: '#fff',
+                    pointHoverBorderWidth: 2,
+                }],
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                interaction: { mode: 'index', intersect: false },
+                plugins: {
+                    legend: { display: false },
+                    tooltip: {
+                        backgroundColor: 'rgba(17, 24, 39, 0.95)',
+                        borderColor: 'rgba(99, 102, 241, 0.3)',
+                        borderWidth: 1,
+                        titleColor: '#F1F5F9',
+                        bodyColor: '#CBD5E1',
+                        padding: 10,
+                        displayColors: false,
+                        callbacks: {
+                            title: (items) => items[0].label,
+                            label: (ctx) => 'Price: ' + fmtUsd.format(ctx.parsed.y),
+                        },
+                    },
+                },
+                scales: {
+                    x: {
+                        ticks: { color: '#64748B', font: { size: 11 }, maxRotation: 0, autoSkip: true, maxTicksLimit: 8 },
+                        grid: { color: 'rgba(99, 102, 241, 0.06)', drawBorder: false },
+                    },
+                    y: {
+                        position: 'right',
+                        ticks: {
+                            color: '#64748B',
+                            font: { size: 11 },
+                            callback: (v) => '$' + v.toLocaleString(),
+                        },
+                        grid: { color: 'rgba(99, 102, 241, 0.06)', drawBorder: false },
+                    },
+                },
+            },
+        });
+    }
+
+    function updateChart(prices) {
+        // prices: [[timestamp_ms, price], ...]
+        const labels = prices.map(([t]) => fmtTime.format(new Date(t)));
+        const data = prices.map(([, p]) => p);
+
+        priceChart.data.labels = labels;
+        priceChart.data.datasets[0].data = data;
+
+        // Recolor the line + fill based on direction.
+        const up = data[data.length - 1] >= data[0];
+        const lineColor = up ? '#22C55E' : '#EF4444';
+        const fillColor = up ? 'rgba(34, 197, 94, 0.22)' : 'rgba(239, 68, 68, 0.22)';
+
+        const ctx = els.chartCanvas.getContext('2d');
+        const gradient = ctx.createLinearGradient(0, 0, 0, 360);
+        gradient.addColorStop(0, fillColor);
+        gradient.addColorStop(1, 'rgba(0, 0, 0, 0)');
+
+        priceChart.data.datasets[0].borderColor = lineColor;
+        priceChart.data.datasets[0].backgroundColor = gradient;
+        priceChart.data.datasets[0].pointHoverBackgroundColor = lineColor;
+        priceChart.update('none');
+
+        // Range sub-label
+        const first = data[0], last = data[data.length - 1];
+        const rangePct = ((last - first) / first) * 100;
+        els.chartRangeSub.textContent =
+            `低 $${first.toFixed(0).toLocaleString()} · 高 $${Math.max(...data).toFixed(0).toLocaleString()} · 区间 ${rangePct >= 0 ? '+' : ''}${rangePct.toFixed(2)}%`;
+
+        // Hide loading overlay
+        els.chartLoading.style.display = 'none';
+    }
+
+    // ==== Data fetchers ====
+    /**
+     * Fetch the current Bitcoin market data:
+     *   price (usd), 24h change %, market cap, 24h volume, 24h high, 24h low,
+     *   market cap rank, last updated timestamp.
+     */
+    async function fetchBitcoinData() {
+        const url = `${COINGECKO_BASE}/coins/bitcoin?localization=false&tickers=false&community_data=false&developer_data=false&sparkline=false`;
+        const res = await fetch(url, { headers: { 'Accept': 'application/json' } });
+        if (!res.ok) {
+            throw new Error(`HTTP ${res.status} ${res.statusText}`);
+        }
+        return res.json();
+    }
+
+    /**
+     * Fetch the 24h price series (sampled every ~5 minutes).
+     *   returns: [[ts_ms, price], ...]
+     */
+    async function fetchBitcoinChart() {
+        const url = `${COINGECKO_BASE}/coins/bitcoin/market_chart?vs_currency=usd&days=1`;
+        const res = await fetch(url, { headers: { 'Accept': 'application/json' } });
+        if (!res.ok) {
+            throw new Error(`HTTP ${res.status} ${res.statusText}`);
+        }
+        return res.json();
+    }
+
+    // ==== Render ====
+    function setStatus(state, message) {
+        // state: 'loading' | 'ok' | 'error'
+        const dot = els.statusDot;
+        const txt = els.statusText;
+        if (state === 'ok') {
+            dot.style.background = 'var(--neon-green)';
+            txt.textContent = 'LIVE';
+            txt.style.color = 'var(--neon-green)';
+        } else if (state === 'error') {
+            dot.style.background = 'var(--neon-red)';
+            txt.textContent = 'OFFLINE';
+            txt.style.color = 'var(--neon-red)';
+        } else {
+            dot.style.background = 'var(--neon-yellow)';
+            txt.textContent = message || '加载中…';
+            txt.style.color = 'var(--neon-yellow)';
+        }
+    }
+
+    function renderData(coin) {
+        const md = coin.market_data || {};
+        const price = md.current_price?.usd ?? 0;
+        const change24 = md.price_change_percentage_24h ?? 0;
+        const changeAbs = md.price_change_24h_in_currency?.usd ?? 0;
+        const high24 = md.high_24h?.usd ?? 0;
+        const low24 = md.low_24h?.usd ?? 0;
+        const mcap = md.market_cap?.usd ?? 0;
+        const vol = md.total_volume?.usd ?? 0;
+        const rank = coin.market_cap_rank ?? '—';
+
+        // Hero price
+        els.priceMega.textContent = fmtUsd.format(price);
+
+        // Delta arrow + percentage + absolute
+        const up = change24 >= 0;
+        els.priceDelta.style.display = 'inline-flex';
+        els.priceDelta.className = `price-delta ${up ? 'price-delta--up' : 'price-delta--down'}`;
+        els.priceDelta.querySelector('i').className = up
+            ? 'fa-solid fa-arrow-up'
+            : 'fa-solid fa-arrow-down';
+        els.priceDeltaText.textContent = `${up ? '+' : ''}${change24.toFixed(2)}%`;
+
+        els.priceDeltaAbs.style.display = 'inline';
+        els.priceDeltaAbs.textContent = `(${up ? '+' : ''}${fmtUsd.format(changeAbs).replace('$', '$')})`;
+
+        // Stat tiles
+        els.statHigh.textContent = fmtUsd.format(high24);
+        els.statHighSub.textContent = up ? '距高点差 ' + fmtPct.format((high24 - price) / high24) : '';
+        els.statLow.textContent = fmtUsd.format(low24);
+        els.statLowSub.textContent = up ? '距低点反弹 ' + fmtPct.format((price - low24) / low24) : '距高点回落 ' + fmtPct.format((high24 - price) / high24);
+
+        els.statMcap.textContent = fmtUsdShort.format(mcap);
+        els.statMcapRank.textContent = 'Rank #' + rank;
+
+        els.statVol.textContent = fmtUsdShort.format(vol);
+        const volToMcap = mcap > 0 ? (vol / mcap) * 100 : 0;
+        els.statVolSub.textContent = `占市值 ${volToMcap.toFixed(2)}%`;
+
+        // Timestamp
+        const now = new Date();
+        els.lastUpdate.textContent = fmtDateTime.format(now);
+    }
+
+    // ==== Main loop ====
+    let refreshTimer = null;
+    let countdownTimer = null;
+    let nextRefreshIn = REFRESH_INTERVAL_MS / 1000;
+
+    async function refresh() {
+        try {
+            setStatus('loading', '刷新中…');
+            els.refreshBtn.disabled = true;
+            els.refreshBtn.style.opacity = '0.6';
+
+            // Fire both requests in parallel.
+            const [coin, chart] = await Promise.all([fetchBitcoinData(), fetchBitcoinChart()]);
+
+            renderData(coin);
+            updateChart(chart.prices);
+
+            setStatus('ok');
+            nextRefreshIn = REFRESH_INTERVAL_MS / 1000;
+        } catch (err) {
+            console.error('Refresh failed:', err);
+            setStatus('error', err.message || 'API 请求失败');
+            // Show error overlay on the chart if we have no data.
+            if (!priceChart || priceChart.data.datasets[0].data.length === 0) {
+                els.chartLoading.innerHTML = `
+                    <i class="fa-solid fa-triangle-exclamation overlay__icon"></i>
+                    <div>无法加载价格曲线</div>
+                    <div style="font-size: 11px; color: var(--text-faint);">${err.message || '请检查网络或稍后重试'}</div>
+                `;
+                els.chartLoading.classList.add('overlay--error');
+                els.chartLoading.style.display = 'flex';
+            }
+        } finally {
+            els.refreshBtn.disabled = false;
+            els.refreshBtn.style.opacity = '1';
+        }
+    }
+
+    function startCountdown() {
+        clearInterval(countdownTimer);
+        countdownTimer = setInterval(() => {
+            nextRefreshIn--;
+            if (nextRefreshIn < 0) nextRefreshIn = Math.ceil(REFRESH_INTERVAL_MS / 1000);
+            els.nextUpdate.textContent = `${nextRefreshIn}s`;
+        }, 1000);
+    }
+
+    function startAutoRefresh() {
+        clearInterval(refreshTimer);
+        refreshTimer = setInterval(refresh, REFRESH_INTERVAL_MS);
+    }
+
+    // ==== Boot ====
+    document.addEventListener('DOMContentLoaded', async () => {
+        initChart();
+        await refresh();            // initial load
+        startAutoRefresh();        // 30s loop
+        startCountdown();          // next-refresh ticker
+
+        // Manual refresh button
+        els.refreshBtn.addEventListener('click', () => {
+            nextRefreshIn = Math.ceil(REFRESH_INTERVAL_MS / 1000);
+            refresh();
+        });
+    });
+    </script>
+</body>
+</html>
