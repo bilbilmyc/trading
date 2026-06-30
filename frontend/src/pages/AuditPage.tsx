@@ -3,8 +3,11 @@ import { ClipboardList } from "lucide-react";
 
 import { useEngine } from "../contexts/EngineContext";
 import { Metric } from "../components/atoms";
+import { Card } from "../components/Card";
+import { ExpandModal } from "../components/ExpandModal";
 import { ListRow, type ListRowLevel } from "../components/ListRow";
 import { PageHeader } from "../components/PageHeader";
+import { useExpandable } from "../hooks/useExpandable";
 
 const EVENT_LABELS: Record<string, string> = {
   live_trading_blocked: "实盘守卫拦截",
@@ -34,6 +37,8 @@ function levelToRowLevel(level: string): ListRowLevel | undefined {
 export function AuditPage() {
   const { events } = useEngine();
   const [filter, setFilter] = useState<Level>("all");
+  const all = useExpandable();
+  const VISIBLE_COUNT = 12;
 
   const filtered = filter === "all" ? events : events.filter((e) => e.level === filter);
 
@@ -41,6 +46,8 @@ export function AuditPage() {
     acc[e.level] = (acc[e.level] ?? 0) + 1;
     return acc;
   }, {});
+
+  const reversed = filtered.slice().reverse();
 
   return (
     <div className="page page--audit">
@@ -51,7 +58,7 @@ export function AuditPage() {
         subtitle="完整事件流 · 按级别过滤 · 倒序"
       />
 
-      <div className="metric-grid">
+      <div className="metric-grid metric-grid--four">
         <Metric label="critical" value={String(byLevel.critical ?? 0)} tone="negative" />
         <Metric label="error" value={String(byLevel.error ?? 0)} tone="warning" />
         <Metric label="warning" value={String(byLevel.warning ?? 0)} tone="warning" />
@@ -71,27 +78,82 @@ export function AuditPage() {
         ))}
       </div>
 
-      <h2 className="section-title-inline">事件流 · {filtered.length} 条</h2>
-      <div className="event-list">
-        {filtered.length ? (
-          filtered
-            .slice()
-            .reverse()
-            .map((event) => (
-              <ListRow
-                key={event.id}
-                leading={<span className="event-row__marker" />}
-                level={levelToRowLevel(event.level)}
-                title={formatEventType(event.event_type)}
-                subtitle={`${event.exchange ?? "--"} · ${event.symbol ?? "--"} · ${new Date(
-                  event.timestamp,
-                ).toLocaleString()}${event.message ? ` · ${event.message}` : ""}`}
-              />
-            ))
+      <Card
+        title="事件流"
+        subtitle={`${filtered.length} 条 · 显示前 ${Math.min(VISIBLE_COUNT, filtered.length)}`}
+      >
+        {filtered.length === 0 ? (
+          <div className="empty-state">
+            <strong>暂无该级别事件</strong>
+            <span>切到 all 或别的级别查看</span>
+          </div>
         ) : (
-          <div className="empty-state">暂无该级别事件</div>
+          <>
+            <div className="scroll-cap scroll-cap--lg">
+              <div className="event-list">
+                {reversed.slice(0, VISIBLE_COUNT).map((event) => (
+                  <ListRow
+                    key={event.id}
+                    leading={<span className="event-row__marker" />}
+                    level={levelToRowLevel(event.level)}
+                    title={formatEventType(event.event_type)}
+                    subtitle={`${event.exchange ?? "--"} · ${event.symbol ?? "--"} · ${new Date(
+                      event.timestamp,
+                    ).toLocaleString()}${event.message ? ` · ${event.message}` : ""}`}
+                  />
+                ))}
+              </div>
+            </div>
+            <div className="expandable-foot">
+              <span className="expandable-foot__count">
+                {filtered.length > VISIBLE_COUNT
+                  ? `隐藏 ${filtered.length - VISIBLE_COUNT} 条`
+                  : "已显示全部"}
+              </span>
+              {filtered.length > VISIBLE_COUNT ? (
+                <button type="button" className="expandable-link" onClick={all.open}>
+                  展开全部 ({filtered.length}) ↗
+                </button>
+              ) : null}
+            </div>
+          </>
         )}
-      </div>
+      </Card>
+
+      <ExpandModal
+        isOpen={all.isOpen}
+        onClose={all.close}
+        title="审计事件 · 全部"
+        subtitle={`${filtered.length} 条 · 倒序`}
+        toolbar={
+          <div className="filter-row" style={{ marginTop: 0 }}>
+            {LEVELS.map((l) => (
+              <button
+                key={l}
+                type="button"
+                className={`filter-chip ${filter === l ? "is-active" : ""}`}
+                onClick={() => setFilter(l)}
+              >
+                {l}
+              </button>
+            ))}
+          </div>
+        }
+      >
+        <div className="event-list">
+          {reversed.map((event) => (
+            <ListRow
+              key={event.id}
+              leading={<span className="event-row__marker" />}
+              level={levelToRowLevel(event.level)}
+              title={formatEventType(event.event_type)}
+              subtitle={`${event.exchange ?? "--"} · ${event.symbol ?? "--"} · ${new Date(
+                event.timestamp,
+              ).toLocaleString()}${event.message ? ` · ${event.message}` : ""}`}
+            />
+          ))}
+        </div>
+      </ExpandModal>
     </div>
   );
 }

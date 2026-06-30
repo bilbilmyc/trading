@@ -21,7 +21,11 @@ export function PageHeader({ eyebrow, title, subtitle, icon, actions }: PageHead
   return (
     <header className="page-header">
       <div className="page-header__text">
-        {icon ? <span className="page-header__icon">{icon}</span> : null}
+        {icon ? (
+          <span className="page-header__icon page-header__icon--gradient page-header__icon--glow">
+            {icon}
+          </span>
+        ) : null}
         {eyebrow ? <span className="page-header__eyebrow">{eyebrow}</span> : null}
         <h1 className="page-header__title">{title}</h1>
         {subtitle ? <p className="page-header__subtitle">{subtitle}</p> : null}

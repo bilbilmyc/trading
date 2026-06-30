@@ -134,8 +134,8 @@ export function SettingsPage() {
             告警、下单、风险事件会 POST 到此 URL。Payload 为 JSON：
             <code>{"{title, message, severity, timestamp, extra}"}</code>。
           </p>
-          <div className="form-grid">
-            <label className="field">
+          <div className="form-grid form-grid--inline">
+            <label className="field" style={{ gridColumn: "span 2" }}>
               <span>Webhook URL</span>
               <input
                 value={webhookUrl}
@@ -162,24 +162,27 @@ export function SettingsPage() {
                 </button>
               </div>
             </div>
-          </div>
-          <div className="action-row">
-            <button
-              type="button"
-              className="action action--secondary"
-              onClick={saveWebhook}
-              disabled={!webhookUrl}
-            >
-              保存
-            </button>
-            <button
-              type="button"
-              className="action action--primary"
-              onClick={testWebhook}
-              disabled={!webhookUrl || testBusy}
-            >
-              {testBusy ? "测试中..." : "测试"}
-            </button>
+            <div className="field">
+              <span>&nbsp;</span>
+              <div style={{ display: "flex", gap: 8 }}>
+                <button
+                  type="button"
+                  className="action action--secondary"
+                  onClick={saveWebhook}
+                  disabled={!webhookUrl}
+                >
+                  保存
+                </button>
+                <button
+                  type="button"
+                  className="action action--primary"
+                  onClick={testWebhook}
+                  disabled={!webhookUrl || testBusy}
+                >
+                  {testBusy ? "测试中..." : "测试"}
+                </button>
+              </div>
+            </div>
           </div>
           {error ? <div className="notice notice--error">{error}</div> : null}
           {message ? <div className="notice notice--info">{message}</div> : null}
@@ -203,19 +206,6 @@ export function SettingsPage() {
           </div>
         </Card>
 
-        <Card title="运行时" subtitle="runtime">
-          <div className="metric-grid">
-            <Metric label="默认交易所" value={config?.default_exchange ?? "--"} tone="muted" />
-            <Metric label="默认合约" value={config?.default_symbol ?? "--"} tone="muted" />
-            <Metric
-              label="存储驱动"
-              value={config?.persistence.driver ?? "--"}
-              tone="muted"
-            />
-            <Metric label="数据库" value={config?.persistence.path ?? "--"} tone="muted" />
-          </div>
-        </Card>
-
         <Card title="LLM 配置" subtitle="openai-compatible">
           <p className="page__note">
             LLM API 配置从环境变量读取（<code>LLM_API_KEY</code>, <code>LLM_BASE_URL</code>,{" "}
@@ -224,6 +214,15 @@ export function SettingsPage() {
           </p>
         </Card>
       </div>
+
+      <Card title="运行时" subtitle="runtime">
+        <div className="metric-grid metric-grid--four">
+          <Metric label="默认交易所" value={config?.default_exchange ?? "--"} tone="muted" />
+          <Metric label="默认合约" value={config?.default_symbol ?? "--"} tone="muted" />
+          <Metric label="存储驱动" value={config?.persistence.driver ?? "--"} tone="muted" />
+          <Metric label="数据库" value={config?.persistence.path ?? "--"} tone="muted" />
+        </div>
+      </Card>
     </div>
   );
 }

@@ -2,10 +2,12 @@ import { useEffect, useState } from "react";
 import { History, RefreshCw } from "lucide-react";
 
 import { api } from "../api";
-import { Metric } from "../components/atoms";
+import { Metric, MetricTile } from "../components/atoms";
 import { Card } from "../components/Card";
 import { DataTable, type Column } from "../components/DataTable";
+import { ExpandModal } from "../components/ExpandModal";
 import { PageHeader } from "../components/PageHeader";
+import { useExpandable } from "../hooks/useExpandable";
 
 interface Trade {
   order_id: string;
@@ -54,6 +56,9 @@ export function TradeHistoryPage() {
   const [error, setError] = useState("");
   const [filterStrategy, setFilterStrategy] = useState("");
   const [filterExchange, setFilterExchange] = useState("");
+  const all = useExpandable();
+
+  const VISIBLE_COUNT = 8;
 
   const refresh = async () => {
     setLoading(true);
@@ -181,19 +186,42 @@ export function TradeHistoryPage() {
         }
       />
 
-      <div className="metric-grid">
-        <Metric label="成交笔数" value={String(trades.length)} tone="muted" />
-        <Metric
+      <div className="metric-grid metric-grid--six">
+        <MetricTile
+          label="成交笔数"
+          value={String(trades.length)}
+          icon={<History size={18} />}
+          iconGradient="indigo"
+        />
+        <MetricTile
           label="总盈亏"
           value={formatPnl(totalPnl)}
-          tone={totalPnl > 0 ? "positive" : totalPnl < 0 ? "negative" : "muted"}
+          icon={<i className="fa-solid fa-sack-dollar" style={{ fontSize: 16 }} />}
+          iconGradient={totalPnl > 0 ? "green" : totalPnl < 0 ? "red" : "muted" as "green" | "red" | "indigo"}
         />
-        <Metric label="盈利" value={String(wins)} tone="positive" />
-        <Metric label="亏损" value={String(losses)} tone="negative" />
-        <Metric
+        <MetricTile
+          label="盈利笔数"
+          value={String(wins)}
+          icon={<i className="fa-solid fa-arrow-trend-up" style={{ fontSize: 16 }} />}
+          iconGradient="green"
+        />
+        <MetricTile
+          label="亏损笔数"
+          value={String(losses)}
+          icon={<i className="fa-solid fa-arrow-trend-down" style={{ fontSize: 16 }} />}
+          iconGradient="red"
+        />
+        <MetricTile
           label="胜率"
           value={trades.length > 0 ? `${((wins / trades.length) * 100).toFixed(1)}%` : "--"}
-          tone="muted"
+          icon={<i className="fa-solid fa-bullseye" style={{ fontSize: 16 }} />}
+          iconGradient="cyan"
+        />
+        <MetricTile
+          label="平均 PnL"
+          value={formatPnl(trades.length ? totalPnl / trades.length : 0)}
+          icon={<i className="fa-solid fa-scale-balanced" style={{ fontSize: 16 }} />}
+          iconGradient="yellow"
         />
       </div>
 
@@ -224,18 +252,54 @@ export function TradeHistoryPage() {
         </div>
       </Card>
 
-      <Card title="成交明细" subtitle={`${trades.length} 笔`}>
+      <Card
+        title="成交明细"
+        subtitle={`共 ${trades.length} 笔 · 显示前 ${Math.min(VISIBLE_COUNT, trades.length)}`}
+      >
         {error ? <div className="notice notice--error">{error}</div> : null}
         {trades.length === 0 && !loading ? (
-          <div className="empty-state">暂无成交记录 — 启动策略后自动记录</div>
+          <div className="empty-state">
+            <strong>暂无成交记录</strong>
+            <span>启动策略后会自动记录,这里按时间倒序</span>
+          </div>
         ) : (
-          <DataTable
-            columns={columns}
-            rows={trades}
-            rowKey={(t) => t.order_id}
-          />
+          <>
+            <div className="scroll-cap scroll-cap--md">
+              <DataTable
+                columns={columns}
+                rows={trades.slice(0, VISIBLE_COUNT)}
+                rowKey={(t) => t.order_id}
+                rowVariant="compact"
+              />
+            </div>
+            <div className="expandable-foot">
+              <span className="expandable-foot__count">
+                {trades.length > VISIBLE_COUNT
+                  ? `隐藏 ${trades.length - VISIBLE_COUNT} 笔`
+                  : "已显示全部"}
+              </span>
+              {trades.length > VISIBLE_COUNT ? (
+                <button type="button" className="expandable-link" onClick={all.open}>
+                  展开全部 ({trades.length}) ↗
+                </button>
+              ) : null}
+            </div>
+          </>
         )}
       </Card>
+
+      <ExpandModal
+        isOpen={all.isOpen}
+        onClose={all.close}
+        title="全部成交明细"
+        subtitle={`共 ${trades.length} 笔 · 按时间倒序`}
+      >
+        <DataTable
+          columns={columns}
+          rows={trades}
+          rowKey={(t) => t.order_id}
+        />
+      </ExpandModal>
     </div>
   );
 }

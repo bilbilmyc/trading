@@ -6,6 +6,7 @@ import { StatusProvider } from "./contexts/StatusContext";
 import { ThemeProvider } from "./contexts/ThemeContext";
 import { LoadingFallback } from "./components/LoadingFallback";
 import { Sidebar } from "./components/Sidebar";
+import { StatusTicker } from "./components/StatusTicker";
 import { Topbar } from "./components/Topbar";
 
 // Code-split each page — initial bundle only ships the shell + first page.
@@ -29,6 +30,9 @@ export default function App() {
       <StatusProvider>
         <EngineProvider>
           <div className="app-shell app-shell--with-sidebar">
+            {/* Ambient blur orbs — sit behind everything else. */}
+            <div className="app-bg" aria-hidden="true" />
+
             <Sidebar open={sidebarOpen} onClose={() => setSidebarOpen(false)} />
 
             <div className="app-main">
@@ -40,6 +44,7 @@ export default function App() {
                 ☰
               </button>
               <Topbar />
+              <StatusTicker />
               <Suspense fallback={<LoadingFallback title="加载中" hint="请稍候" />}>
                 <Switch>
                   <Route path="/" component={() => <Redirect to="/data" />} />

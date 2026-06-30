@@ -24,6 +24,8 @@ interface DataTableProps<T> {
   empty?: ReactNode;
   /** Extra class on the wrapper (e.g. for grid tuning). */
   className?: string;
+  /** Optional modifier added to every body row. "compact" -> tighter padding. */
+  rowVariant?: "default" | "compact";
 }
 
 const DEFAULT_EMPTY = (
@@ -37,9 +39,11 @@ const DEFAULT_EMPTY = (
  * (`.leaderboard-table`, `.trade-history__row`, `.data-sources-table__row`)
  * with one configurable component.
  */
-export function DataTable<T>({ columns, rows, rowKey, onRowClick, empty, className = "" }: DataTableProps<T>) {
+export function DataTable<T>({ columns, rows, rowKey, onRowClick, empty, className = "", rowVariant = "default" }: DataTableProps<T>) {
   const template = columns.map((c) => c.width ?? "1fr").join(" ");
   const headStyle = { gridTemplateColumns: template };
+  const rowClass =
+    rowVariant === "compact" ? "data-table__row data-table__row--compact" : "data-table__row";
 
   return (
     <div className={`data-table ${className}`}>
@@ -58,7 +62,7 @@ export function DataTable<T>({ columns, rows, rowKey, onRowClick, empty, classNa
         : rows.map((row, idx) => (
             <div
               key={rowKey(row, idx)}
-              className={`data-table__row ${onRowClick ? "is-clickable" : ""}`}
+              className={`${rowClass} ${onRowClick ? "is-clickable" : ""}`}
               style={headStyle}
               onClick={onRowClick ? () => onRowClick(row) : undefined}
             >

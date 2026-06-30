@@ -5,6 +5,16 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta name="color-scheme" content="dark light" />
     <title>Web3 Trading Console</title>
+
+    <!-- Inter Variable (Google Fonts). Self-hosted would be preferable in
+         production, but for a localhost-only trading console the CDN keeps the
+         build trivial. font-display: swap avoids the invisible-text FOIT. -->
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      rel="stylesheet"
+      href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap"
+    />
     <script>
       // Set the theme attribute synchronously before React mounts so the
       // initial paint already has the right tokens (no FOUC).

@@ -164,55 +164,59 @@ export function DataPage() {
         <Metric label="自定义" value={String(customSources.length)} tone="muted" />
       </div>
 
-      <Card title="已注册数据源" subtitle="公开行情无需鉴权；私有操作需要单独配置 key">
-        {dataSources.length ? (
-          <DataTable
-            columns={columns}
-            rows={dataSources}
-            rowKey={(row) => row.name}
-          />
-        ) : (
-          <EmptyState>
-            暂未注册任何数据源 — 在 .env 中启用 BINANCE / OKX / BITGET 任一交易所，
-            或在下方添加自定义数据源
-          </EmptyState>
-        )}
-      </Card>
+      {/* 2/3 + 1/3 split: the registered-sources table and the "add custom
+          source" form share a row so the whole page fits in one viewport. */}
+      <div className="page__grid page__grid--split">
+        <Card title="已注册数据源" subtitle="公开行情无需鉴权；私有操作需要单独配置 key">
+          {dataSources.length ? (
+            <DataTable
+              columns={columns}
+              rows={dataSources}
+              rowKey={(row) => row.name}
+            />
+          ) : (
+            <EmptyState>
+              暂未注册任何数据源 — 在 .env 中启用 BINANCE / OKX / BITGET 任一交易所，
+              或在右侧添加自定义数据源
+            </EmptyState>
+          )}
+        </Card>
 
-      <Card title="添加自定义数据源" subtitle="任意 OpenAPI / CCXT 兼容 HTTP 接口（保存在 localStorage）">
-        <div className="form-grid">
-          <label className="field">
-            <span>名称</span>
-            <input
-              value={newName}
-              onChange={(e) => setNewName(e.target.value)}
-              placeholder="my-venue"
-            />
-          </label>
-          <label className="field">
-            <span>Base URL</span>
-            <input
-              value={newUrl}
-              onChange={(e) => setNewUrl(e.target.value)}
-              placeholder="https://api.example.com/v1"
-            />
-          </label>
-          <div className="field">
-            <button
-              type="button"
-              className="action action--primary"
-              onClick={addCustom}
-              disabled={!newName || !newUrl}
-            >
-              添加
-            </button>
+        <Card title="添加自定义数据源" subtitle="任意 OpenAPI / CCXT 兼容 HTTP 接口（保存在 localStorage）">
+          <div className="form-grid form-grid--stacked">
+            <label className="field">
+              <span>名称</span>
+              <input
+                value={newName}
+                onChange={(e) => setNewName(e.target.value)}
+                placeholder="my-venue"
+              />
+            </label>
+            <label className="field">
+              <span>Base URL</span>
+              <input
+                value={newUrl}
+                onChange={(e) => setNewUrl(e.target.value)}
+                placeholder="https://api.example.com/v1"
+              />
+            </label>
+            <div className="field">
+              <button
+                type="button"
+                className="action action--primary"
+                onClick={addCustom}
+                disabled={!newName || !newUrl}
+              >
+                添加
+              </button>
+            </div>
           </div>
-        </div>
-        <p className="page__note">
-          自定义数据源会出现在上方列表中，可在「行情」页查询 ticker / klines / 合约。
-          涉及下单 / 持仓 / 余额时仍需要原生交易所适配器。
-        </p>
-      </Card>
+          <p className="page__note">
+            自定义数据源会出现在左侧列表中，可在「行情」页查询 ticker / klines / 合约。
+            涉及下单 / 持仓 / 余额时仍需要原生交易所适配器。
+          </p>
+        </Card>
+      </div>
     </div>
   );
 }

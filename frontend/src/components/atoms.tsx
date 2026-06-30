@@ -27,6 +27,58 @@ export function Metric({ label, value, tone = "default", hint }: MetricProps) {
   );
 }
 
+/**
+ * AutoClip-style stat tile: gradient icon (gradient-brand) + big number + label
+ * + optional change badge. Use this for top-of-page stat strips.
+ */
+interface MetricTileProps {
+  label: string;
+  value: string;
+  icon: ReactNode;
+  /** Optional % change badge (e.g. "+12%"). */
+  change?: { value: string; tone?: "positive" | "negative" | "muted" };
+  /** Override the default indigo→purple gradient with another gradient. */
+  iconGradient?: "indigo" | "green" | "cyan" | "orange" | "pink" | "yellow" | "red";
+}
+
+const ICON_GRADIENT: Record<NonNullable<MetricTileProps["iconGradient"]>, string> = {
+  indigo: "linear-gradient(135deg, #6366F1 0%, #8B5CF6 100%)",
+  green: "linear-gradient(135deg, #22C55E 0%, #14B8A6 100%)",
+  cyan: "linear-gradient(135deg, #06B6D4 0%, #6366F1 100%)",
+  orange: "linear-gradient(135deg, #F97316 0%, #EF4444 100%)",
+  pink: "linear-gradient(135deg, #EC4899 0%, #8B5CF6 100%)",
+  yellow: "linear-gradient(135deg, #EAB308 0%, #F97316 100%)",
+  red: "linear-gradient(135deg, #EF4444 0%, #EC4899 100%)",
+};
+
+const BADGE_TONE_CLASS: Record<NonNullable<MetricTileProps["change"]>["tone"] & string, string> = {
+  positive: "badge--green",
+  negative: "badge--red",
+  muted: "badge--cyan",
+};
+
+export function MetricTile({ label, value, icon, change, iconGradient = "indigo" }: MetricTileProps) {
+  return (
+    <div className="metric-tile hover-lift">
+      <div className="metric-tile__head">
+        <span
+          className="metric-tile__icon"
+          style={{ background: ICON_GRADIENT[iconGradient] }}
+        >
+          {icon}
+        </span>
+        {change ? (
+          <span className={`badge ${BADGE_TONE_CLASS[change.tone ?? "muted"]}`}>
+            {change.value}
+          </span>
+        ) : null}
+      </div>
+      <div className="metric-tile__value">{value}</div>
+      <div className="metric-tile__label">{label}</div>
+    </div>
+  );
+}
+
 interface StatusPillProps {
   state: "ok" | "bad" | "neutral" | "danger" | "safe";
   icon?: ReactNode;

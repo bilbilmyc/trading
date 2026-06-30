@@ -168,7 +168,10 @@ export function WatchlistPage() {
 
       <Card title={`自选 (${items.length})`} subtitle="点击合约代码进入行情">
         {items.length === 0 ? (
-          <div className="empty-state">尚无自选 — 上方添加</div>
+          <div className="empty-state">
+            <strong>尚无自选</strong>
+            <span>在上方表单里添加合约即可开始观察</span>
+          </div>
         ) : (
           <div className="watchlist-grid">
             {items.map((item, idx) => {

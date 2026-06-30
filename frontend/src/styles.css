@@ -23,69 +23,85 @@
   --transition-med: 0.2s cubic-bezier(0.4, 0, 0.2, 1);
   --transition-slow: 0.4s cubic-bezier(0.4, 0, 0.2, 1);
 
-  --font-sans: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
-  --font-mono: "JetBrains Mono", "SF Mono", Menlo, Monaco, Consolas, monospace;
+  --font-sans: "Inter", -apple-system, BlinkMacSystemFont, "PingFang SC",
+    "Hiragino Sans GB", "Microsoft YaHei", "Helvetica Neue", Arial, sans-serif;
+  --font-mono: "JetBrains Mono", "SF Mono", Menlo, Monaco, Consolas,
+    "PingFang SC", monospace;
 }
 
 /* ----- Dark theme (default) --------------------------------------- */
 :root,
 :root[data-theme="dark"] {
-  --bg-base: #0B1220;
-  --bg-elevated: #131C2E;
-  --bg-card: #1A2440;
-  --bg-card-hover: #1F2A4A;
-  --bg-input: #0F1729;
+  /* Layered dark navy — closer to the reference's "depth" feel. */
+  --bg-base: #0B1120;
+  --bg-elevated: #111827;
+  --bg-card: #1A2332;
+  --bg-card-hover: #1E293B;
+  --bg-input: #0F172A;
   --bg-hover: #243054;
-  --bg-overlay: rgba(11, 18, 32, 0.6);
-  --bg-overlay-soft: rgba(11, 18, 32, 0.4);
-  --scrim: rgba(0, 0, 0, 0.5);
+  --bg-overlay: rgba(17, 24, 39, 0.7);
+  --bg-overlay-soft: rgba(17, 24, 39, 0.4);
+  --scrim: rgba(0, 0, 0, 0.6);
 
-  --border: #1F2A44;
-  --border-strong: #2A365C;
-  --border-glow: rgba(56, 189, 248, 0.35);
+  /* Indigo-tinted borders (the "lilac glow" of the reference). */
+  --border: rgba(99, 102, 241, 0.08);
+  --border-strong: rgba(99, 102, 241, 0.18);
+  --border-glow: rgba(99, 102, 241, 0.45);
 
   --text-primary: #F1F5F9;
-  --text-secondary: #B8C2D9;
-  --text-muted: #7B86A3;
-  --text-faint: #4F5874;
+  --text-secondary: #CBD5E1;
+  --text-muted: #94A3B8;
+  --text-faint: #64748B;
 
-  --accent: #38BDF8;
-  --accent-hover: #0EA5E9;
-  --accent-active: #0284C7;
-  --accent-soft: rgba(56, 189, 248, 0.14);
-  --accent-fg-on: #001A2C;
+  /* Brand: indigo → purple. Used for CTAs, focus rings, the "thesis" color. */
+  --accent: #6366F1;
+  --accent-hover: #818CF8;
+  --accent-active: #4F46E5;
+  --accent-soft: rgba(99, 102, 241, 0.12);
+  --accent-fg-on: #FFFFFF;
+  --accent-purple: #8B5CF6;
+  --accent-purple-soft: rgba(139, 92, 246, 0.12);
 
-  --positive: #34D399;
-  --positive-soft: rgba(52, 211, 153, 0.14);
-  --negative: #F87171;
-  --negative-soft: rgba(248, 113, 113, 0.14);
-  --warning: #FBBF24;
-  --warning-soft: rgba(251, 191, 36, 0.14);
-  --danger: #EF4444;
-  --danger-soft: rgba(239, 68, 68, 0.14);
+  /* Neon status palette — green/red/yellow/cyan/pink/orange. */
+  --positive: #22C55E;
+  --positive-soft: rgba(34, 197, 94, 0.14);
+  --negative: #EF4444;
+  --negative-soft: rgba(239, 68, 68, 0.14);
+  --warning: #EAB308;
+  --warning-soft: rgba(234, 179, 8, 0.14);
+  --info: #06B6D4;
+  --info-soft: rgba(6, 182, 212, 0.14);
+  --pink: #EC4899;
+  --pink-soft: rgba(236, 72, 153, 0.14);
+  --orange: #F97316;
+  --orange-soft: rgba(249, 115, 22, 0.14);
   --safe: #10B981;
   --safe-soft: rgba(16, 185, 129, 0.14);
+  --danger: #EF4444;
+  --danger-soft: rgba(239, 68, 68, 0.14);
 
   --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.4);
-  --shadow-md: 0 4px 16px rgba(0, 0, 0, 0.5);
-  --shadow-lg: 0 10px 40px rgba(0, 0, 0, 0.6);
-  --shadow-glow: 0 0 24px rgba(56, 189, 248, 0.25);
+  --shadow-md: 0 8px 25px rgba(0, 0, 0, 0.4);
+  --shadow-lg: 0 10px 40px rgba(0, 0, 0, 0.5);
+  --shadow-glow: 0 0 24px rgba(99, 102, 241, 0.25);
+  --shadow-glow-green: 0 0 18px rgba(34, 197, 94, 0.25);
+  --shadow-glow-red: 0 0 18px rgba(239, 68, 68, 0.25);
 
-  --chart-grid: #1F2A44;
-  --chart-axis: #4F5874;
-  --chart-bull: #34D399;
-  --chart-bear: #F87171;
-  --chart-bull-soft: rgba(52, 211, 153, 0.25);
-  --chart-bear-soft: rgba(248, 113, 113, 0.25);
-  --chart-ma-1: #FBBF24;
+  --chart-grid: rgba(99, 102, 241, 0.08);
+  --chart-axis: #475569;
+  --chart-bull: #22C55E;
+  --chart-bear: #EF4444;
+  --chart-bull-soft: rgba(34, 197, 94, 0.25);
+  --chart-bear-soft: rgba(239, 68, 68, 0.25);
+  --chart-ma-1: #EAB308;
   --chart-ma-2: #EC4899;
-  --chart-ma-3: #22D3EE;
-  --chart-series-1: #38BDF8;
-  --chart-series-2: #34D399;
-  --chart-series-3: #FBBF24;
+  --chart-ma-3: #06B6D4;
+  --chart-series-1: #6366F1;
+  --chart-series-2: #22C55E;
+  --chart-series-3: #EAB308;
   --chart-series-4: #A78BFA;
-  --chart-series-5: #F472B6;
-  --chart-series-6: #22D3EE;
+  --chart-series-5: #EC4899;
+  --chart-series-6: #06B6D4;
 
   color-scheme: dark;
 }
@@ -111,13 +127,15 @@
   --text-muted: #64748B;
   --text-faint: #94A3B8;
 
-  --accent: #0284C7;
-  --accent-hover: #0369A1;
-  --accent-active: #075985;
-  --accent-soft: rgba(2, 132, 199, 0.10);
+  --accent: #4F46E5;
+  --accent-hover: #6366F1;
+  --accent-active: #4338CA;
+  --accent-soft: rgba(99, 102, 241, 0.12);
   --accent-fg-on: #FFFFFF;
+  --accent-purple: #7C3AED;
+  --accent-purple-soft: rgba(124, 58, 237, 0.12);
 
-  --positive: #10B981;
+  --positive: #16A34A;
   --positive-soft: rgba(16, 185, 129, 0.10);
   --negative: #EF4444;
   --negative-soft: rgba(239, 68, 68, 0.10);
@@ -163,10 +181,13 @@ html, body {
   font-family: var(--font-sans);
   background: var(--bg-base);
   color: var(--text-primary);
-  font-size: 14px;
-  line-height: 1.5;
+  font-size: 15px;
+  line-height: 1.55;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
+  /* Inter renders nicer with these enabled — tabular numerals for tables. */
+  text-rendering: optimizeLegibility;
+  font-feature-settings: "cv11", "ss01", "ss03";
 }
 
 input, select, button, textarea {
@@ -214,7 +235,7 @@ input, select, button, textarea {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 20px 24px;
+  padding: 12px 24px;
   border-bottom: 1px solid var(--border);
   background: var(--bg-overlay);
   backdrop-filter: blur(8px);
@@ -222,7 +243,7 @@ input, select, button, textarea {
 
 .topbar__brand .eyebrow {
   margin: 0;
-  font-size: 11px;
+  font-size: 13px;
   text-transform: uppercase;
   letter-spacing: 0.12em;
   color: var(--text-muted);
@@ -272,7 +293,7 @@ input, select, button, textarea {
   gap: 6px;
   padding: 4px 10px;
   border-radius: 999px;
-  font-size: 12px;
+  font-size: 13px;
   font-weight: 500;
   border: 1px solid var(--border);
   background: var(--bg-card);
@@ -317,7 +338,7 @@ input, select, button, textarea {
 
 .section-title h3 {
   margin: 0;
-  font-size: 14px;
+  font-size: 13px;
   font-weight: 600;
   color: var(--text-primary);
   letter-spacing: -0.01em;
@@ -325,7 +346,7 @@ input, select, button, textarea {
 
 .section-title p {
   margin: 2px 0 0;
-  font-size: 12px;
+  font-size: 13px;
   color: var(--text-muted);
 }
 
@@ -338,7 +359,7 @@ input, select, button, textarea {
 }
 
 .field > span {
-  font-size: 11px;
+  font-size: 13px;
   text-transform: uppercase;
   letter-spacing: 0.08em;
   color: var(--text-muted);
@@ -413,7 +434,7 @@ input, select, button, textarea {
 }
 
 .market-picker__chip small {
-  font-size: 10px;
+  font-size: 13px;
   opacity: 0.7;
   font-family: var(--font-mono);
 }
@@ -489,13 +510,16 @@ input, select, button, textarea {
 }
 
 .action--primary {
-  background: var(--accent);
-  color: var(--accent-fg-on);
-  border-color: var(--accent);
+  /* AutoClip: indigo→purple gradient + color glow. */
+  background: linear-gradient(135deg, var(--accent) 0%, var(--accent-purple) 100%);
+  color: #fff;
+  border-color: transparent;
+  box-shadow: 0 4px 14px rgba(99, 102, 241, 0.30);
 }
 
 .action--primary:hover:not(:disabled) {
-  background: var(--accent-hover);
+  transform: translateY(-1px);
+  box-shadow: 0 6px 20px rgba(99, 102, 241, 0.40);
 }
 
 .action--secondary {
@@ -565,7 +589,7 @@ input, select, button, textarea {
   display: flex;
   flex-direction: column;
   gap: 4px;
-  padding: 12px;
+  padding: 10px 12px;
   background: var(--bg-card);
   border: 1px solid var(--border);
   border-radius: var(--radius-md);
@@ -580,14 +604,16 @@ input, select, button, textarea {
 }
 
 .metric__value {
-  font-size: 18px;
+  font-size: 17px;
   font-weight: 600;
   color: var(--text-primary);
+  font-family: var(--font-mono);
   font-variant-numeric: tabular-nums;
+  letter-spacing: -0.01em;
 }
 
 .metric__hint {
-  font-size: 11px;
+  font-size: 12px;
   color: var(--text-faint);
 }
 
@@ -595,6 +621,48 @@ input, select, button, textarea {
 .metric--negative .metric__value { color: var(--negative); }
 .metric--warning .metric__value { color: var(--warning); }
 .metric--muted .metric__value { color: var(--text-secondary); }
+
+/* ===== MetricTile (AutoClip stat card) ============================== */
+.metric-tile {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  padding: 16px 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.metric-tile__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+.metric-tile__icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  border-radius: 10px;
+  color: #fff;
+  flex-shrink: 0;
+  box-shadow: 0 4px 12px rgba(99, 102, 241, 0.25);
+}
+.metric-tile__value {
+  font-family: var(--font-mono);
+  font-size: 24px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.01em;
+  color: var(--text-primary);
+  line-height: 1.1;
+}
+.metric-tile__label {
+  font-size: 12px;
+  color: var(--text-muted);
+  font-weight: 500;
+}
 
 /* ===== Strategy bar (MarketPanel) =================================== */
 
@@ -622,7 +690,7 @@ input, select, button, textarea {
 }
 
 .strategy-bar__stats span {
-  font-size: 11px;
+  font-size: 13px;
   color: var(--text-muted);
   text-transform: uppercase;
   letter-spacing: 0.06em;
@@ -679,7 +747,7 @@ input, select, button, textarea {
 .signal-row span,
 .position-row span,
 .strategy-row span {
-  font-size: 11px;
+  font-size: 13px;
   color: var(--text-muted);
 }
 
@@ -700,7 +768,7 @@ input, select, button, textarea {
   min-width: 24px;
   padding: 2px 6px;
   border-radius: 4px;
-  font-size: 11px;
+  font-size: 13px;
   font-weight: 600;
 }
 
@@ -743,13 +811,13 @@ input, select, button, textarea {
 }
 
 .event-row span {
-  font-size: 11px;
+  font-size: 13px;
   color: var(--text-muted);
 }
 
 .event-row p {
   margin: 4px 0 0;
-  font-size: 12px;
+  font-size: 13px;
   color: var(--text-secondary);
 }
 
@@ -767,19 +835,25 @@ input, select, button, textarea {
 }
 
 .kill-switch strong {
-  font-size: 14px;
+  font-size: 13px;
   font-weight: 600;
   display: block;
 }
 
 .kill-switch span {
-  font-size: 12px;
+  font-size: 13px;
   color: var(--text-muted);
 }
 
 .kill-switch--active {
   background: var(--danger-soft);
   border-color: var(--danger);
+  box-shadow: 0 0 18px rgba(239, 68, 68, 0.30);
+  animation: ks-pulse 1.4s ease-in-out infinite;
+}
+@keyframes ks-pulse {
+  0%, 100% { box-shadow: 0 0 18px rgba(239, 68, 68, 0.30); }
+  50%      { box-shadow: 0 0 30px rgba(239, 68, 68, 0.55); }
 }
 
 .kill-switch--active strong { color: var(--danger); }
@@ -804,7 +878,7 @@ input, select, button, textarea {
 
 .preview-note {
   margin: 0;
-  font-size: 12px;
+  font-size: 13px;
   color: var(--warning);
   background: var(--warning-soft);
   padding: 8px 10px;
@@ -820,7 +894,7 @@ input, select, button, textarea {
   gap: 8px;
   padding: 10px 12px;
   border-radius: var(--radius-sm);
-  font-size: 12px;
+  font-size: 13px;
   border: 1px solid var(--border);
   background: var(--bg-card);
 }
@@ -842,7 +916,7 @@ input, select, button, textarea {
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
   font-family: var(--font-mono);
-  font-size: 12px;
+  font-size: 13px;
   color: var(--text-secondary);
 }
 
@@ -850,15 +924,24 @@ input, select, button, textarea {
 
 .empty-state {
   display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 24px;
-  background: var(--bg-card);
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+  padding: 16px;
+  background: transparent;
   border: 1px dashed var(--border);
   border-radius: var(--radius-md);
   color: var(--text-muted);
+  font-size: 13px;
+}
+.empty-state strong {
+  color: var(--text-secondary);
+  font-size: 13px;
+  font-weight: 600;
+}
+.empty-state span {
   font-size: 12px;
-  justify-content: center;
+  color: var(--text-faint);
 }
 
 /* ===== Block (RiskPanel sections) ==================================== */
@@ -899,7 +982,7 @@ input, select, button, textarea {
 /* ===== Eyebrow ======================================================= */
 
 .eyebrow {
-  font-size: 11px;
+  font-size: 12px;
   text-transform: uppercase;
   letter-spacing: 0.12em;
   color: var(--text-muted);
@@ -911,13 +994,33 @@ input, select, button, textarea {
   display: grid;
   grid-template-columns: 240px 1fr;
   grid-template-rows: 1fr;
-  min-height: 100vh;
+  /* Lock the shell to the viewport so the inner columns own their own scroll.
+     Without this, body becomes the scroll container and the sidebar's
+     `position: sticky` only sticks within its (now too tall) grid cell. */
+  height: 100vh;
+  overflow: hidden;
 }
 
 .app-main {
   display: flex;
   flex-direction: column;
-  min-height: 100vh;
+  /* Fill the grid cell exactly; own the vertical scroll. */
+  height: 100vh;
+  min-height: 0;
+  overflow-y: auto;
+  background: var(--bg-base);
+}
+
+/* Topbar stays put at the top of the scrollable main column.
+   flex-shrink: 0 keeps its full height; position: sticky pins it to the
+   scroll container's top edge so the brand + status pills stay visible
+   while the page below scrolls. Background is forced to the solid base
+   color so page content scrolling underneath doesn't bleed through. */
+.app-main > .topbar {
+  flex-shrink: 0;
+  position: sticky;
+  top: 0;
+  z-index: 10;
   background: var(--bg-base);
 }
 
@@ -957,7 +1060,7 @@ input, select, button, textarea {
 }
 
 .sidebar__subtitle {
-  font-size: 11px;
+  font-size: 12px;
   color: var(--text-muted);
   text-transform: uppercase;
   letter-spacing: 0.08em;
@@ -998,7 +1101,7 @@ input, select, button, textarea {
 
 .sidebar__item small {
   display: block;
-  font-size: 11px;
+  font-size: 13px;
   color: var(--text-muted);
 }
 
@@ -1010,7 +1113,7 @@ input, select, button, textarea {
   height: 28px;
   border-radius: var(--radius-sm);
   background: var(--bg-card);
-  font-size: 14px;
+  font-size: 13px;
   color: var(--text-secondary);
 }
 
@@ -1032,7 +1135,7 @@ input, select, button, textarea {
 
 .sidebar__env {
   font-family: var(--font-mono);
-  font-size: 11px;
+  font-size: 13px;
   color: var(--text-muted);
 }
 
@@ -1043,10 +1146,12 @@ input, select, button, textarea {
 /* ===== Pages ========================================================= */
 
 .page {
-  padding: 32px 40px 64px;
+  /* Compact vertical rhythm so typical pages fit in one viewport;
+     the page scrolls within `.app-main` if it overflows. */
+  padding: 16px 32px 24px;
   display: flex;
   flex-direction: column;
-  gap: 24px;
+  gap: 16px;
   max-width: 1400px;
   margin: 0 auto;
   width: 100%;
@@ -1070,7 +1175,7 @@ input, select, button, textarea {
   background: var(--bg-input);
   border-left: 3px solid var(--accent);
   border-radius: var(--radius-sm);
-  font-size: 12px;
+  font-size: 13px;
   color: var(--text-secondary);
   line-height: 1.6;
 }
@@ -1084,8 +1189,28 @@ input, select, button, textarea {
   grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
 }
 
+.page__grid--split {
+  /* 2/3 main + 1/3 sidebar — used for the data-sources page so the
+     registered-sources table and the "add custom" form share a row
+     instead of stacking vertically. */
+  grid-template-columns: minmax(0, 2fr) minmax(0, 1fr);
+  align-items: start;
+}
+
+@media (max-width: 960px) {
+  .page__grid--split {
+    grid-template-columns: 1fr;
+  }
+}
+
 .form-grid--inline {
   grid-template-columns: 1fr 1fr 1fr auto;
+}
+
+.form-grid--stacked {
+  /* Single-column form — used inside narrow sidebar columns. */
+  grid-template-columns: 1fr;
+  gap: var(--space-3);
 }
 
 /* ===== Settings rows ================================================= */
@@ -1100,7 +1225,7 @@ input, select, button, textarea {
 
 .cap-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
   gap: 12px;
 }
 
@@ -1121,7 +1246,7 @@ input, select, button, textarea {
   margin: 0;
   padding: 0;
   list-style: none;
-  font-size: 12px;
+  font-size: 13px;
   color: var(--text-secondary);
   display: flex;
   flex-direction: column;
@@ -1135,7 +1260,7 @@ input, select, button, textarea {
 
 .section-title-inline {
   margin: 0;
-  font-size: 12px;
+  font-size: 13px;
   font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.06em;
@@ -1154,7 +1279,7 @@ input, select, button, textarea {
   border: 1px solid var(--border);
   background: var(--bg-card);
   color: var(--text-secondary);
-  font-size: 12px;
+  font-size: 13px;
   cursor: pointer;
   transition: all 0.12s ease;
 }
@@ -1165,9 +1290,10 @@ input, select, button, textarea {
 }
 
 .filter-chip.is-active {
-  background: var(--accent);
-  color: var(--accent-fg-on);
-  border-color: var(--accent);
+  background: linear-gradient(135deg, var(--accent) 0%, var(--accent-purple) 100%);
+  color: #fff;
+  border-color: transparent;
+  box-shadow: 0 2px 8px rgba(99, 102, 241, 0.35);
 }
 
 /* ===== Data Sources page ============================================= */
@@ -1185,14 +1311,14 @@ input, select, button, textarea {
   align-items: flex-start;
   justify-content: space-between;
   gap: var(--space-4);
-  margin-bottom: var(--space-6);
+  margin-bottom: var(--space-2);
   flex-wrap: wrap;
 }
 
 .page-header__text {
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: 2px;
   min-width: 0;
 }
 
@@ -1206,10 +1332,20 @@ input, select, button, textarea {
   background: var(--accent-soft);
   color: var(--accent);
   margin-bottom: 4px;
+  flex-shrink: 0;
+}
+/* AutoClip-style: gradient indigo→purple icon background with color glow. */
+.page-header__icon--gradient {
+  background: linear-gradient(135deg, var(--accent) 0%, var(--accent-purple) 100%);
+  color: #fff;
+  box-shadow: 0 4px 14px rgba(99, 102, 241, 0.35);
+}
+.page-header__icon--glow {
+  box-shadow: 0 0 20px rgba(99, 102, 241, 0.35);
 }
 
 .page-header__eyebrow {
-  font-size: 11px;
+  font-size: 12px;
   text-transform: uppercase;
   letter-spacing: 0.12em;
   color: var(--text-muted);
@@ -1218,10 +1354,11 @@ input, select, button, textarea {
 
 .page-header__title {
   margin: 0;
-  font-size: 24px;
+  font-size: 20px;
   font-weight: 600;
   letter-spacing: -0.02em;
   color: var(--text-primary);
+  line-height: 1.25;
 }
 
 .page-header__subtitle {
@@ -1229,6 +1366,7 @@ input, select, button, textarea {
   font-size: 13px;
   color: var(--text-muted);
   max-width: 60ch;
+  line-height: 1.4;
 }
 
 .page-header__actions {
@@ -1252,16 +1390,23 @@ input, select, button, textarea {
 .card {
   display: flex;
   flex-direction: column;
-  gap: var(--space-4);
+  gap: var(--space-3);
   background: var(--bg-elevated);
   border: 1px solid var(--border);
   border-radius: var(--radius-lg);
   box-shadow: var(--shadow-sm);
-  transition: border-color var(--transition-fast), box-shadow var(--transition-fast);
+  transition: transform 0.2s ease, border-color var(--transition-fast), box-shadow var(--transition-fast);
+}
+
+/* All cards lift on hover unless explicitly opted out via .card--static. */
+.card:not(.card--static):hover {
+  transform: translateY(-2px);
+  border-color: var(--border-strong);
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.35);
 }
 
 .card--padded {
-  padding: var(--space-5);
+  padding: var(--space-4);
 }
 
 .card--hoverable:hover {
@@ -1288,7 +1433,7 @@ input, select, button, textarea {
 
 .card__title {
   margin: 0;
-  font-size: 14px;
+  font-size: 13px;
   font-weight: 600;
   color: var(--text-primary);
   letter-spacing: -0.01em;
@@ -1296,7 +1441,7 @@ input, select, button, textarea {
 
 .card__subtitle {
   margin: 2px 0 0;
-  font-size: 12px;
+  font-size: 13px;
   color: var(--text-muted);
 }
 
@@ -1323,7 +1468,7 @@ input, select, button, textarea {
   align-items: center;
   gap: var(--space-3);
   padding: 0 var(--space-4) var(--space-2);
-  font-size: 11px;
+  font-size: 13px;
   text-transform: uppercase;
   letter-spacing: 0.06em;
   color: var(--text-muted);
@@ -1334,7 +1479,7 @@ input, select, button, textarea {
   display: grid;
   align-items: center;
   gap: var(--space-3);
-  padding: var(--space-3) var(--space-4);
+  padding: var(--space-2) var(--space-4);
   background: var(--bg-card);
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
@@ -1354,12 +1499,12 @@ input, select, button, textarea {
 .data-table__cell--right { text-align: right; }
 .data-table__cell--center { text-align: center; }
 
-.data-table__cell--muted { color: var(--text-muted); font-size: 11px; display: block; margin-top: 2px; }
-.data-table__cell--mono { font-family: var(--font-mono); font-size: 12px; color: var(--text-muted); word-break: break-all; }
+.data-table__cell--muted { color: var(--text-muted); font-size: 12px; display: block; margin-top: 2px; }
+.data-table__cell--mono { font-family: var(--font-mono); font-size: 13px; color: var(--text-muted); word-break: break-all; }
 .data-table__actions { display: inline-flex; gap: 6px; justify-content: flex-end; }
 .data-table__cell--num { font-variant-numeric: tabular-nums; }
 
-.action--xs { font-size: 12px; padding: 4px 10px; }
+.action--xs { font-size: 13px; padding: 4px 10px; }
 
 /* ===== List row (new shared component) =============================== */
 
@@ -1412,7 +1557,7 @@ input, select, button, textarea {
 }
 
 .list-row__subtitle {
-  font-size: 11px;
+  font-size: 13px;
   color: var(--text-muted);
 }
 
@@ -1435,7 +1580,7 @@ input, select, button, textarea {
 
 .sidebar__group-label {
   padding: 0 var(--space-3) var(--space-2);
-  font-size: 11px;
+  font-size: 13px;
   font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.08em;
@@ -1484,7 +1629,7 @@ input, select, button, textarea {
   align-items: center;
   gap: 6px;
   padding: 6px 12px;
-  font-size: 12px;
+  font-size: 13px;
   font-weight: 500;
   border: 0;
   border-radius: 4px;
@@ -1528,14 +1673,14 @@ input, select, button, textarea {
 .candle-chart {
   width: 100%;
   height: auto;
-  max-height: 320px;
+  max-height: 260px;
   background: var(--bg-card);
   border: 1px solid var(--border);
   border-radius: var(--radius-md);
 }
 
 .candle-chart__label {
-  font-size: 10px;
+  font-size: 13px;
   font-family: var(--font-mono);
   fill: var(--text-muted);
 }
@@ -1608,7 +1753,7 @@ input, select, button, textarea {
 }
 
 .ai-report__label {
-  font-size: 11px;
+  font-size: 13px;
   text-transform: uppercase;
   letter-spacing: 0.06em;
   color: var(--text-muted);
@@ -1617,7 +1762,7 @@ input, select, button, textarea {
 
 .ai-report__section h4 {
   margin: 0 0 6px;
-  font-size: 12px;
+  font-size: 13px;
   text-transform: uppercase;
   letter-spacing: 0.06em;
   color: var(--text-muted);
@@ -1642,7 +1787,7 @@ input, select, button, textarea {
 }
 
 .ai-report__footer {
-  font-size: 11px;
+  font-size: 13px;
   color: var(--text-muted);
   padding-top: 8px;
   border-top: 1px solid var(--border);
@@ -1712,7 +1857,7 @@ input, select, button, textarea {
 }
 
 .leaderboard-table th {
-  font-size: 11px;
+  font-size: 13px;
   text-transform: uppercase;
   letter-spacing: 0.06em;
   color: var(--text-muted);
@@ -1789,12 +1934,12 @@ input, select, button, textarea {
 /* Watchlist */
 .watchlist-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
   gap: 12px;
 }
 
 .watchlist-card {
-  padding: 16px;
+  padding: 12px;
   background: var(--bg-card);
   border: 1px solid var(--border);
   border-radius: var(--radius-md);
@@ -1829,7 +1974,7 @@ input, select, button, textarea {
 }
 
 .watchlist-card__symbol small {
-  font-size: 10px;
+  font-size: 13px;
   color: var(--text-muted);
   font-family: var(--font-mono);
 }
@@ -1857,19 +2002,19 @@ input, select, button, textarea {
 }
 
 .watchlist-card__last {
-  font-size: 20px;
+  font-size: 18px;
   font-weight: 600;
   font-variant-numeric: tabular-nums;
 }
 
 .watchlist-card__change {
-  font-size: 12px;
+  font-size: 13px;
   font-weight: 500;
   font-variant-numeric: tabular-nums;
 }
 
 .watchlist-card__loading {
-  font-size: 12px;
+  font-size: 13px;
   color: var(--text-muted);
 }
 
@@ -1887,7 +2032,7 @@ input, select, button, textarea {
 
 .markdown .md-h1 { font-size: 18px; }
 .markdown .md-h2 { font-size: 16px; }
-.markdown .md-h3 { font-size: 14px; }
+.markdown .md-h3 { font-size: 13px; }
 
 .markdown .md-p {
   margin: 6px 0;
@@ -1904,7 +2049,7 @@ input, select, button, textarea {
 
 .markdown .md-code {
   font-family: var(--font-mono);
-  font-size: 12px;
+  font-size: 13px;
   padding: 1px 5px;
   background: var(--bg-input);
   border-radius: 3px;
@@ -2007,7 +2152,7 @@ input, select, button, textarea {
 .equity-curve {
   width: 100%;
   height: auto;
-  max-height: 360px;
+  max-height: 280px;
   background: var(--bg-card);
   border: 1px solid var(--border);
   border-radius: var(--radius-md);
@@ -2023,14 +2168,14 @@ input, select, button, textarea {
 }
 
 .equity-curve__label {
-  font-size: 10px;
+  font-size: 13px;
   font-family: var(--font-mono);
   fill: var(--text-muted);
   text-anchor: end;
 }
 
 .equity-curve__legend {
-  font-size: 10px;
+  font-size: 13px;
   font-family: var(--font-mono);
   fill: var(--text-secondary);
 }
@@ -2062,7 +2207,7 @@ input, select, button, textarea {
 .trade-history__row--head {
   background: transparent;
   border: 0;
-  font-size: 11px;
+  font-size: 13px;
   text-transform: uppercase;
   letter-spacing: 0.06em;
   color: var(--text-muted);
@@ -2101,7 +2246,7 @@ input, select, button, textarea {
 .data-sources-table__row--head {
   background: transparent;
   border: 0;
-  font-size: 11px;
+  font-size: 13px;
   text-transform: uppercase;
   letter-spacing: 0.06em;
   color: var(--text-muted);
@@ -2113,7 +2258,7 @@ input, select, button, textarea {
   display: inline-flex;
   align-items: center;
   gap: 4px;
-  font-size: 11px;
+  font-size: 13px;
   color: var(--text-muted);
 }
 
@@ -2131,4 +2276,603 @@ input, select, button, textarea {
 
 .data-sources-table__status--custom::before {
   background: var(--positive);
+}
+
+/* ===== Scroll cap (one-viewport) ===================================== */
+/* Cap a tall content area so the surrounding page can stay in one viewport.
+   The inner area gets its own vertical scroll; the page chrome above
+   (Topbar + PageHeader) stays put. */
+.scroll-cap {
+  overflow-y: auto;
+  scrollbar-gutter: stable;
+  scrollbar-width: thin;
+  scrollbar-color: var(--border-strong) transparent;
+}
+.scroll-cap::-webkit-scrollbar { width: 8px; }
+.scroll-cap::-webkit-scrollbar-track { background: transparent; }
+.scroll-cap::-webkit-scrollbar-thumb {
+  background: var(--border);
+  border-radius: 999px;
+}
+.scroll-cap::-webkit-scrollbar-thumb:hover { background: var(--border-strong); }
+.scroll-cap--sm { max-height: 200px; }
+.scroll-cap--md { max-height: 320px; }
+.scroll-cap--lg { max-height: 480px; }
+.scroll-cap--xl { max-height: 640px; }
+.scroll-cap.is-expanded { max-height: none; }
+
+/* ===== Metric grid variants (predictable columns) ==================== */
+/* Default `.metric-grid` uses auto-fill which can wrap unpredictably when
+   item counts are large. These pinned variants give stable row counts. */
+.metric-grid--four { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+.metric-grid--six  { grid-template-columns: repeat(6, minmax(0, 1fr)); }
+.metric-grid--dense { gap: 8px; }
+.metric-grid--dense .metric { padding: 8px 10px; gap: 2px; }
+.metric-grid--dense .metric__label { font-size: 11px; }
+.metric-grid--dense .metric__value { font-size: 16px; }
+@media (max-width: 1280px) {
+  .metric-grid--six { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+}
+@media (max-width: 960px) {
+  .metric-grid--four { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .metric-grid--six  { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+
+/* ===== Compact rows ================================================== */
+/* Tighter padding/font for list/table rows when many items share a viewport. */
+.list-row--compact { padding: 6px var(--space-3); gap: var(--space-2); }
+.list-row--compact .list-row__title    { font-size: 13px; }
+.list-row--compact .list-row__subtitle { font-size: 12px; }
+.data-table__row--compact { padding: 6px var(--space-4); font-size: 13px; }
+
+/* ===== Expandable affordance ========================================= */
+/* Footer that appears at the bottom of a scroll-cap, showing the total
+   count and a "展开全部" link that opens the full content in a modal. */
+.expandable-foot {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: var(--space-3);
+  padding-top: var(--space-2);
+  font-size: 12px;
+  color: var(--text-muted);
+}
+.expandable-foot__count { font-variant-numeric: tabular-nums; }
+.expandable-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 10px;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  border: 1px solid var(--border);
+  color: var(--accent);
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all var(--transition-fast);
+}
+.expandable-link:hover {
+  background: var(--accent-soft);
+  border-color: var(--accent);
+}
+
+/* ===== Modal (used by ExpandModal) =================================== */
+/* Full-viewport overlay used to show the un-capped version of a list/table
+   that was scroll-capped on the page. */
+.modal-backdrop {
+  position: fixed;
+  inset: 0;
+  background: var(--scrim);
+  backdrop-filter: blur(4px);
+  z-index: 100;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--space-6);
+}
+.modal {
+  width: 100%;
+  max-width: 1100px;
+  max-height: calc(100vh - var(--space-8));
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-lg);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+.modal__head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: var(--space-4) var(--space-5);
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+  gap: var(--space-3);
+}
+.modal__title { margin: 0; font-size: 15px; font-weight: 600; }
+.modal__sub   { margin: 2px 0 0; font-size: 12px; color: var(--text-muted); }
+.modal__close {
+  background: transparent;
+  border: 1px solid var(--border);
+  color: var(--text-muted);
+  width: 28px;
+  height: 28px;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+.modal__close:hover {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+}
+.modal__body {
+  padding: var(--space-4) var(--space-5);
+  overflow-y: auto;
+  flex: 1;
+  min-height: 0;
+}
+
+/* ===== Not found centering ========================================== */
+.not-found {
+  max-width: 480px;
+  margin: var(--space-8) auto;
+  text-align: center;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+/* ===== Pro trading terminal primitives ============================== */
+/* Signature element: Bloomberg-style status strip pinned under Topbar.
+   Dense mono text, single row, shows engine/KS/clock/last-tick. */
+.status-ticker {
+  display: flex;
+  align-items: center;
+  gap: 0;
+  padding: 6px 24px;
+  background: var(--bg-overlay-soft);
+  border-bottom: 1px solid var(--border);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-secondary);
+  flex-shrink: 0;
+  white-space: nowrap;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+.status-ticker::-webkit-scrollbar { display: none; }
+.status-ticker__cell {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 14px;
+  border-right: 1px solid var(--border);
+  flex-shrink: 0;
+}
+.status-ticker__cell:last-child { border-right: 0; }
+.status-ticker__cell--accent { color: var(--accent); }
+.status-ticker__cell--pos { color: var(--positive); }
+.status-ticker__cell--neg { color: var(--negative); }
+.status-ticker__cell--muted { color: var(--text-muted); }
+.status-ticker__label {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  color: var(--text-muted);
+  font-weight: 500;
+}
+.status-ticker__pulse {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--positive);
+  animation: ticker-pulse 1.6s ease-in-out infinite;
+  flex-shrink: 0;
+}
+@keyframes ticker-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.35; }
+}
+
+/* Big price display — the hero of any market/trade page. */
+.big-price {
+  font-family: var(--font-mono);
+  font-size: 32px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.02em;
+  line-height: 1.1;
+  color: var(--text-primary);
+}
+.big-price__delta {
+  font-family: var(--font-mono);
+  font-size: 14px;
+  font-weight: 500;
+  margin-left: 12px;
+  font-variant-numeric: tabular-nums;
+}
+.big-price__delta--pos { color: var(--positive); }
+.big-price__delta--neg { color: var(--negative); }
+
+/* Utility: force any text to monospace with tabular numbers. */
+.data-mono {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.01em;
+}
+.data-mono--xs { font-size: 11px; }
+.data-mono--sm { font-size: 12px; }
+.data-mono--md { font-size: 14px; }
+.data-mono--lg { font-size: 18px; }
+
+/* Right-aligned numeric column (for tables). */
+.data-num { text-align: right; font-family: var(--font-mono); font-variant-numeric: tabular-nums; }
+
+/* Compact dense list/row used inside trading terminal columns. */
+.tr {
+  display: grid;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 8px;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  border-bottom: 1px solid var(--border);
+  color: var(--text-secondary);
+}
+.tr:hover { background: var(--bg-hover); }
+.tr__side { display: inline-flex; align-items: center; justify-content: center; width: 22px; height: 18px; border-radius: 3px; font-size: 10px; font-weight: 600; }
+.tr__side--buy  { background: var(--positive-soft); color: var(--positive); }
+.tr__side--sell { background: var(--negative-soft); color: var(--negative); }
+.tr__price { color: var(--text-primary); font-weight: 500; }
+.tr__price--up   { color: var(--positive); }
+.tr__price--down { color: var(--negative); }
+
+/* Ticker tape — horizontal scrolling price strip. */
+.ticker-tape {
+  display: flex;
+  gap: 0;
+  padding: 6px 0;
+  overflow-x: auto;
+  white-space: nowrap;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  border-top: 1px solid var(--border);
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-overlay-soft);
+  scrollbar-width: none;
+}
+.ticker-tape::-webkit-scrollbar { display: none; }
+.ticker-tape__item {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 14px;
+  border-right: 1px solid var(--border);
+  cursor: pointer;
+  transition: background var(--transition-fast);
+}
+.ticker-tape__item:hover { background: var(--bg-hover); }
+.ticker-tape__symbol { color: var(--text-secondary); font-weight: 500; }
+.ticker-tape__price  { color: var(--text-primary); }
+.ticker-tape__change--pos { color: var(--positive); }
+.ticker-tape__change--neg { color: var(--negative); }
+
+/* 3-column trading terminal layout. */
+.terminal {
+  display: grid;
+  grid-template-columns: 1fr 2fr 1fr;
+  gap: 12px;
+  min-height: 0;
+}
+.terminal > * { min-width: 0; }
+@media (max-width: 1200px) {
+  .terminal { grid-template-columns: 1fr 1fr; }
+  .terminal > :nth-child(3) { grid-column: span 2; }
+}
+@media (max-width: 800px) {
+  .terminal { grid-template-columns: 1fr; }
+  .terminal > :nth-child(3) { grid-column: auto; }
+}
+
+/* Function-key bar (Bloomberg-style F1..F12 hints). */
+.fn-bar {
+  display: flex;
+  gap: 12px;
+  padding: 4px 12px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--text-muted);
+  background: var(--bg-overlay-soft);
+  border-top: 1px solid var(--border);
+  border-bottom: 1px solid var(--border);
+  flex-wrap: wrap;
+}
+.fn-bar__key {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 1px 6px;
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  background: var(--bg-card);
+  color: var(--accent);
+  font-size: 10px;
+  font-weight: 600;
+}
+
+/* Pill chip for quick filter/action in terminal. */
+.chip-sm {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 8px;
+  border-radius: 4px;
+  background: var(--bg-input);
+  border: 1px solid var(--border);
+  font-size: 11px;
+  font-family: var(--font-mono);
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: all var(--transition-fast);
+}
+.chip-sm:hover { border-color: var(--accent); color: var(--accent); }
+.chip-sm.is-on { background: var(--accent-soft); border-color: var(--accent); color: var(--accent); }
+
+/* Chart placeholder when no data — give it shape, not blank. */
+.chart-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  height: 260px;
+  background:
+    linear-gradient(180deg, transparent 49.5%, var(--border) 50%, transparent 50.5%),
+    repeating-linear-gradient(90deg, transparent 0, transparent 39px, var(--border) 40px);
+  background-size: 100% 100%, 100% 100%;
+  color: var(--text-muted);
+  font-size: 12px;
+}
+.chart-empty__hint {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--text-faint);
+  padding: 4px 10px;
+  border-radius: 4px;
+  background: var(--bg-input);
+  border: 1px solid var(--border);
+}
+
+/* ===== AutoClip design language (indigo/purple + glassmorphism) ===== */
+
+/* Glassmorphism — backdrop-blur on top of dark base. */
+.glass {
+  background: var(--bg-overlay);
+  backdrop-filter: blur(20px) saturate(180%);
+  -webkit-backdrop-filter: blur(20px) saturate(180%);
+  border: 1px solid var(--border);
+}
+.glass-card {
+  background: rgba(30, 41, 59, 0.5);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border: 1px solid var(--border);
+}
+:where([data-theme="light"]) .glass-card {
+  background: rgba(255, 255, 255, 0.6);
+}
+
+/* Color glows — for key status indicators and CTAs. */
+.glow        { box-shadow: 0 0 24px rgba(99, 102, 241, 0.22); }
+.glow-purple { box-shadow: 0 0 24px rgba(139, 92, 246, 0.22); }
+.glow-green  { box-shadow: 0 0 18px rgba(34, 197, 94, 0.25); }
+.glow-red    { box-shadow: 0 0 18px rgba(239, 68, 68, 0.25); }
+.glow-yellow { box-shadow: 0 0 18px rgba(234, 179, 8, 0.22); }
+.glow-cyan   { box-shadow: 0 0 18px rgba(6, 182, 212, 0.22); }
+
+/* Live indicator — used on status dots in Topbar / StatusTicker / engine status. */
+.pulse-dot { animation: pulse-dot 1.6s ease-in-out infinite; }
+@keyframes pulse-dot {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50%      { opacity: 0.45; transform: scale(0.92); }
+}
+
+/* Card hover-lift — same behavior across all card variants. */
+.hover-lift {
+  transition: transform 0.2s ease, box-shadow 0.2s ease, border-color 0.2s ease;
+}
+.hover-lift:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.35);
+  border-color: var(--border-strong);
+}
+
+/* Brand gradient (indigo → purple). */
+.gradient-brand {
+  background: linear-gradient(135deg, var(--accent) 0%, var(--accent-purple) 100%);
+}
+.text-gradient-brand {
+  background: linear-gradient(135deg, var(--accent) 0%, var(--accent-purple) 100%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+  color: transparent;
+}
+
+/* Translucent status badge (e.g. "+12%" green pill, "LIVE" cyan). */
+.badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 10px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0.04em;
+}
+.badge--green  { background: var(--positive-soft); color: var(--positive); }
+.badge--red    { background: var(--negative-soft); color: var(--negative); }
+.badge--yellow { background: var(--warning-soft); color: var(--warning); }
+.badge--cyan   { background: var(--info-soft); color: var(--info); }
+.badge--purple { background: var(--accent-purple-soft); color: var(--accent-purple); }
+.badge--orange { background: var(--orange-soft); color: var(--orange); }
+
+/* Big price display — for hero sections in BTC/crypto pages. */
+.price-mega {
+  font-family: var(--font-mono);
+  font-size: clamp(40px, 6vw, 64px);
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.03em;
+  line-height: 1.05;
+  color: var(--text-primary);
+}
+.price-delta {
+  font-family: var(--font-mono);
+  font-size: 18px;
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+.price-delta--up   { color: var(--positive); }
+.price-delta--down { color: var(--negative); }
+
+/* Stat tile — the AutoClip "big number + label" card. */
+.stat {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  padding: 18px 20px;
+}
+.stat__label {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--text-muted);
+  margin-bottom: 6px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.stat__value {
+  font-family: var(--font-mono);
+  font-size: 20px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-primary);
+}
+.stat__sub {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--text-faint);
+  margin-top: 4px;
+}
+
+/* Gradient primary button (used for New Content / Add Account type CTAs). */
+.btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 14px;
+  border-radius: 10px;
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  border: 1px solid transparent;
+  transition: all 0.15s ease;
+  font-family: inherit;
+  background: transparent;
+  color: var(--text-secondary);
+}
+.btn--primary {
+  background: linear-gradient(135deg, var(--accent) 0%, var(--accent-purple) 100%);
+  color: #fff;
+  box-shadow: 0 4px 14px rgba(99, 102, 241, 0.30);
+  border-color: transparent;
+}
+.btn--primary:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 6px 20px rgba(99, 102, 241, 0.40);
+}
+.btn--ghost {
+  background: transparent;
+  color: var(--text-secondary);
+  border-color: var(--border);
+}
+.btn--ghost:hover {
+  background: var(--bg-elevated);
+  color: var(--text-primary);
+  border-color: var(--border-strong);
+}
+
+/* Loading / error overlay (used inside cards during async fetches). */
+.overlay {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  background: rgba(11, 17, 32, 0.7);
+  backdrop-filter: blur(8px);
+  color: var(--text-muted);
+  font-size: 13px;
+  z-index: 5;
+  border-radius: inherit;
+}
+.overlay--error .overlay__icon { color: var(--negative); }
+.spinner {
+  width: 28px;
+  height: 28px;
+  border: 3px solid var(--border);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: spinner-rotate 0.8s linear infinite;
+}
+@keyframes spinner-rotate { to { transform: rotate(360deg); } }
+
+/* Background blur orbs (the "ambient" layer behind everything). */
+.app-bg {
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 0;
+  overflow: hidden;
+}
+.app-bg::before,
+.app-bg::after {
+  content: "";
+  position: absolute;
+  width: 520px;
+  height: 520px;
+  border-radius: 50%;
+  filter: blur(140px);
+  opacity: 0.35;
+  animation: app-bg-float 18s ease-in-out infinite alternate;
+}
+.app-bg::before {
+  background: radial-gradient(circle, var(--accent) 0%, transparent 70%);
+  top: -12%;
+  left: -12%;
+}
+.app-bg::after {
+  background: radial-gradient(circle, var(--accent-purple) 0%, transparent 70%);
+  bottom: -12%;
+  right: -12%;
+  animation-delay: -9s;
+}
+@keyframes app-bg-float {
+  0%   { transform: translate(0, 0) rotate(-2deg); }
+  100% { transform: translate(50px, -36px) rotate(2deg); }
 }

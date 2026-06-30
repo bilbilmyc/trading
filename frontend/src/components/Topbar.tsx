@@ -10,13 +10,43 @@ export function Topbar() {
   const liveOn = liveTrading ?? false;
 
   return (
-    <header className="topbar topbar--secondary">
-      <div className="topbar__brand">
-        <span className="eyebrow">Quant Trader</span>
-        <h1>量化交易控制台</h1>
-        <span className="topbar__subtitle">
-          实时行情 · 策略信号 · 风险监控
-        </span>
+    <header className="topbar topbar--secondary glass">
+      <div className="topbar__brand" style={{ display: "flex", alignItems: "center", gap: 12 }}>
+        {/* Brand mark: gradient indigo→purple bolt inside a rounded square. */}
+        <div
+          className="gradient-brand glow"
+          style={{
+            width: 40,
+            height: 40,
+            borderRadius: 12,
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            color: "#fff",
+            fontWeight: 700,
+            fontSize: 18,
+          }}
+          aria-hidden="true"
+        >
+          ⚡
+        </div>
+        <div>
+          <div
+            className="eyebrow"
+            style={{ color: "var(--text-muted)", letterSpacing: "0.18em" }}
+          >
+            Quant Trader
+          </div>
+          <h1
+            className="text-gradient-brand"
+            style={{ margin: "2px 0 0", fontSize: 20, fontWeight: 700, lineHeight: 1.1 }}
+          >
+            量化交易控制台
+          </h1>
+          <span className="topbar__subtitle">
+            实时行情 · 策略信号 · 风险监控
+          </span>
+        </div>
       </div>
       <div className="topbar__status">
         <StatusPill

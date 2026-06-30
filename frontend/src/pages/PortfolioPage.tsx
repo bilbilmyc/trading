@@ -1,12 +1,14 @@
 import { useEffect, useState } from "react";
-import { PieChart } from "lucide-react";
+import { PieChart, TrendingUp, TrendingDown, Activity, Award } from "lucide-react";
 
 import { api } from "../api";
 import { EquityCurveChart } from "../components/EquityCurveChart";
-import { Metric } from "../components/atoms";
+import { Metric, MetricTile } from "../components/atoms";
 import { Card } from "../components/Card";
 import { DataTable, type Column } from "../components/DataTable";
+import { ExpandModal } from "../components/ExpandModal";
 import { PageHeader } from "../components/PageHeader";
+import { useExpandable } from "../hooks/useExpandable";
 
 interface PortfolioMetrics {
   sharpe_ratio: number;
@@ -63,6 +65,9 @@ export function PortfolioPage() {
   const [metrics, setMetrics] = useState<PortfolioMetrics | null>(null);
   const [leaderboard, setLeaderboard] = useState<LeaderboardEntry[]>([]);
   const [curves, setCurves] = useState<Record<string, CurvePoint[]>>({});
+  const all = useExpandable();
+
+  const VISIBLE_COUNT = 8;
 
   useEffect(() => {
     api
@@ -132,84 +137,146 @@ export function PortfolioPage() {
         subtitle="Sharpe · Sortino · 最大回撤 · 策略排行榜"
       />
 
-      <Card title="风险调整收益" subtitle="Sharpe / Sortino / Profit Factor / Expectancy">
-        {metrics ? (
-          <div className="metric-grid">
-            <Metric
-              label="Sharpe"
-              value={metrics.sharpe_ratio.toFixed(2)}
-              tone={toneFor(metrics.sharpe_ratio, 0.5)}
-            />
-            <Metric
-              label="Sortino"
-              value={metrics.sortino_ratio.toFixed(2)}
-              tone={toneFor(metrics.sortino_ratio, 0.5)}
-            />
-            <Metric
-              label="Profit Factor"
-              value={metrics.profit_factor.toFixed(2)}
-              tone={toneFor(metrics.profit_factor, 1.0)}
-            />
-            <Metric
-              label="Expectancy"
-              value={money(metrics.expectancy)}
-              tone={toneFor(metrics.expectancy)}
-            />
-            <Metric label="Max Drawdown" value={pct(metrics.max_drawdown)} tone="negative" />
-            <Metric
-              label="DD Periods"
-              value={String(metrics.max_drawdown_periods)}
-              tone="muted"
-            />
-            <Metric
-              label="Win Rate"
-              value={pct(metrics.win_rate)}
-              tone={toneFor(metrics.win_rate, 0.5)}
-            />
-            <Metric
-              label="Annualized"
-              value={pct(metrics.annualized_return)}
-              tone={toneFor(metrics.annualized_return)}
-            />
-            <Metric label="Total Trades" value={String(metrics.total_trades)} tone="muted" />
-            <Metric
-              label="Win Streak"
-              value={String(metrics.max_consecutive_wins)}
-              tone="positive"
-            />
-            <Metric
-              label="Loss Streak"
-              value={String(metrics.max_consecutive_losses)}
-              tone="negative"
-            />
-            <Metric
-              label="Avg Win / Loss"
-              value={`${money(metrics.average_win)} / ${money(metrics.average_loss)}`}
-              tone="muted"
-            />
-          </div>
-        ) : (
-          <div className="empty-state">尚无交易历史 — 启动策略或回测后查看分析</div>
-        )}
-      </Card>
+      {/* 4 hero metrics + 8 secondary metrics. Hero uses MetricTile (AutoClip style);
+          secondary uses compact Metric. */}
+      <div className="page__grid page__grid--split">
+        <Card title="风险调整收益" subtitle="Sharpe / Sortino / Profit Factor / Expectancy">
+          {metrics ? (
+            <>
+              <div
+                style={{
+                  display: "grid",
+                  gridTemplateColumns: "repeat(2, 1fr)",
+                  gap: 10,
+                  marginBottom: 12,
+                }}
+              >
+                <MetricTile
+                  label="Sharpe"
+                  value={metrics.sharpe_ratio.toFixed(2)}
+                  icon={<TrendingUp size={16} />}
+                  iconGradient={metrics.sharpe_ratio >= 0.5 ? "green" : "yellow"}
+                />
+                <MetricTile
+                  label="Sortino"
+                  value={metrics.sortino_ratio.toFixed(2)}
+                  icon={<Activity size={16} />}
+                  iconGradient={metrics.sortino_ratio >= 0.5 ? "green" : "yellow"}
+                />
+                <MetricTile
+                  label="Profit Factor"
+                  value={metrics.profit_factor.toFixed(2)}
+                  icon={<Award size={16} />}
+                  iconGradient={metrics.profit_factor >= 1.0 ? "green" : "red"}
+                />
+                <MetricTile
+                  label="Expectancy"
+                  value={money(metrics.expectancy)}
+                  icon={<PieChart size={16} />}
+                  iconGradient={metrics.expectancy >= 0 ? "green" : "red"}
+                />
+              </div>
+              <div className="metric-grid metric-grid--four metric-grid--dense">
+                <Metric label="Max Drawdown" value={pct(metrics.max_drawdown)} tone="negative" />
+                <Metric
+                  label="DD Periods"
+                  value={String(metrics.max_drawdown_periods)}
+                  tone="muted"
+                />
+                <Metric
+                  label="Win Rate"
+                  value={pct(metrics.win_rate)}
+                  tone={toneFor(metrics.win_rate, 0.5)}
+                />
+                <Metric
+                  label="Annualized"
+                  value={pct(metrics.annualized_return)}
+                  tone={toneFor(metrics.annualized_return)}
+                />
+                <Metric label="Total Trades" value={String(metrics.total_trades)} tone="muted" />
+                <Metric
+                  label="Win Streak"
+                  value={String(metrics.max_consecutive_wins)}
+                  tone="positive"
+                />
+                <Metric
+                  label="Loss Streak"
+                  value={String(metrics.max_consecutive_losses)}
+                  tone="negative"
+                />
+                <Metric
+                  label="Avg Win / Loss"
+                  value={`${money(metrics.average_win)} / ${money(metrics.average_loss)}`}
+                  tone="muted"
+                />
+              </div>
+            </>
+          ) : (
+            <div className="empty-state">
+              <strong>尚无交易历史</strong>
+              <span>启动策略或回测后这里会显示风险调整收益</span>
+            </div>
+          )}
+        </Card>
 
-      <Card title="策略排行榜" subtitle="按综合得分（Sharpe + 胜率 + 反回撤）排序">
+        <Card title="权益曲线" subtitle="各策略历史净值" padded={false}>
+          {Object.keys(curves).length === 0 ? (
+            <div className="empty-state" style={{ padding: "var(--space-6)" }}>
+              暂无权益曲线
+            </div>
+          ) : (
+            <EquityCurveChart curves={curves} width={520} height={280} />
+          )}
+        </Card>
+      </div>
+
+      <Card
+        title="策略排行榜"
+        subtitle={`共 ${leaderboard.length} 策略 · 按综合得分排序`}
+      >
         {leaderboard.length === 0 ? (
-          <div className="empty-state">暂无策略数据</div>
+          <div className="empty-state">
+            <strong>暂无策略数据</strong>
+            <span>运行策略后这里会出现排行</span>
+          </div>
         ) : (
-          <DataTable columns={columns} rows={leaderboard} rowKey={(e) => e.strategy} />
+          <>
+            <div className="scroll-cap scroll-cap--md">
+              <DataTable
+                columns={columns}
+                rows={leaderboard.slice(0, VISIBLE_COUNT)}
+                rowKey={(e) => e.strategy}
+                rowVariant="compact"
+              />
+            </div>
+            <div className="expandable-foot">
+              <span className="expandable-foot__count">
+                {leaderboard.length > VISIBLE_COUNT
+                  ? `隐藏 ${leaderboard.length - VISIBLE_COUNT} 策略`
+                  : "已显示全部"}
+              </span>
+              {leaderboard.length > VISIBLE_COUNT ? (
+                <button type="button" className="expandable-link" onClick={all.open}>
+                  展开全部 ({leaderboard.length}) ↗
+                </button>
+              ) : null}
+            </div>
+          </>
         )}
       </Card>
 
-      <Card title="权益曲线" subtitle="各策略历史净值变化" padded={false}>
-        {Object.keys(curves).length === 0 ? (
-          <div className="empty-state" style={{ padding: "var(--space-6)" }}>
-            暂无权益曲线 — 策略交易后自动记录
-          </div>
-        ) : (
-          <EquityCurveChart curves={curves} width={960} height={320} />
-        )}
-      </Card>
+      <ExpandModal
+        isOpen={all.isOpen}
+        onClose={all.close}
+        title="策略排行榜（全部）"
+        subtitle={`共 ${leaderboard.length} 策略`}
+      >
+        <DataTable
+          columns={columns}
+          rows={leaderboard}
+          rowKey={(e) => e.strategy}
+        />
+      </ExpandModal>
     </div>
   );
 }

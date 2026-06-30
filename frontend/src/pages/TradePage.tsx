@@ -1,7 +1,9 @@
 import { useCallback, useEffect, useState } from "react";
 import { ArrowLeftRight } from "lucide-react";
 import { useStatus } from "../contexts/StatusContext";
+import { useEngine } from "../contexts/EngineContext";
 import { api } from "../api";
+import { engineApi } from "../api/engine";
 import type {
   ContractMarket,
   ContractOrderPayload,
@@ -22,6 +24,7 @@ import { PageHeader } from "../components/PageHeader";
 
 export function TradePage() {
   const { apiOnline } = useStatus();
+  const engine = useEngine();
   const [tradingReady, setTradingReady] = useState<boolean | null>(null);
 
   useEffect(() => {
@@ -83,6 +86,79 @@ export function TradePage() {
   const blockedReason = !apiOnline
     ? "后端离线"
     : "";
+
+  // Engine-driven controls (MarketPanel).
+  const [evaluating, setEvaluating] = useState(false);
+  const [runnerBusy, setRunnerBusy] = useState("");
+  const [toast, setToast] = useState("");
+
+  const onEvaluate = useCallback(async () => {
+    if (!engine.engine) return;
+    setEvaluating(true);
+    setToast("");
+    try {
+      const r = await engineApi.runSignalCycle();
+      setToast(`本轮处理 ${r.processed_strategies} 策略, 产生 ${r.signals.length} 信号`);
+      await engine.refresh();
+    } catch (err) {
+      setToast(err instanceof Error ? err.message : "评估失败");
+    } finally {
+      setEvaluating(false);
+    }
+  }, [engine]);
+
+  const onStartRunner = useCallback(async () => {
+    setRunnerBusy("start");
+    setToast("");
+    try {
+      await engineApi.startRunner();
+      await engine.refresh();
+    } catch (err) {
+      setToast(err instanceof Error ? err.message : "启动失败");
+    } finally {
+      setRunnerBusy("");
+    }
+  }, [engine]);
+
+  const onStopRunner = useCallback(async () => {
+    setRunnerBusy("stop");
+    setToast("");
+    try {
+      await engineApi.stopRunner();
+      await engine.refresh();
+    } catch (err) {
+      setToast(err instanceof Error ? err.message : "停止失败");
+    } finally {
+      setRunnerBusy("");
+    }
+  }, [engine]);
+
+  const onRunOnce = useCallback(async () => {
+    setRunnerBusy("run-once");
+    setToast("");
+    try {
+      await engineApi.runSignalCycle();
+      await engine.refresh();
+    } catch (err) {
+      setToast(err instanceof Error ? err.message : "执行失败");
+    } finally {
+      setRunnerBusy("");
+    }
+  }, [engine]);
+
+  const onResetPaper = useCallback(async () => {
+    if (!window.confirm("确定重置模拟盘? 所有模拟持仓将被清空。")) return;
+    setRunnerBusy("paper-reset");
+    setToast("");
+    try {
+      await engineApi.resetPaper();
+      await engine.refresh();
+    } catch (err) {
+      setToast(err instanceof Error ? err.message : "重置失败");
+    } finally {
+      setRunnerBusy("");
+    }
+  }, [engine]);
 
   const refreshContracts = useCallback(async () => {
     if (!apiOnline) return;
@@ -227,17 +303,17 @@ export function TradePage() {
           estimate={estimate}
           liquidity={liquidity}
           onLiquidityChange={setLiquidity}
-          strategyCount={0}
-          signalCount={0}
-          runnerRunning={false}
-          onEvaluate={async () => {}}
-          onStartRunner={async () => {}}
-          onStopRunner={async () => {}}
-          onRunOnce={async () => {}}
-          onResetPaper={async () => {}}
-          evaluating={false}
-          runnerBusy=""
-          signals={[]}
+          strategyCount={engine.strategies.length}
+          signalCount={engine.signals.length}
+          runnerRunning={engine.engine?.signal_runner?.running ?? false}
+          onEvaluate={onEvaluate}
+          onStartRunner={onStartRunner}
+          onStopRunner={onStopRunner}
+          onRunOnce={onRunOnce}
+          onResetPaper={onResetPaper}
+          evaluating={evaluating}
+          runnerBusy={runnerBusy}
+          signals={engine.signals.slice(0, 5)}
           notional={notional}
         />
       </div>
