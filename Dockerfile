@@ -26,6 +26,13 @@ COPY --from=frontend-builder /app/frontend/dist ./static
 
 RUN uv sync --frozen --no-dev
 
+# Put the synced venv on PATH so the CMD can just say `python …` without
+# going through `uv run`. Going through `uv run` at container start would
+# trigger a fresh `uv sync` against the lockfile, which (without --no-dev)
+# pulls the dev group back in and produces the "Downloading ruff/mypy/…"
+# lines the user saw in the runtime logs.
+ENV PATH="/app/.venv/bin:$PATH"
+
 EXPOSE 8000
 
-CMD ["uv", "run", "python", "main.py", "api", "--host", "0.0.0.0", "--port", "8000"]
+CMD ["python", "main.py", "api", "--host", "0.0.0.0", "--port", "8000"]
