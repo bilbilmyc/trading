@@ -5,6 +5,7 @@ import { api } from "../api";
 import { Metric, MetricTile } from "../components/atoms";
 import { Card } from "../components/Card";
 import { DataTable, type Column } from "../components/DataTable";
+import { EmptyState } from "../components/EmptyState";
 import { ExpandModal } from "../components/ExpandModal";
 import { PageHeader } from "../components/PageHeader";
 import { useExpandable } from "../hooks/useExpandable";
@@ -167,7 +168,7 @@ export function TradeHistoryPage() {
   ];
 
   return (
-    <div className="page page--trade-history">
+    <div className="page page--trade-history stack">
       <PageHeader
         icon={<History size={18} />}
         eyebrow="交易历史"
@@ -258,10 +259,12 @@ export function TradeHistoryPage() {
       >
         {error ? <div className="notice notice--error">{error}</div> : null}
         {trades.length === 0 && !loading ? (
-          <div className="empty-state">
-            <strong>暂无成交记录</strong>
-            <span>启动策略后会自动记录,这里按时间倒序</span>
-          </div>
+          <EmptyState
+            variant="iconic"
+            title="暂无成交记录"
+            hint="启动策略后会自动记录,这里按时间倒序"
+            action={{ label: "去策略页", href: "/strategies" }}
+          />
         ) : (
           <>
             <div className="scroll-cap scroll-cap--md">

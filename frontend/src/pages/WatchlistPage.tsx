@@ -4,6 +4,7 @@ import { RefreshCw, Star, X } from "lucide-react";
 
 import { api } from "../api";
 import { Card } from "../components/Card";
+import { EmptyState } from "../components/EmptyState";
 import { PageHeader } from "../components/PageHeader";
 
 interface Ticker {
@@ -168,10 +169,11 @@ export function WatchlistPage() {
 
       <Card title={`自选 (${items.length})`} subtitle="点击合约代码进入行情">
         {items.length === 0 ? (
-          <div className="empty-state">
-            <strong>尚无自选</strong>
-            <span>在上方表单里添加合约即可开始观察</span>
-          </div>
+          <EmptyState
+            variant="iconic"
+            title="尚无自选"
+            hint="在上方表单里添加合约即可开始观察"
+          />
         ) : (
           <div className="watchlist-grid">
             {items.map((item, idx) => {

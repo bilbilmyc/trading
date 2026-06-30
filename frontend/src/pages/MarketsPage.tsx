@@ -13,6 +13,7 @@ import type {
   Ticker,
 } from "../api";
 import { CandleChart, type Candle } from "../components/CandleChart";
+import { EmptyState } from "../components/EmptyState";
 import { formatNumber, formatPercent } from "../utils/format";
 
 const EXCHANGES: { value: ExchangeName; label: string }[] = [
@@ -280,10 +281,7 @@ export function MarketsPage() {
                 );
               })
             ) : (
-              <div className="empty-state" style={{ margin: 8 }}>
-                <strong>暂无成交</strong>
-                <span>选择合约后会自动开始流式拉取</span>
-              </div>
+              <EmptyState variant="compact" title="暂无成交" hint="选择合约后会自动开始流式拉取" />
             )}
           </div>
         </section>
@@ -434,10 +432,7 @@ export function MarketsPage() {
                   </div>
                 ))
               ) : (
-                <div className="empty-state" style={{ margin: 8 }}>
-                  <strong>暂无挂单</strong>
-                  <span>下单后会自动出现在此</span>
-                </div>
+                <EmptyState variant="compact" title="暂无挂单" hint="下单后会自动出现在此" />
               )}
             </div>
           </section>

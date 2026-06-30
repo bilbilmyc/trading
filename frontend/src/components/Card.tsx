@@ -1,5 +1,8 @@
 import type { ReactNode } from "react";
 
+type ColSpan =
+  | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10 | 11 | 12;
+
 interface CardProps {
   /** Optional header shown at the top of the card. */
   title?: string;
@@ -15,6 +18,12 @@ interface CardProps {
   accent?: boolean;
   /** Removes inner border-radius padding for content (e.g. tables). */
   flush?: boolean;
+  /** Visual density. `compact` trims padding & gap; `loose` widens them. */
+  density?: "compact" | "normal" | "loose";
+  /** Grid-column span when placed inside `.page__grid--12`. */
+  colSpan?: ColSpan;
+  /** Disable the auto-lift on hover (e.g. for sticky panels). */
+  static_?: boolean;
   /** Additional CSS class on the card root. */
   className?: string;
   children: ReactNode;
@@ -23,7 +32,7 @@ interface CardProps {
 /**
  * Generic content container. Replaces the ad-hoc `.panel`, `.watchlist-card`,
  * `.cap-card`, `.preview-card`, and `.ai-report` containers with a single
- * uniform shell.
+ * uniform shell. Pair with `.page__grid--12` + `colSpan` for dashboard density.
  */
 export function Card({
   title,
@@ -33,15 +42,22 @@ export function Card({
   hoverable = false,
   accent = false,
   flush = false,
+  density = "normal",
+  colSpan,
+  static_ = false,
   className = "",
   children,
 }: CardProps) {
   const cls = [
     "card",
     padded ? "card--padded" : "",
+    density === "compact" ? "card--compact" : "",
+    density === "loose" ? "card--loose" : "",
     hoverable ? "card--hoverable" : "",
     accent ? "card--accent" : "",
     flush ? "card--flush" : "",
+    static_ ? "card--static" : "",
+    colSpan ? `col-span-${colSpan}` : "",
     className,
   ]
     .filter(Boolean)
@@ -51,7 +67,7 @@ export function Card({
     <section className={cls}>
       {title || subtitle || trailing ? (
         <header className="card__header">
-          <div>
+          <div className="stack--tight min-w-0">
             {title ? <h3 className="card__title">{title}</h3> : null}
             {subtitle ? <p className="card__subtitle">{subtitle}</p> : null}
           </div>

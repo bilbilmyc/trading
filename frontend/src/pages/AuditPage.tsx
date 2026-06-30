@@ -4,6 +4,7 @@ import { ClipboardList } from "lucide-react";
 import { useEngine } from "../contexts/EngineContext";
 import { Metric } from "../components/atoms";
 import { Card } from "../components/Card";
+import { EmptyState } from "../components/EmptyState";
 import { ExpandModal } from "../components/ExpandModal";
 import { ListRow, type ListRowLevel } from "../components/ListRow";
 import { PageHeader } from "../components/PageHeader";
@@ -50,7 +51,7 @@ export function AuditPage() {
   const reversed = filtered.slice().reverse();
 
   return (
-    <div className="page page--audit">
+    <div className="page page--audit stack">
       <PageHeader
         icon={<ClipboardList size={18} />}
         eyebrow="审计事件"
@@ -83,10 +84,11 @@ export function AuditPage() {
         subtitle={`${filtered.length} 条 · 显示前 ${Math.min(VISIBLE_COUNT, filtered.length)}`}
       >
         {filtered.length === 0 ? (
-          <div className="empty-state">
-            <strong>暂无该级别事件</strong>
-            <span>切到 all 或别的级别查看</span>
-          </div>
+          <EmptyState
+            variant="iconic"
+            title="暂无该级别事件"
+            hint="切到 all 或别的级别查看"
+          />
         ) : (
           <>
             <div className="scroll-cap scroll-cap--lg">

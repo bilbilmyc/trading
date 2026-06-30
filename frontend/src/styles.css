@@ -590,9 +590,11 @@ input, select, button, textarea {
   flex-direction: column;
   gap: 4px;
   padding: 10px 12px;
+  min-width: 0;
   background: var(--bg-card);
   border: 1px solid var(--border);
   border-radius: var(--radius-md);
+  overflow: hidden;
 }
 
 .metric__label {
@@ -601,15 +603,21 @@ input, select, button, textarea {
   letter-spacing: 0.06em;
   color: var(--text-muted);
   font-weight: 500;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .metric__value {
-  font-size: 17px;
+  font-size: 16px;
   font-weight: 600;
   color: var(--text-primary);
   font-family: var(--font-mono);
   font-variant-numeric: tabular-nums;
   letter-spacing: -0.01em;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .metric__hint {
@@ -626,11 +634,13 @@ input, select, button, textarea {
 .metric-tile {
   background: var(--bg-card);
   border: 1px solid var(--border);
-  border-radius: 16px;
-  padding: 16px 18px;
+  border-radius: 14px;
+  padding: 12px 14px;
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 6px;
+  min-width: 0;
+  overflow: hidden;
 }
 .metric-tile__head {
   display: flex;
@@ -642,26 +652,34 @@ input, select, button, textarea {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 36px;
-  height: 36px;
-  border-radius: 10px;
+  width: 32px;
+  height: 32px;
+  border-radius: 9px;
   color: #fff;
   flex-shrink: 0;
   box-shadow: 0 4px 12px rgba(99, 102, 241, 0.25);
 }
 .metric-tile__value {
   font-family: var(--font-mono);
-  font-size: 24px;
+  font-size: 22px;
   font-weight: 600;
   font-variant-numeric: tabular-nums;
-  letter-spacing: -0.01em;
+  letter-spacing: -0.02em;
   color: var(--text-primary);
   line-height: 1.1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .metric-tile__label {
-  font-size: 12px;
+  font-size: 11px;
   color: var(--text-muted);
   font-weight: 500;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 /* ===== Strategy bar (MarketPanel) =================================== */
@@ -926,23 +944,56 @@ input, select, button, textarea {
   display: flex;
   flex-direction: column;
   align-items: flex-start;
+  justify-content: center;
   gap: 4px;
-  padding: 16px;
+  padding: 18px 16px;
+  min-height: 96px;
+  min-width: 0;
   background: transparent;
   border: 1px dashed var(--border);
   border-radius: var(--radius-md);
   color: var(--text-muted);
-  font-size: 13px;
+  font-size: 12px;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 .empty-state strong {
   color: var(--text-secondary);
-  font-size: 13px;
+  font-size: 12px;
   font-weight: 600;
+  letter-spacing: -0.01em;
 }
 .empty-state span {
-  font-size: 12px;
+  font-size: 11px;
   color: var(--text-faint);
+  line-height: 1.4;
 }
+.empty-state--compact { min-height: 64px; padding: 10px 12px; }
+.empty-state--iconic {
+  align-items: center;
+  text-align: center;
+  padding: 24px 16px;
+  min-height: 120px;
+}
+.empty-state--iconic strong { font-size: 13px; }
+
+/* Centred gradient icon chip at the top of an iconic empty state.
+   Mirrors .metric-tile__icon so all gradient chips share one visual language. */
+.empty-state__icon-tile {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  border-radius: 10px;
+  background: linear-gradient(135deg, var(--accent) 0%, var(--accent-purple) 100%);
+  color: #fff;
+  margin-bottom: 6px;
+  box-shadow: 0 4px 14px rgba(99, 102, 241, 0.35);
+}
+.empty-state__action { margin-top: 8px; align-self: flex-start; }
+.empty-state--iconic .empty-state__action { align-self: center; }
 
 /* ===== Block (RiskPanel sections) ==================================== */
 
@@ -1365,9 +1416,16 @@ input, select, button, textarea {
   margin: 0;
   font-size: 13px;
   color: var(--text-muted);
-  max-width: 60ch;
+  max-width: 64ch;
   line-height: 1.4;
+  text-wrap: balance;
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
+.page-header--compact .page-header__title { font-size: 17px; }
+.page-header--compact .page-header__icon { width: 26px; height: 26px; border-radius: 8px; }
+.page-header--compact .page-header__subtitle { font-size: 12px; }
+.page-header--flush { margin-bottom: 8px; }
 
 .page-header__actions {
   display: flex;
@@ -1391,6 +1449,7 @@ input, select, button, textarea {
   display: flex;
   flex-direction: column;
   gap: var(--space-3);
+  min-width: 0;
   background: var(--bg-elevated);
   border: 1px solid var(--border);
   border-radius: var(--radius-lg);
@@ -1407,6 +1466,21 @@ input, select, button, textarea {
 
 .card--padded {
   padding: var(--space-4);
+}
+.card--compact {
+  padding: 10px 12px;
+  gap: var(--space-2);
+}
+.card--compact .card__header { gap: var(--space-2); }
+.card--tight { padding: 12px 14px; gap: var(--space-2); }
+.card--loose {
+  padding: 20px 22px;
+  gap: var(--space-4);
+}
+.card--flat {
+  background: transparent;
+  border-color: transparent;
+  box-shadow: none;
 }
 
 .card--hoverable:hover {
@@ -1429,6 +1503,7 @@ input, select, button, textarea {
   align-items: flex-start;
   justify-content: space-between;
   gap: var(--space-3);
+  min-width: 0;
 }
 
 .card__title {
@@ -1437,12 +1512,20 @@ input, select, button, textarea {
   font-weight: 600;
   color: var(--text-primary);
   letter-spacing: -0.01em;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .card__subtitle {
   margin: 2px 0 0;
-  font-size: 13px;
+  font-size: 12px;
   color: var(--text-muted);
+  line-height: 1.4;
+  text-wrap: balance;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+  max-width: 64ch;
 }
 
 .card__trailing {
@@ -1452,7 +1535,7 @@ input, select, button, textarea {
   flex-shrink: 0;
 }
 
-.card__body { display: flex; flex-direction: column; gap: var(--space-3); }
+.card__body { display: flex; flex-direction: column; gap: var(--space-3); min-width: 0; }
 .card__body--flush { padding: 0; }
 
 /* ===== Data table (new shared component) ============================= */
@@ -2695,6 +2778,106 @@ input, select, button, textarea {
   border-color: var(--border-strong);
 }
 
+/* ===== Layout utilities (P0-A) ====================================== */
+
+/* min-width: 0 is the canonical fix for grid/flex items whose content
+   (long words, numbers, unbroken strings) would otherwise expand the
+   cell. Apply to any child that should be allowed to shrink. */
+.min-w-0 { min-width: 0; }
+.min-w-0 > * { min-width: 0; }
+
+/* Stack / Row / Section grid — the three layout primitives for dense pages. */
+.stack { display: flex; flex-direction: column; gap: 12px; min-width: 0; }
+.stack--tight { gap: 6px; }
+.stack--loose { gap: 18px; }
+.row    { display: flex; gap: 8px; align-items: center; min-width: 0; flex-wrap: wrap; }
+.row--between { justify-content: space-between; }
+.row--end     { justify-content: flex-end; }
+.row--baseline { align-items: baseline; }
+.row--nowrap  { flex-wrap: nowrap; }
+.section-grid { display: grid; gap: 14px; min-width: 0; }
+
+/* Sticky anchor for primary forms / panels inside a scrolling page.
+   Top offset accounts for the sticky Topbar (~56px) + status ticker (~28px)
+   + a small breathing margin. */
+.sticky-top {
+  position: sticky;
+  top: 96px;
+  max-height: calc(100vh - 112px);
+  overflow-y: auto;
+  align-self: start;
+}
+
+/* Single-line / multi-line text truncation. Use on card titles, ticker
+   items, mono values that must never wrap or push neighbors. */
+.truncate,
+.truncate-1 {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.truncate-2 {
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.truncate-3 {
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+/* `text-wrap: balance` distributes line widths so multi-line headers
+   don't end with a stub word on the last line. Use on h1/h2 + subtitles. */
+.text-balance { text-wrap: balance; }
+
+/* 12-column layout primitive. Pair with .col-span-{1..12} on cards. */
+.page__grid--12 {
+  display: grid;
+  grid-template-columns: repeat(12, minmax(0, 1fr));
+  gap: 14px;
+}
+.page__grid--12 > * { min-width: 0; }
+.col-span-1  { grid-column: span 1; }
+.col-span-2  { grid-column: span 2; }
+.col-span-3  { grid-column: span 3; }
+.col-span-4  { grid-column: span 4; }
+.col-span-5  { grid-column: span 5; }
+.col-span-6  { grid-column: span 6; }
+.col-span-7  { grid-column: span 7; }
+.col-span-8  { grid-column: span 8; }
+.col-span-9  { grid-column: span 9; }
+.col-span-10 { grid-column: span 10; }
+.col-span-11 { grid-column: span 11; }
+.col-span-12 { grid-column: span 12; }
+@media (max-width: 1280px) {
+  .col-span-3  { grid-column: span 6; }
+  .col-span-4  { grid-column: span 6; }
+  .col-span-5  { grid-column: span 12; }
+  .col-span-2  { grid-column: span 4; }
+}
+@media (max-width: 960px) {
+  .page__grid--12 { grid-template-columns: repeat(6, minmax(0, 1fr)); }
+  .col-span-1  { grid-column: span 2; }
+  .col-span-2  { grid-column: span 3; }
+  .col-span-3,
+  .col-span-4,
+  .col-span-5,
+  .col-span-6,
+  .col-span-7,
+  .col-span-8,
+  .col-span-9,
+  .col-span-10,
+  .col-span-11,
+  .col-span-12 { grid-column: span 6; }
+}
+@media (max-width: 640px) {
+  .page__grid--12 { grid-template-columns: 1fr; }
+  [class*="col-span-"] { grid-column: span 1; }
+}
+
 /* Brand gradient (indigo → purple). */
 .gradient-brand {
   background: linear-gradient(135deg, var(--accent) 0%, var(--accent-purple) 100%);
@@ -2813,6 +2996,11 @@ input, select, button, textarea {
   background: var(--bg-elevated);
   color: var(--text-primary);
   border-color: var(--border-strong);
+}
+.btn--sm {
+  padding: 4px 10px;
+  font-size: 12px;
+  border-radius: 8px;
 }
 
 /* Loading / error overlay (used inside cards during async fetches). */

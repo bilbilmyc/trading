@@ -150,7 +150,7 @@ export function DataPage() {
   ];
 
   return (
-    <div className="page page--data">
+    <div className="page page--data stack">
       <PageHeader
         icon={<Database size={18} />}
         eyebrow="数据分析"

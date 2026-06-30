@@ -244,7 +244,7 @@ export function TradePage() {
   }
 
   return (
-    <div className="page page--trade">
+    <div className="page page--trade stack">
       <PageHeader
         icon={<ArrowLeftRight size={18} />}
         eyebrow="人工下单"
@@ -252,70 +252,74 @@ export function TradePage() {
         subtitle="合约预览 · 一键提交 · 预览后才下单"
       />
 
-      <div className="page__grid page__grid--two-thirds">
-        <OrderPanel
-          exchange={exchange}
-          onExchangeChange={setExchange}
-          symbol={symbol}
-          onSymbolChange={setSymbol}
-          contractSearch={contractSearch}
-          onContractSearchChange={setContractSearch}
-          contracts={contracts}
-          contractsLoading={contractsLoading}
-          contractsTotal={contractsTotal}
-          onContractSelect={async (c) => {
-            setSymbol(c.symbol);
-            if (c.min_quantity) setQuantity(String(c.min_quantity));
-          }}
-          intent={intent}
-          onIntentChange={setIntent}
-          quantity={quantity}
-          onQuantityChange={setQuantity}
-          price={price}
-          onPriceChange={setPrice}
-          leverage={leverage}
-          onLeverageChange={setLeverage}
-          orderType={orderType}
-          onOrderTypeChange={(v) => {
-            setOrderType(v);
-            if (v === "market" || v === "ioc" || v === "fok") setLiquidity("taker");
-          }}
-          marginMode={marginMode}
-          onMarginModeChange={setMarginMode}
-          positionSide={positionSide}
-          onPositionSideChange={setPositionSide}
-          preview={orderPreview}
-          previewBusy={previewBusy}
-          onPreview={onPreview}
-          onSubmit={onSubmit}
-          busy={busy}
-          blockedReason={blockedReason}
-          apiOnline={apiOnline}
-          notice={error ? { tone: "error", message: error } : { tone: "info", message }}
-        />
+      <div className="page__grid--12">
+        <div className="col-span-5 sticky-top">
+          <OrderPanel
+            exchange={exchange}
+            onExchangeChange={setExchange}
+            symbol={symbol}
+            onSymbolChange={setSymbol}
+            contractSearch={contractSearch}
+            onContractSearchChange={setContractSearch}
+            contracts={contracts}
+            contractsLoading={contractsLoading}
+            contractsTotal={contractsTotal}
+            onContractSelect={async (c) => {
+              setSymbol(c.symbol);
+              if (c.min_quantity) setQuantity(String(c.min_quantity));
+            }}
+            intent={intent}
+            onIntentChange={setIntent}
+            quantity={quantity}
+            onQuantityChange={setQuantity}
+            price={price}
+            onPriceChange={setPrice}
+            leverage={leverage}
+            onLeverageChange={setLeverage}
+            orderType={orderType}
+            onOrderTypeChange={(v) => {
+              setOrderType(v);
+              if (v === "market" || v === "ioc" || v === "fok") setLiquidity("taker");
+            }}
+            marginMode={marginMode}
+            onMarginModeChange={setMarginMode}
+            positionSide={positionSide}
+            onPositionSideChange={setPositionSide}
+            preview={orderPreview}
+            previewBusy={previewBusy}
+            onPreview={onPreview}
+            onSubmit={onSubmit}
+            busy={busy}
+            blockedReason={blockedReason}
+            apiOnline={apiOnline}
+            notice={error ? { tone: "error", message: error } : { tone: "info", message }}
+          />
+        </div>
 
-        <MarketPanel
-          symbol={symbol}
-          ticker={ticker}
-          trades={[]}
-          openOrders={[]}
-          feeRate={feeRate}
-          estimate={estimate}
-          liquidity={liquidity}
-          onLiquidityChange={setLiquidity}
-          strategyCount={engine.strategies.length}
-          signalCount={engine.signals.length}
-          runnerRunning={engine.engine?.signal_runner?.running ?? false}
-          onEvaluate={onEvaluate}
-          onStartRunner={onStartRunner}
-          onStopRunner={onStopRunner}
-          onRunOnce={onRunOnce}
-          onResetPaper={onResetPaper}
-          evaluating={evaluating}
-          runnerBusy={runnerBusy}
-          signals={engine.signals.slice(0, 5)}
-          notional={notional}
-        />
+        <div className="col-span-7">
+          <MarketPanel
+            symbol={symbol}
+            ticker={ticker}
+            trades={[]}
+            openOrders={[]}
+            feeRate={feeRate}
+            estimate={estimate}
+            liquidity={liquidity}
+            onLiquidityChange={setLiquidity}
+            strategyCount={engine.strategies.length}
+            signalCount={engine.signals.length}
+            runnerRunning={engine.engine?.signal_runner?.running ?? false}
+            onEvaluate={onEvaluate}
+            onStartRunner={onStartRunner}
+            onStopRunner={onStopRunner}
+            onRunOnce={onRunOnce}
+            onResetPaper={onResetPaper}
+            evaluating={evaluating}
+            runnerBusy={runnerBusy}
+            signals={engine.signals.slice(0, 5)}
+            notional={notional}
+          />
+        </div>
       </div>
     </div>
   );

@@ -71,7 +71,7 @@ export function SettingsPage() {
   }
 
   return (
-    <div className="page page--settings">
+    <div className="page page--settings stack">
       <PageHeader
         icon={<SettingsIcon size={18} />}
         eyebrow="系统配置"
