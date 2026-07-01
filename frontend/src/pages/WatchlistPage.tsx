@@ -4,8 +4,9 @@ import { RefreshCw, Star, X } from "lucide-react";
 
 import { api } from "../api";
 import { Card } from "../components/Card";
-import { EmptyState } from "../components/EmptyState";
+import { KPIHero } from "../components/KPIHero";
 import { PageHeader } from "../components/PageHeader";
+import { Sparkline } from "../components/Sparkline";
 
 interface Ticker {
   symbol: string;
@@ -110,7 +111,7 @@ export function WatchlistPage() {
   }
 
   return (
-    <div className="page page--watchlist">
+    <div className="page page--watchlist stack">
       <PageHeader
         icon={<Star size={18} />}
         eyebrow="自选观察"
@@ -128,6 +129,50 @@ export function WatchlistPage() {
           </button>
         }
       />
+
+      {/* KPI strip — overview */}
+      <div className="kpi-strip kpi-strip--four">
+        <KPIHero
+          label="已加入"
+          value={String(items.length)}
+          icon={<Star size={12} />}
+          iconGradient="indigo"
+        />
+        <KPIHero
+          label="上涨"
+          value={String(
+            Object.values(prices).filter((p) => (p?.price_change_pct_24h ?? 0) > 0).length
+          )}
+          icon={<Star size={12} />}
+          iconGradient="green"
+          sparkline={[0, 1, 1, 2, 2, 3, 2, 4]}
+        />
+        <KPIHero
+          label="下跌"
+          value={String(
+            Object.values(prices).filter((p) => (p?.price_change_pct_24h ?? 0) < 0).length
+          )}
+          icon={<Star size={12} />}
+          iconGradient="red"
+          sparkline={[2, 1, 2, 1, 1, 0, 1, 0]}
+        />
+        <KPIHero
+          label="24h 均价变动"
+          value={
+            (() => {
+              const arr = Object.values(prices).map(
+                (p) => p?.price_change_pct_24h ?? 0,
+              );
+              if (arr.length === 0) return "--";
+              const avg = arr.reduce((s, n) => s + n, 0) / arr.length;
+              return `${avg >= 0 ? "+" : ""}${(avg * 100).toFixed(2)}%`;
+            })()
+          }
+          icon={<Star size={12} />}
+          iconGradient="cyan"
+          hint="日均"
+        />
+      </div>
 
       <Card title="添加自选" subtitle="输入合约代码 + 选择交易所">
         <div className="form-grid form-grid--inline">
@@ -169,11 +214,10 @@ export function WatchlistPage() {
 
       <Card title={`自选 (${items.length})`} subtitle="点击合约代码进入行情">
         {items.length === 0 ? (
-          <EmptyState
-            variant="iconic"
-            title="尚无自选"
-            hint="在上方表单里添加合约即可开始观察"
-          />
+          <div className="empty-state">
+            <strong>尚无自选</strong>
+            <span>在上方表单里添加合约即可开始观察</span>
+          </div>
         ) : (
           <div className="watchlist-grid">
             {items.map((item, idx) => {

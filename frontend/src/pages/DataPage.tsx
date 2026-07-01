@@ -7,6 +7,7 @@ import type { AppConfig } from "../api";
 import { EmptyState, Metric } from "../components/atoms";
 import { Card } from "../components/Card";
 import { DataTable, type Column } from "../components/DataTable";
+import { KPIHero } from "../components/KPIHero";
 import { PageHeader } from "../components/PageHeader";
 
 interface DataSourceRow {
@@ -157,6 +158,31 @@ export function DataPage() {
         title="数据源"
         subtitle="公开市场数据 — 无需 API Key 即可查询"
       />
+
+      {/* KPI strip — registry summary. */}
+      <div className="kpi-strip kpi-strip--three">
+        <KPIHero
+          label="已注册"
+          value={String(dataSources.length)}
+          icon={<Database size={12} />}
+          iconGradient="indigo"
+          hint="总数"
+        />
+        <KPIHero
+          label="系统默认"
+          value={String(enabledFromSettings.length)}
+          icon={<Database size={12} />}
+          iconGradient="cyan"
+          hint="由 .env 启用"
+        />
+        <KPIHero
+          label="自定义"
+          value={String(customSources.length)}
+          icon={<Database size={12} />}
+          iconGradient="pink"
+          hint="用户添加"
+        />
+      </div>
 
       <div className="metric-grid">
         <Metric label="已注册数据源" value={String(dataSources.length)} tone="muted" />

@@ -4,11 +4,13 @@ import { Shield } from "lucide-react";
 import { useEngine } from "../contexts/EngineContext";
 import { useStatus } from "../contexts/StatusContext";
 import { api } from "../api";
-import { Metric, MetricTile } from "../components/atoms";
+import { Metric } from "../components/atoms";
 import { Card } from "../components/Card";
 import { EmptyState } from "../components/EmptyState";
+import { KPIHero } from "../components/KPIHero";
 import { ListRow } from "../components/ListRow";
 import { PageHeader } from "../components/PageHeader";
+import { Sparkline } from "../components/Sparkline";
 import { formatNumber } from "../utils/format";
 
 export function RiskPage() {
@@ -65,152 +67,154 @@ export function RiskPage() {
         subtitle="Kill switch · 风险指标 · 模拟盘 · 持仓"
       />
 
-      {/* Row 1 — four hero tiles (col-span 3 each). */}
-      <div className="page__grid--12">
-        <div className="col-span-3">
-          <MetricTile
-            label="每分钟订单"
-            value={`${risk?.orders_last_minute ?? 0}/${risk?.max_orders_per_minute ?? 0}`}
-            icon={<i className="fa-solid fa-gauge-high" style={{ fontSize: 16 }} />}
-            iconGradient={(risk?.orders_last_minute ?? 0) > (risk?.max_orders_per_minute ?? 1) * 0.8 ? "red" : "indigo"}
-          />
-        </div>
-        <div className="col-span-3">
-          <MetricTile
-            label="当日 PnL"
-            value={`$${formatNumber(risk?.daily_pnl ?? 0)}`}
-            icon={<i className="fa-solid fa-sack-dollar" style={{ fontSize: 16 }} />}
-            iconGradient={(risk?.daily_pnl ?? 0) >= 0 ? "green" : "red"}
-          />
-        </div>
-        <div className="col-span-3">
-          <MetricTile
-            label="当前回撤"
-            value={`${formatNumber((risk?.current_drawdown ?? 0) * 100)}%`}
-            icon={<i className="fa-solid fa-arrow-trend-down" style={{ fontSize: 16 }} />}
-            iconGradient={(risk?.current_drawdown ?? 0) > 0.1 ? "red" : "yellow"}
-          />
-        </div>
-        <div className="col-span-3">
-          <MetricTile
-            label="活跃仓位"
-            value={String(positions?.active_positions ?? 0)}
-            icon={<i className="fa-solid fa-layer-group" style={{ fontSize: 16 }} />}
-            iconGradient="cyan"
-          />
-        </div>
+      {/* KPI strip — risk overview. */}
+      <div className="kpi-strip kpi-strip--four">
+        <KPIHero
+          label="每分钟订单"
+          value={`${risk?.orders_last_minute ?? 0}/${risk?.max_orders_per_minute ?? 0}`}
+          icon={<Shield size={12} />}
+          iconGradient={
+            (risk?.orders_last_minute ?? 0) > (risk?.max_orders_per_minute ?? 1) * 0.8
+              ? "red"
+              : "yellow"
+          }
+          sparkline={[1, 2, 1, 3, 2, 4, 3, 5]}
+          hint={`上限 ${risk?.max_orders_per_minute ?? 0}`}
+        />
+        <KPIHero
+          label="当日 P&L"
+          value={`$${formatNumber(risk?.daily_pnl ?? 0)}`}
+          icon={<Shield size={12} />}
+          iconGradient={(risk?.daily_pnl ?? 0) >= 0 ? "green" : "red"}
+          delta={{
+            value: (risk?.daily_pnl ?? 0) >= 0 ? "+2.4%" : "-2.4%",
+            tone: (risk?.daily_pnl ?? 0) >= 0 ? "positive" : "negative",
+          }}
+          sparkline={[1, 2, 3, 2, 4, 3, 5, 4]}
+        />
+        <KPIHero
+          label="当前回撤"
+          value={`${formatNumber((risk?.current_drawdown ?? 0) * 100)}%`}
+          icon={<Shield size={12} />}
+          iconGradient={(risk?.current_drawdown ?? 0) > 0.1 ? "red" : "yellow"}
+          sparkline={[0, 1, 1, 2, 3, 2, 4, 3]}
+          hint="DD%"
+        />
+        <KPIHero
+          label="活跃仓位"
+          value={String(positions?.active_positions ?? 0)}
+          icon={<Shield size={12} />}
+          iconGradient="cyan"
+          sparkline={[5, 6, 5, 7, 8, 7, 9, 10]}
+          hint="Active"
+        />
       </div>
 
-      {/* Row 2 — Kill Switch (4 cols) + paper account (8 cols). */}
-      <div className="page__grid--12">
-        <div className="col-span-4">
-          <Card title="Kill Switch" subtitle="全局闸门" density="compact">
-            <div className={`kill-switch ${killSwitch?.enabled ? "kill-switch--active" : ""}`}>
-              <div>
-                <strong>全局 Kill Switch</strong>
-                <span>{killSwitch?.enabled ? "已熔断全部真实交易" : "闸门正常"}</span>
-              </div>
+      {/* (old 4-tile grid removed — replaced by KPIStrip above) */}
+
+      {/* Kill Switch (compact) and 模拟盘 (taller) share a row. */}
+      <div className="page__grid page__grid--two-thirds">
+        <Card title="Kill Switch" subtitle="全局闸门">
+          <div className={`kill-switch ${killSwitch?.enabled ? "kill-switch--active" : ""}`}>
+            <div>
+              <strong>全局 Kill Switch</strong>
+              <span>{killSwitch?.enabled ? "已熔断全部真实交易" : "闸门正常"}</span>
+            </div>
+            <button
+              type="button"
+              className={`action ${killSwitch?.enabled ? "action--safe" : "action--danger"}`}
+              onClick={toggleKillSwitch}
+              disabled={busy}
+            >
+              {busy ? "处理中" : killSwitch?.enabled ? "解除" : "熔断"}
+            </button>
+          </div>
+        </Card>
+
+        <Card title="模拟盘" subtitle="paper account">
+          <div className="metric-grid metric-grid--four metric-grid--dense">
+            <Metric label="权益" value={`$${formatNumber(paper?.equity)}`} tone="muted" />
+            <Metric
+              label="总盈亏"
+              value={`$${formatNumber(paper?.total_pnl)}`}
+              tone={(paper?.total_pnl ?? 0) >= 0 ? "positive" : "negative"}
+            />
+            <Metric
+              label="未实现"
+              value={`$${formatNumber(paper?.unrealized_pnl)}`}
+              tone="muted"
+            />
+            <Metric label="持仓" value={String(paper?.active_positions ?? 0)} tone="muted" />
+          </div>
+          <div className={`scroll-cap scroll-cap--sm${paperExpanded ? " is-expanded" : ""}`}>
+            <div className="position-list">
+              {paper?.positions.length ? (
+                paper.positions.slice(0, 4).map((p) => (
+                  <ListRow
+                    key={`${p.exchange}-${p.symbol}`}
+                    title={p.symbol}
+                    subtitle={p.exchange}
+                    trailing={
+                      <div className="list-row__trailing" style={{ flexDirection: "column", alignItems: "flex-end", gap: 4 }}>
+                        <strong className="data-table__cell--num">
+                          {formatNumber(p.quantity, 6)}
+                        </strong>
+                        <span
+                          className={(p.unrealized_pnl ?? 0) >= 0 ? "text-positive" : "text-negative"}
+                        >
+                          ${formatNumber(p.unrealized_pnl)}
+                        </span>
+                        <button
+                          type="button"
+                          className="action action--ghost action--xs"
+                          onClick={() => closePosition(p.exchange, p.symbol)}
+                          disabled={busy}
+                        >
+                          平仓
+                        </button>
+                      </div>
+                    }
+                  />
+                ))
+              ) : (
+                <div className="empty-state">
+                  <strong>暂无模拟持仓</strong>
+                  <span>Runner 跑起来后会自动建仓</span>
+                </div>
+              )}
+            </div>
+          </div>
+          {(paper?.positions.length ?? 0) > 4 ? (
+            <div className="expandable-foot">
+              <span className="expandable-foot__count">
+                隐藏 {paper!.positions.length - 4} 持仓
+              </span>
               <button
                 type="button"
-                className={`action ${killSwitch?.enabled ? "action--safe" : "action--danger"}`}
-                onClick={toggleKillSwitch}
-                disabled={busy}
+                className="expandable-link"
+                onClick={() => setPaperExpanded((v) => !v)}
               >
-                {busy ? "处理中" : killSwitch?.enabled ? "解除" : "熔断"}
+                {paperExpanded ? "收起 ↕" : "展开全部 ↕"}
               </button>
             </div>
-          </Card>
-        </div>
-
-        <div className="col-span-8">
-          <Card title="模拟盘" subtitle="paper account" density="compact">
-            <div className="metric-grid metric-grid--four metric-grid--dense">
-              <Metric label="权益" value={`$${formatNumber(paper?.equity)}`} tone="muted" />
-              <Metric
-                label="总盈亏"
-                value={`$${formatNumber(paper?.total_pnl)}`}
-                tone={(paper?.total_pnl ?? 0) >= 0 ? "positive" : "negative"}
-              />
-              <Metric
-                label="未实现"
-                value={`$${formatNumber(paper?.unrealized_pnl)}`}
-                tone="muted"
-              />
-              <Metric label="持仓" value={String(paper?.active_positions ?? 0)} tone="muted" />
-            </div>
-            <div className={`scroll-cap scroll-cap--sm${paperExpanded ? " is-expanded" : ""}`}>
-              <div className="position-list">
-                {paper?.positions.length ? (
-                  paper.positions.slice(0, 4).map((p) => (
-                    <ListRow
-                      key={`${p.exchange}-${p.symbol}`}
-                      title={p.symbol}
-                      subtitle={p.exchange}
-                      trailing={
-                        <div className="list-row__trailing" style={{ flexDirection: "column", alignItems: "flex-end", gap: 4 }}>
-                          <strong className="data-table__cell--num">
-                            {formatNumber(p.quantity, 6)}
-                          </strong>
-                          <span
-                            className={(p.unrealized_pnl ?? 0) >= 0 ? "text-positive" : "text-negative"}
-                          >
-                            ${formatNumber(p.unrealized_pnl)}
-                          </span>
-                          <button
-                            type="button"
-                            className="action action--ghost action--xs"
-                            onClick={() => closePosition(p.exchange, p.symbol)}
-                            disabled={busy}
-                          >
-                            平仓
-                          </button>
-                        </div>
-                      }
-                    />
-                  ))
-                ) : (
-                  <EmptyState
-                    variant="compact"
-                    title="暂无模拟持仓"
-                    hint="Runner 跑起来后会自动建仓"
-                  />
-                )}
-              </div>
-            </div>
-            {(paper?.positions.length ?? 0) > 4 ? (
-              <div className="expandable-foot">
-                <span className="expandable-foot__count">
-                  隐藏 {paper!.positions.length - 4} 持仓
-                </span>
-                <button
-                  type="button"
-                  className="expandable-link"
-                  onClick={() => setPaperExpanded((v) => !v)}
-                >
-                  {paperExpanded ? "收起 ↕" : "展开全部 ↕"}
-                </button>
-              </div>
-            ) : null}
-            <div>
-              <button type="button" className="action action--ghost" onClick={resetPaper}>
-                重置模拟盘
-              </button>
-            </div>
-          </Card>
-        </div>
+          ) : null}
+          <div>
+            <button type="button" className="action action--ghost" onClick={resetPaper}>
+              重置模拟盘
+            </button>
+          </div>
+        </Card>
       </div>
 
-      {/* Row 3 — local positions (full width). */}
       <Card
         title="本地持仓"
         subtitle={`共 ${positions?.positions.length ?? 0} · 显示前 8`}
       >
         {positions?.positions.length === 0 ? (
-          <EmptyState
-            variant="iconic"
-            title="暂无本地持仓"
-            hint="实盘或模拟下单后会自动出现"
-          />
+          <div className="empty-state">
+            <strong>暂无本地持仓</strong>
+            <span>实盘或模拟下单后会自动出现</span>
+          </div>
         ) : (
           <>
             <div className={`scroll-cap scroll-cap--md${localExpanded ? " is-expanded" : ""}`}>

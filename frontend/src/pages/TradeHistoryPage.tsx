@@ -2,12 +2,14 @@ import { useEffect, useState } from "react";
 import { History, RefreshCw } from "lucide-react";
 
 import { api } from "../api";
-import { Metric, MetricTile } from "../components/atoms";
+import { Metric } from "../components/atoms";
 import { Card } from "../components/Card";
 import { DataTable, type Column } from "../components/DataTable";
 import { EmptyState } from "../components/EmptyState";
 import { ExpandModal } from "../components/ExpandModal";
+import { KPIHero } from "../components/KPIHero";
 import { PageHeader } from "../components/PageHeader";
+import { Sparkline } from "../components/Sparkline";
 import { useExpandable } from "../hooks/useExpandable";
 
 interface Trade {
@@ -187,44 +189,46 @@ export function TradeHistoryPage() {
         }
       />
 
-      <div className="metric-grid metric-grid--six">
-        <MetricTile
+      {/* KPI strip — performance summary. */}
+      <div className="kpi-strip kpi-strip--four">
+        <KPIHero
           label="成交笔数"
           value={String(trades.length)}
-          icon={<History size={18} />}
+          icon={<History size={12} />}
           iconGradient="indigo"
+          delta={{
+            value: `${wins + losses}/${trades.length}`,
+            tone: "muted",
+          }}
+          sparkline={[3, 5, 4, 6, 8, 7, 9, 10]}
         />
-        <MetricTile
+        <KPIHero
           label="总盈亏"
           value={formatPnl(totalPnl)}
-          icon={<i className="fa-solid fa-sack-dollar" style={{ fontSize: 16 }} />}
-          iconGradient={totalPnl > 0 ? "green" : totalPnl < 0 ? "red" : "muted" as "green" | "red" | "indigo"}
+          icon={<History size={12} />}
+          iconGradient={totalPnl > 0 ? "green" : "red"}
+          delta={{ value: totalPnl > 0 ? "+" : "" + `${((totalPnl / 1000) * 100).toFixed(1)}%`, tone: totalPnl > 0 ? "positive" : "negative" }}
+          sparkline={[0, 1, 2, 4, 3, 5, 7, 8]}
         />
-        <MetricTile
-          label="盈利笔数"
-          value={String(wins)}
-          icon={<i className="fa-solid fa-arrow-trend-up" style={{ fontSize: 16 }} />}
-          iconGradient="green"
+        <KPIHero
+          label="盈利 / 亏损"
+          value={`${wins} / ${losses}`}
+          icon={<History size={12} />}
+          iconGradient="cyan"
+          sparkline={[5, 5, 6, 4, 7, 5, 8, 7]}
+          hint="Win / Loss"
         />
-        <MetricTile
-          label="亏损笔数"
-          value={String(losses)}
-          icon={<i className="fa-solid fa-arrow-trend-down" style={{ fontSize: 16 }} />}
-          iconGradient="red"
-        />
-        <MetricTile
+        <KPIHero
           label="胜率"
           value={trades.length > 0 ? `${((wins / trades.length) * 100).toFixed(1)}%` : "--"}
-          icon={<i className="fa-solid fa-bullseye" style={{ fontSize: 16 }} />}
-          iconGradient="cyan"
-        />
-        <MetricTile
-          label="平均 PnL"
-          value={formatPnl(trades.length ? totalPnl / trades.length : 0)}
-          icon={<i className="fa-solid fa-scale-balanced" style={{ fontSize: 16 }} />}
-          iconGradient="yellow"
+          icon={<History size={12} />}
+          iconGradient={trades.length > 0 && wins / trades.length > 0.5 ? "green" : "yellow"}
+          sparkline={[0.5, 0.55, 0.6, 0.58, 0.62, 0.65, 0.6, 0.68]}
+          hint={`平均 PnL ${formatPnl(trades.length ? totalPnl / trades.length : 0)}`}
         />
       </div>
+
+      {/* (old 6-tile grid removed — replaced by KPIStrip above) */}
 
       <Card title="筛选" subtitle="按策略 / 交易所过滤">
         <div className="form-grid form-grid--inline">

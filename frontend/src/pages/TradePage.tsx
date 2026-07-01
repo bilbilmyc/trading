@@ -21,6 +21,8 @@ import { ErrorPanel } from "../components/ErrorPanel";
 import { OrderPanel } from "../components/OrderPanel";
 import { MarketPanel } from "../components/MarketPanel";
 import { PageHeader } from "../components/PageHeader";
+import { KPIHero } from "../components/KPIHero";
+import { Sparkline } from "../components/Sparkline";
 
 export function TradePage() {
   const { apiOnline } = useStatus();
@@ -252,74 +254,158 @@ export function TradePage() {
         subtitle="合约预览 · 一键提交 · 预览后才下单"
       />
 
-      <div className="page__grid--12">
-        <div className="col-span-5 sticky-top">
-          <OrderPanel
-            exchange={exchange}
-            onExchangeChange={setExchange}
-            symbol={symbol}
-            onSymbolChange={setSymbol}
-            contractSearch={contractSearch}
-            onContractSearchChange={setContractSearch}
-            contracts={contracts}
-            contractsLoading={contractsLoading}
-            contractsTotal={contractsTotal}
-            onContractSelect={async (c) => {
-              setSymbol(c.symbol);
-              if (c.min_quantity) setQuantity(String(c.min_quantity));
-            }}
-            intent={intent}
-            onIntentChange={setIntent}
-            quantity={quantity}
-            onQuantityChange={setQuantity}
-            price={price}
-            onPriceChange={setPrice}
-            leverage={leverage}
-            onLeverageChange={setLeverage}
-            orderType={orderType}
-            onOrderTypeChange={(v) => {
-              setOrderType(v);
-              if (v === "market" || v === "ioc" || v === "fok") setLiquidity("taker");
-            }}
-            marginMode={marginMode}
-            onMarginModeChange={setMarginMode}
-            positionSide={positionSide}
-            onPositionSideChange={setPositionSide}
-            preview={orderPreview}
-            previewBusy={previewBusy}
-            onPreview={onPreview}
-            onSubmit={onSubmit}
-            busy={busy}
-            blockedReason={blockedReason}
-            apiOnline={apiOnline}
-            notice={error ? { tone: "error", message: error } : { tone: "info", message }}
-          />
-        </div>
+      {/* KPI strip — top-of-page trading desk summary. */}
+      <div className="kpi-strip kpi-strip--four">
+        <KPIHero
+          label={`${symbol} 最新价`}
+          value={ticker ? `$${Number(ticker.last_price).toLocaleString("en-US", { maximumFractionDigits: 2 })}` : "$--"}
+          icon={<ArrowLeftRight size={12} />}
+          iconGradient="indigo"
+          delta={
+            ticker
+              ? {
+                  value: `${(ticker.price_change_pct_24h ?? 0) >= 0 ? "+" : ""}${((ticker.price_change_pct_24h ?? 0) * 100).toFixed(2)}%`,
+                  tone: (ticker.price_change_pct_24h ?? 0) >= 0 ? "positive" : "negative",
+                }
+              : undefined
+          }
+          sparkline={[10, 11, 10, 12, 13, 12, 14, 15, 14, 16, 17, 16]}
+          hint="24h"
+        />
+        <KPIHero
+          label="24h 成交额"
+          value={ticker ? `$${(Number(ticker.quote_volume_24h) / 1e6).toFixed(1)}M` : "--"}
+          icon={<ArrowLeftRight size={12} />}
+          iconGradient="cyan"
+          sparkline={[8, 9, 8, 10, 11, 12, 11, 13, 12, 14, 13, 15]}
+          hint="USDT"
+        />
+        <KPIHero
+          label="Maker / Taker"
+          value={
+            feeRate
+              ? `${(feeRate.maker * 100).toFixed(3)}% / ${(feeRate.taker * 100).toFixed(3)}%`
+              : "-- / --"
+          }
+          icon={<ArrowLeftRight size={12} />}
+          iconGradient="yellow"
+          hint="费率"
+        />
+        <KPIHero
+          label="名义价值"
+          value={`$${notional.toLocaleString("en-US", { maximumFractionDigits: 2 })}`}
+          icon={<ArrowLeftRight size={12} />}
+          iconGradient={notional >= 0 ? "green" : "red"}
+          sparkline={Array.from({ length: 12 }, (_, i) => notional / 1000 + Math.sin(i) * 2)}
+          hint={`数量 ${quantity}`}
+        />
+      </div>
 
-        <div className="col-span-7">
-          <MarketPanel
-            symbol={symbol}
-            ticker={ticker}
-            trades={[]}
-            openOrders={[]}
-            feeRate={feeRate}
-            estimate={estimate}
-            liquidity={liquidity}
-            onLiquidityChange={setLiquidity}
-            strategyCount={engine.strategies.length}
-            signalCount={engine.signals.length}
-            runnerRunning={engine.engine?.signal_runner?.running ?? false}
-            onEvaluate={onEvaluate}
-            onStartRunner={onStartRunner}
-            onStopRunner={onStopRunner}
-            onRunOnce={onRunOnce}
-            onResetPaper={onResetPaper}
-            evaluating={evaluating}
-            runnerBusy={runnerBusy}
-            signals={engine.signals.slice(0, 5)}
-            notional={notional}
-          />
-        </div>
+      {/* Symbol bar — compact command strip. */}
+      <div className="symbol-bar">
+        <span className="symbol-bar__field">
+          <span className="symbol-bar__field-label">EXCHANGE</span>
+          <span className="symbol-bar__field-value">{exchange.replace("_", " ")}</span>
+        </span>
+        <span className="symbol-bar__field">
+          <span className="symbol-bar__field-label">SYMBOL</span>
+          <span className="symbol-bar__field-value">{symbol}</span>
+        </span>
+        <span className="symbol-bar__field">
+          <span className="symbol-bar__field-label">SIDE</span>
+          <span className="symbol-bar__field-value">{intent}</span>
+        </span>
+        <span className="symbol-bar__field">
+          <span className="symbol-bar__field-label">LEV</span>
+          <span className="symbol-bar__field-value">{leverage}x</span>
+        </span>
+        <span className="symbol-bar__price">
+          {ticker ? (
+            <>
+              <span className="symbol-bar__price-now">
+                ${Number(ticker.last_price).toLocaleString("en-US", { maximumFractionDigits: 2 })}
+              </span>
+              <span
+                className={`symbol-bar__price-delta ${
+                  (ticker.price_change_pct_24h ?? 0) >= 0
+                    ? "symbol-bar__price-delta--up"
+                    : "symbol-bar__price-delta--down"
+                }`}
+              >
+                {(ticker.price_change_pct_24h ?? 0) >= 0 ? "▲" : "▼"}{" "}
+                {((ticker.price_change_pct_24h ?? 0) * 100).toFixed(2)}%
+              </span>
+            </>
+          ) : (
+            <span className="text-muted" style={{ fontFamily: "var(--font-mono)" }}>--</span>
+          )}
+        </span>
+      </div>
+
+      <div className="terminal-grid">
+        <OrderPanel
+          exchange={exchange}
+          onExchangeChange={setExchange}
+          symbol={symbol}
+          onSymbolChange={setSymbol}
+          contractSearch={contractSearch}
+          onContractSearchChange={setContractSearch}
+          contracts={contracts}
+          contractsLoading={contractsLoading}
+          contractsTotal={contractsTotal}
+          onContractSelect={async (c) => {
+            setSymbol(c.symbol);
+            if (c.min_quantity) setQuantity(String(c.min_quantity));
+          }}
+          intent={intent}
+          onIntentChange={setIntent}
+          quantity={quantity}
+          onQuantityChange={setQuantity}
+          price={price}
+          onPriceChange={setPrice}
+          leverage={leverage}
+          onLeverageChange={setLeverage}
+          orderType={orderType}
+          onOrderTypeChange={(v) => {
+            setOrderType(v);
+            if (v === "market" || v === "ioc" || v === "fok") setLiquidity("taker");
+          }}
+          marginMode={marginMode}
+          onMarginModeChange={setMarginMode}
+          positionSide={positionSide}
+          onPositionSideChange={setPositionSide}
+          preview={orderPreview}
+          previewBusy={previewBusy}
+          onPreview={onPreview}
+          onSubmit={onSubmit}
+          busy={busy}
+          blockedReason={blockedReason}
+          apiOnline={apiOnline}
+          notice={error ? { tone: "error", message: error } : { tone: "info", message }}
+        />
+
+        <MarketPanel
+          symbol={symbol}
+          ticker={ticker}
+          trades={[]}
+          openOrders={[]}
+          feeRate={feeRate}
+          estimate={estimate}
+          liquidity={liquidity}
+          onLiquidityChange={setLiquidity}
+          strategyCount={engine.strategies.length}
+          signalCount={engine.signals.length}
+          runnerRunning={engine.engine?.signal_runner?.running ?? false}
+          onEvaluate={onEvaluate}
+          onStartRunner={onStartRunner}
+          onStopRunner={onStopRunner}
+          onRunOnce={onRunOnce}
+          onResetPaper={onResetPaper}
+          evaluating={evaluating}
+          runnerBusy={runnerBusy}
+          signals={engine.signals.slice(0, 5)}
+          notional={notional}
+        />
       </div>
     </div>
   );
