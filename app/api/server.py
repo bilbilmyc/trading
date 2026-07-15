@@ -686,26 +686,17 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         """切换全局 Kill Switch。
 
         enabled=true 会调用 RiskManager.disable_trading()；策略实盘执行和手动下单都会被同一状态拦截。
+
+        v0.4.3: 不再在这里写 audit 事件 —— LiveTradingGuard 的 observer
+        会统一记录（带 reason）。保留这里只是为了让 set_kill_switch
+        路径和 guard 路径走同一份审计代码。
         """
 
         if request.enabled:
-            state.engine.risk_manager.disable_trading()
-            event_type = "kill_switch_enabled"
-            level = "critical"
-            message = "Global kill switch enabled"
+            state.engine.risk_manager.disable_trading(reason=request.reason)
         else:
-            state.engine.risk_manager.enable_trading()
-            event_type = "kill_switch_disabled"
-            level = "info"
-            message = "Global kill switch disabled"
+            state.engine.risk_manager.enable_trading(reason=request.reason)
 
-        record_event(
-            category="risk",
-            event_type=event_type,
-            level=level,
-            message=message,
-            details={"reason": request.reason, "enabled": request.enabled},
-        )
         risk = await state.engine.risk_manager.get_risk_status()
         trading_enabled = bool(risk["trading_enabled"])
         return {
@@ -1218,16 +1209,20 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     async def recent_events(
         category: str | None = Query(None, min_length=1, max_length=32),
         event_type: str | None = Query(None, min_length=1, max_length=64),
+        minutes: int | None = Query(None, ge=1, le=1440),
         limit: int = Query(30, ge=1, le=200),
         state: AppState = Depends(get_state),
     ):
-        return {
-            "events": state.store.recent_events(
-                category=category,
-                event_type=event_type,
-                limit=limit,
-            )
-        }
+        events = state.store.recent_events(
+            category=category,
+            event_type=event_type,
+            limit=limit,
+        )
+        if minutes is not None:
+            from datetime import datetime, timedelta
+            cutoff = (datetime.utcnow() - timedelta(minutes=minutes)).isoformat()
+            events = [e for e in events if e.get("timestamp", "") >= cutoff]
+        return {"events": events, "count": len(events)}
 
     @app.post("/api/v1/signals/evaluate")
     async def evaluate_strategy_signals(

@@ -218,17 +218,17 @@ class RiskManager:
         """重置每日盈亏 (每日调用)"""
         self._daily_pnl = 0.0
 
-    def enable_trading(self):
+    def enable_trading(self, reason: str | None = None):
         """启用交易"""
         if self._guard is not None:
-            self._guard.enable_trading()
+            self._guard.enable_trading(reason=reason)
             return
         self._trading_enabled = True
 
-    def disable_trading(self):
+    def disable_trading(self, reason: str | None = None):
         """禁用交易"""
         if self._guard is not None:
-            self._guard.disable_trading()
+            self._guard.disable_trading(reason=reason)
             return
         self._trading_enabled = False
 

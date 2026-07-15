@@ -70,9 +70,18 @@ class TradingEngine:
         self._strategies: dict[str, StrategyBase] = {}
         self._strategy_configs: dict[str, dict[str, Any]] = {}
         self._recent_signals: list[dict[str, Any]] = []
+        self._exchanges: dict[str, ExchangeBase] = {}
+        self._pipelines: dict[str, LiveOrderPipeline] = {}
+        self._strategies: dict[str, StrategyBase] = {}
+        self._strategy_configs: dict[str, dict[str, Any]] = {}
+        self._recent_signals: list[dict[str, Any]] = []
         self._running = False
         self.store = store
         self.trading_guard = trading_guard
+        # Hook kill-switch state changes into the audit log. The observer
+        # is set in start() once the engine has its own event loop.
+        if trading_guard is not None:
+            trading_guard.add_observer(self._on_kill_switch_change)
         # Snapshot of the symbol whitelist at engine-construction time.
         # Restored LLM strategies get this passed in so they remain gated
         # after a process restart.
@@ -446,6 +455,34 @@ class TradingEngine:
         self._recent_signals = self._recent_signals[-200:]
         if self.store:
             self.store.append_signal(row)
+
+    async def _on_kill_switch_change(
+        self,
+        event_type: str,
+        enabled: bool,
+        reason: str | None = None,
+    ) -> None:
+        """LiveTradingGuard observer — persists every state transition
+        as a 'risk' event. Async so it slots into add_observer().
+
+        The event_type string is rewritten to the legacy
+        ``kill_switch_enabled`` / ``kill_switch_disabled`` form so the
+        events table stays consistent with the manual API endpoint
+        (see ``/api/v1/risk/kill-switch`` in server.py) and existing
+        audit / events-page tests don't have to special-case it.
+        """
+        legacy_type = "kill_switch_enabled" if enabled else "kill_switch_disabled"
+        self._record_event(
+            category="risk",
+            event_type=legacy_type,
+            level="critical" if enabled else "warning",
+            message=(
+                "全局 Kill Switch 已被触发"
+                if enabled
+                else "全局 Kill Switch 已解除"
+            ),
+            details={"enabled": enabled, "reason": reason or ""},
+        )
 
     def _record_event(
         self,
