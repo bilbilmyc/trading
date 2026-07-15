@@ -4,6 +4,21 @@
 
 ## [Unreleased]
 
+### Added (风险事件时间线 + 命令面板)
+- `LiveTradingGuard` 加 observer 模式：所有 kill switch 状态切换
+  走 observer 统一记录，API endpoint 和 risk_manager 都不再单独写
+  事件（消除重复）；observer 接收 reason 透传给 audit details
+- `risk_manager.disable_trading / enable_trading` 透传 reason 到 guard
+- `/api/v1/events/recent` 加 `minutes` 过滤（默认无过滤）
+- 新增 `/events` 路由 + `EventsPage` 页面：7 个 category 过滤 tab
+  （全部/风险/订单/持仓/成交/撤单/系统）+ CRIT/ERR/WARN 计数 pill +
+  时间线列表 + 10s 自动刷新
+- `Sidebar` 加"事件时间线"入口
+- 新增 `CommandPalette` 全局命令面板：`⌘K` / `Ctrl+K` 打开，
+  12 个页面跳转 + 3 个命令（刷新全部 / 切换实盘 / 切换 Kill Switch），
+  模糊匹配 + ↑↓/Enter 选择 + Esc 关闭，App.tsx 全局挂载
+- `recentEvents` API 签名改 opts 对象（向后兼容旧 limit/category 调用）
+
 ### Added (frontend freshness 全员接入)
 - 5 个页面 PageHeader 接 `freshness` prop 显示"数据 / 风控 / Bot / 状态 / 配置 · Ns 前"
   pill（30s 内 fresh 绿 / 120s 内 stale 黄 / 之后 old 灰，1s tick）

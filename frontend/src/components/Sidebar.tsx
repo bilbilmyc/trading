@@ -59,6 +59,7 @@ const NAV_GROUPS: NavGroup[] = [
     items: [
       { href: "/risk", label: "风控", icon: Shield, description: "Kill switch · 风险指标" },
       { href: "/audit", label: "审计", icon: ClipboardList, description: "事件流 · 按级别过滤" },
+      { href: "/events", label: "事件时间线", icon: History, description: "60 分钟历史 · 分类筛选" },
       { href: "/bot", label: "Bot 监控", icon: Send, description: "Telegram bot · 命令速查 · 静默" },
     ],
   },

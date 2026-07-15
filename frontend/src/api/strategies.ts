@@ -151,11 +151,15 @@ export const strategiesApi = {
     );
   },
 
-  recentEvents: (limit = 20, category?: string) => {
-    const params = new URLSearchParams({ limit: String(limit) });
-    if (category) params.set("category", category);
-    return request<{ events: AuditEvent[] }>(
-      `/api/v1/events/recent?${params.toString()}`,
+  recentEvents: (opts: { limit?: number; category?: string; eventType?: string; minutes?: number } = {}) => {
+    const params = new URLSearchParams();
+    if (opts.limit) params.set("limit", String(opts.limit));
+    if (opts.category) params.set("category", opts.category);
+    if (opts.eventType) params.set("event_type", opts.eventType);
+    if (opts.minutes) params.set("minutes", String(opts.minutes));
+    const qs = params.toString();
+    return request<{ events: AuditEvent[]; count: number }>(
+      `/api/v1/events/recent${qs ? `?${qs}` : ""}`,
     );
   },
 

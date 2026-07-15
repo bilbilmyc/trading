@@ -7,6 +7,7 @@ import { ThemeProvider } from "./contexts/ThemeContext";
 import { LoadingFallback } from "./components/LoadingFallback";
 import { Sidebar } from "./components/Sidebar";
 import { Spine } from "./components/Spine";
+import { CommandPalette } from "./components/CommandPalette";
 import { StatusTicker } from "./components/StatusTicker";
 import { StatusDrawer } from "./components/StatusDrawer";
 import { TopTicker } from "./components/TopTicker";
@@ -22,6 +23,7 @@ const TradeHistoryPage = lazy(() => import("./pages/TradeHistoryPage").then((m) 
 const StrategiesPage = lazy(() => import("./pages/StrategiesPage").then((m) => ({ default: m.StrategiesPage })));
 const RiskPage = lazy(() => import("./pages/RiskPage").then((m) => ({ default: m.RiskPage })));
 const AuditPage = lazy(() => import("./pages/AuditPage").then((m) => ({ default: m.AuditPage })));
+const EventsPage = lazy(() => import("./pages/EventsPage").then((m) => ({ default: m.EventsPage })));
 const BotMonitorPage = lazy(() => import("./pages/BotMonitorPage").then((m) => ({ default: m.BotMonitorPage })));
 const SettingsPage = lazy(() => import("./pages/SettingsPage").then((m) => ({ default: m.SettingsPage })));
 const NotFoundPage = lazy(() => import("./pages/NotFoundPage").then((m) => ({ default: m.NotFoundPage })));
@@ -66,6 +68,7 @@ export default function App() {
                     <Route path="/strategies" component={StrategiesPage } />
                     <Route path="/risk" component={RiskPage} />
                     <Route path="/audit" component={AuditPage} />
+                    <Route path="/events" component={EventsPage} />
                     <Route path="/bot" component={BotMonitorPage} />
                     <Route path="/settings" component={SettingsPage} />
                     <Route path="/404" component={NotFoundPage} />
@@ -78,6 +81,7 @@ export default function App() {
             </div>
 
             <StatusDrawer />
+            <CommandPalette />
           </div>
         </EngineProvider>
       </StatusProvider>

@@ -45,7 +45,7 @@ export function EngineProvider({ children }: { children: ReactNode }) {
           api.engineStatus(),
           api.strategies(),
           api.recentSignals(10),
-          api.recentEvents(12),
+          api.recentEvents({ limit: 12 }),
           api.paper(),
         ]);
         setEngine(status);
