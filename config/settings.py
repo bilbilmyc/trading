@@ -93,6 +93,32 @@ class LLMSettings(BaseModel):
     default_order_amount: float = 50.0  # USDT, 单笔默认金额
 
 
+class BotSettings(BaseModel):
+    """Telegram bot 监控盯盘的运行时配置。
+
+    默认值与旧版 getattr 默认值一致，保证向后兼容；启用需要显式
+    设置 ``bot_enabled=true`` 并提供 ``bot_telegram_token``。
+    """
+
+    enabled: bool = False
+    telegram_token: str = ""
+    allowed_chat_ids: tuple[int, ...] = ()
+    api_base_url: str = "http://127.0.0.1:8000"
+    api_key: str = ""
+    request_timeout_seconds: float = 10.0
+    event_poll_interval_seconds: float = 5.0
+    daily_report_enabled: bool = True
+    daily_report_hour: int = 0
+    daily_report_minute: int = 5
+    quiet_hours: tuple[int, int] | None = None
+    send_rate_per_second: float = 4.0
+    # Proactive alert forwarding from the monitor.
+    min_alert_level: str = "warning"  # info | warning | error | critical
+    alert_fingerprint_cooldown_seconds: int = 300
+    # Scope tag for outgoing API calls (recorded by the server in access logs).
+    outbound_scope: str = "monitor"
+
+
 class Settings(BaseSettings):
     """Top-level application settings."""
 
@@ -179,6 +205,25 @@ class Settings(BaseSettings):
     #   LLM_ALLOWED_SYMBOLS=["BTCUSDT","ETHUSDT","SOLUSDT"]
     llm_allowed_symbols: list = []
 
+    # Bot 监控盯盘 (Telegram). All fields are disabled-by-default. To
+    # enable, set BOT_ENABLED=true and provide BOT_TELEGRAM_TOKEN. See
+    # docs/bot.md for the full command list and webhook setup.
+    bot_enabled: bool = False
+    bot_telegram_token: str = ""
+    bot_allowed_chat_ids: str = ""            # CSV, e.g. "-1001234567890,123456789"
+    bot_api_base_url: str = "http://127.0.0.1:8000"
+    bot_api_key: str = ""                     # empty -> 降级到 auth_api_key
+    bot_request_timeout_seconds: float = 10.0
+    bot_event_poll_interval_seconds: float = 5.0
+    bot_daily_report_enabled: bool = True
+    bot_daily_report_hour: int = 0
+    bot_daily_report_minute: int = 5
+    bot_quiet_hours: str = ""                  # "22-8" 闭区间
+    bot_send_rate_per_second: float = 4.0
+    bot_min_alert_level: str = "warning"
+    bot_alert_fingerprint_cooldown_seconds: int = 300
+    bot_outbound_scope: str = "monitor"
+
     model_config = SettingsConfigDict(
         env_file=".env",
         env_file_encoding="utf-8",
@@ -245,6 +290,42 @@ class Settings(BaseSettings):
             max_alerts=self.monitor_max_alerts,
             order_sync_interval_seconds=self.order_sync_interval_seconds,
             position_sync_interval_seconds=self.position_sync_interval_seconds,
+        )
+
+    @property
+    def bot(self) -> BotSettings:
+        """把扁平的 bot_* 环境变量聚合到 BotSettings。"""
+
+        raw = (self.bot_allowed_chat_ids or "").strip()
+        chat_ids: tuple[int, ...] = tuple(
+            int(p)
+            for p in (s.strip() for s in raw.split(","))
+            if p and p.lstrip("-").isdigit()
+        )
+        quiet: tuple[int, int] | None = None
+        quiet_raw = (self.bot_quiet_hours or "").strip()
+        if quiet_raw:
+            try:
+                start, end = (x.strip() for x in quiet_raw.split("-", 1))
+                quiet = (int(start), int(end))
+            except (ValueError, AttributeError):
+                quiet = None
+        return BotSettings(
+            enabled=self.bot_enabled,
+            telegram_token=self.bot_telegram_token,
+            allowed_chat_ids=chat_ids,
+            api_base_url=self.bot_api_base_url,
+            api_key=self.bot_api_key or self.auth_api_key,
+            request_timeout_seconds=self.bot_request_timeout_seconds,
+            event_poll_interval_seconds=self.bot_event_poll_interval_seconds,
+            daily_report_enabled=self.bot_daily_report_enabled,
+            daily_report_hour=self.bot_daily_report_hour,
+            daily_report_minute=self.bot_daily_report_minute,
+            quiet_hours=quiet,
+            send_rate_per_second=self.bot_send_rate_per_second,
+            min_alert_level=self.bot_min_alert_level,
+            alert_fingerprint_cooldown_seconds=self.bot_alert_fingerprint_cooldown_seconds,
+            outbound_scope=self.bot_outbound_scope,
         )
 
     @property

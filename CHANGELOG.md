@@ -4,6 +4,48 @@
 
 ## [Unreleased]
 
+### Added (bot 监控盯盘)
+- Telegram bot 监控盯盘：从表面 5 个文件扩展到完整可启动的服务
+- 新增 `app/bot/runner.py`（TradingBot 编排器：start/stop/run_forever + 异常不死）
+- 新增 `app/bot/alerts.py`（BotAlertSubscriber：Monitor.on_alert 钩子 + 冷却去重 + 静默时段）
+- 新增 `app/bot/scheduler.py`（daily_report_job：到点推日报，去抖动）
+- 新增 `app/api/middleware.py`（ScopeContextMiddleware：X-Bot-Scope 头 → access log）
+- `config/settings.py` 加 14 个 `bot_*` 字段 + `Settings.bot` property + `BotSettings` Pydantic 子模型
+- `main.py` 加 `bot` 子命令（`python main.py bot [--engine-url ...]`）
+- `BotApiClient` 每次请求注入 `X-Bot-Scope` + `Authorization: Bearer ...`，复用 `auth_api_key`
+- bot 主动告警（CRITICAL/ERROR）绕过 quiet hours；WARNING 在静默时段内压下
+- docs/bot.md 启用步骤 / 命令表 / 配置字段 / 静默策略 / 接入 FastAPI
+- tests/test_bot.py 新增 26 个单测（settings.bot 属性、quiet hours 跨夜、BotConfig 白名单、
+  formatter 全部纯函数、BotApiClient scope 头注入、dispatch + httpx 错误处理、
+  TradingBot 生命周期 / 白名单拒绝 / token 缺失、BotAlertSubscriber 过滤 / 去重 /
+  静默 / 渲染、app.bot 包导入完整性）
+
+### Refactored (observability cleanup)
+- `app/engine/metrics.py` 加 `safe_inc` / `safe_observe` / `safe_set` 帮手；删除 6 处
+  裸 `try/except ImportError`（notifier ×3, alert_dispatcher ×2, cache ×1, monitor ×1）
+- `qt_notifier_webhooks_total` 与新增 `qt_alert_dispatcher_total{provider,outcome}` 分离：
+  generic webhook 走前者，飞书/钉钉/企微走后者
+- `TTLCache` 加 `name` 字段（默认 `"default"`），`qt_cache_events_total{cache=...}` 现在能
+  区分多实例
+- `Monitor._check_loop` 把 `time.monotonic()` 移到 `asyncio.sleep` 之后，histogram 现在
+  真正测的是 checker round-trip
+- 3 个 `trader.py` 后台 loop 的 `qt_engine_loop_duration_seconds` 时序口径统一为
+  "work + sleep" 一个完整 cycle
+- `LiveOrderPipeline` 缓存 `_exchange_name` 到 `__init__`（不再每次 execute() 取 `name`）
+- `LiveOrderPipeline` 信号过滤器 veto 现在也走 `qt_risk_rejections_total{reason="signal_filter:..."}`，之前漏计
+
+### Added (P0-monitoring)
+- 监控埋点全面接通：/metrics 端点从"定义了 9 个指标但全是 0"变成真实可观测
+- qt_engine_loop_duration_seconds 接通到 signal_runner / order_sync / position_sync / monitor_check 四个 loop
+- qt_orders_total + qt_risk_rejections_total 接通到 6 端口 LiveOrderPipeline 的 filled / failed / risk_rejected / trading_disabled 四个出口
+- qt_monitor_alerts_total 接通到 Monitor._push_alert_obj 全量计数
+- qt_positions_active gauge 接通到 PositionManager.update_position / remove_position / PositionSync.sync
+- qt_app_info gauge 在 FastAPI lifespan 启动时 set(1) 携带 version + env
+- 新增 qt_notifier_webhooks_total 接通 generic webhook + 飞书/钉钉/企微
+- 新增 qt_cache_events_total 接通 TTL 缓存命中率
+- tests/test_metrics_integration.py 新增 9 个集成测试，钉死每个指标的触发点
+- docs/observability.md 新增 v0.3.0 章节，列明每处接通点
+
 ### Added (P2-5 + P1-9 + P2-4)
 - `/metrics` Prometheus 端点 + 9 个指标（orders / risk / LLM / monitor / paper / engine loop / positions / app_info）— commit `0963ff3`
 - 告警外发到飞书/钉钉/企微群机器人（独立 provider 模块，错误隔离）— commit `7d4eee1`

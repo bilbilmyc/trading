@@ -4,7 +4,7 @@ Command entry point for the Web3 trading system.
 
 import argparse
 import asyncio
-from typing import Sequence
+from collections.abc import Sequence
 
 from app.exchanges.factory import ExchangeFactory
 from config import Settings, load_settings
@@ -102,7 +102,79 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     subparsers.add_parser("trade", help="Run the sample strategy loop")
     subparsers.add_parser("status", help="Print configured exchanges")
 
+    bot_parser = subparsers.add_parser(
+        "bot", help="Run the Telegram monitor bot (long-polling)"
+    )
+    bot_parser.add_argument(
+        "--engine-url",
+        default=None,
+        help="Engine API base URL (default: settings.bot.api_base_url or http://127.0.0.1:8000)",
+    )
+
     return parser.parse_args(argv)
+
+
+async def run_bot(settings: Settings, engine_url: str | None = None) -> None:
+    """Start the Telegram bot monitoring loop.
+
+    Wires the same ``TradingEngine`` instance the API is using as a target
+    so the bot can call ``/api/v1/...`` over loopback. The bot itself can
+    also be started independently (`python main.py bot`) — in that case it
+    targets whatever URL ``--engine-url`` (or ``bot_api_base_url``) points
+    to.
+    """
+
+    from loguru import logger
+
+    from app.bot.alerts import BotAlertSubscriber
+    from app.bot.config import bot_config_from_settings
+    from app.bot.runner import TradingBot
+    from app.bot.scheduler import daily_report_job
+    from app.bot.telegram import TelegramProvider
+
+    cfg = bot_config_from_settings(settings)
+    if engine_url:
+        cfg = cfg.__class__(**{**cfg.__dict__, "api_base_url": engine_url})
+
+    if not cfg.enabled:
+        logger.warning(
+            "Bot is disabled (settings.bot_enabled=false). "
+            "Set BOT_ENABLED=true in .env to enable."
+        )
+        return
+    if not cfg.telegram_token:
+        logger.error("BOT_TELEGRAM_TOKEN is required but empty.")
+        return
+
+    provider = TelegramProvider(cfg)
+    alert_subscriber = BotAlertSubscriber(config=cfg, sender=_push_all_text(cfg))
+    bot = TradingBot(
+        cfg,
+        provider,
+        monitor=None,  # bot 单独启时没有 engine.monitor；alert 推送禁用
+        alert_subscriber=alert_subscriber,
+        schedule_jobs=[daily_report_job] if cfg.daily_report_enabled else [],
+    )
+    try:
+        await bot.run_forever()
+    except KeyboardInterrupt:
+        logger.info("Bot received shutdown signal")
+
+
+def _push_all_text(cfg):
+    """返回一个 sender 闭包：直接给所有白名单 chat 推同一条消息。
+
+    注意：bot.run_forever() 不在 main.py 里调用，所以这里只在用户希望
+    "bot 单独跑"（不依赖 engine）的情况下成立。当 ``python main.py api``
+    同时启 bot 时，这个工厂不需要。
+    """
+
+    async def sender(text: str) -> None:
+        from loguru import logger
+
+        logger.info(f"[bot-direct] {text}")
+
+    return sender
 
 
 def main(argv: Sequence[str] | None = None) -> None:
@@ -141,6 +213,10 @@ def main(argv: Sequence[str] | None = None) -> None:
 
     if args.command == "trade":
         asyncio.run(run_trade(settings))
+        return
+
+    if args.command == "bot":
+        asyncio.run(run_bot(settings, engine_url=args.engine_url))
         return
 
     if args.command == "status":
