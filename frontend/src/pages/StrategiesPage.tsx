@@ -7,8 +7,8 @@ import type { LLMAnalysisResult } from "../api";
 import { AIReport } from "../components/AIReport";
 import { Metric, MetricTile } from "../components/atoms";
 import { Card } from "../components/Card";
-import { KPIHero } from "../components/KPIHero";
 import { ListRow } from "../components/ListRow";
+import { MarketSnapshot } from "../components/MarketSnapshot";
 import { PageHeader } from "../components/PageHeader";
 
 export function StrategiesPage() {
@@ -88,6 +88,19 @@ export function StrategiesPage() {
     }
   }
 
+  const aiDecisionText =
+    aiReport?.decision === "long"
+      ? "做多"
+      : aiReport?.decision === "short"
+        ? "做空"
+        : aiReport
+          ? "观望"
+          : "--";
+
+  const modeHasLive = strategies.some((s) => s.mode === "live");
+  const modeHasPaper = strategies.some((s) => s.mode === "paper");
+  const modeText = modeHasLive ? "实盘" : modeHasPaper ? "模拟" : "--";
+
   return (
     <div className="page page--strategies stack">
       <PageHeader
@@ -97,50 +110,36 @@ export function StrategiesPage() {
         subtitle="SMA 创建 · LLM 策略配置 · 信号流"
       />
 
-      {/* KPI strip — operational summary. */}
-      <div className="kpi-strip kpi-strip--four">
-        <KPIHero
+      {/* v0.4 stats strip — hairline tiles, tabular figures. */}
+      <div className="market-snap-strip">
+        <MarketSnapshot
           label="已加载策略"
           value={String(strategies.length)}
           icon={<Sigma size={12} />}
-          iconGradient="indigo"
           sparkline={[3, 4, 5, 5, 5, 6, 5, 5, 5, 5]}
           hint={`${strategies.filter((s) => s.running).length} 运行中`}
         />
-        <KPIHero
+        <MarketSnapshot
           label="最近信号"
           value={String(signals.length)}
           icon={<Sigma size={12} />}
-          iconGradient="cyan"
           delta={{ value: "今天 +12", tone: "positive" }}
           sparkline={[0, 1, 3, 5, 4, 6, 8, 7, 9, 12, 10, 14]}
         />
-        <KPIHero
+        <MarketSnapshot
           label="AI 决策"
-          value={
-            aiReport?.decision === "long"
-              ? "做多"
-              : aiReport?.decision === "short"
-                ? "做空"
-                : aiReport
-                  ? "观望"
-                  : "--"
-          }
+          value={aiDecisionText}
           icon={<Sigma size={12} />}
-          iconGradient={
-            aiReport?.decision === "long"
-              ? "green"
-              : aiReport?.decision === "short"
-                ? "red"
-                : "yellow"
+          hint={
+            aiReport
+              ? `置信度 ${(aiReport.confidence * 100).toFixed(0)}%`
+              : "运行分析获取"
           }
-          hint={aiReport ? `置信度 ${(aiReport.confidence * 100).toFixed(0)}%` : "运行分析获取"}
         />
-        <KPIHero
+        <MarketSnapshot
           label="引擎状态"
           value={engine?.running ? "运行" : "停止"}
           icon={<Sigma size={12} />}
-          iconGradient={engine?.running ? "green" : "red"}
           sparkline={engine?.running ? [1, 1, 1, 1] : [1, 0, 0, 0]}
           hint={`${strategies.filter((s) => s.mode === "live").length} 实盘 · ${strategies.filter((s) => s.mode === "paper").length} 模拟`}
         />
@@ -156,27 +155,19 @@ export function StrategiesPage() {
         <MetricTile
           label="运行中"
           value={String(strategies.filter((s) => s.running).length)}
-          icon={<span style={{ fontSize: 12, fontWeight: 700 }}>RUN</span>}
+          icon={<span className="metric-tile__chip">RUN</span>}
           iconGradient={strategies.some((s) => s.running) ? "green" : "indigo"}
         />
         <MetricTile
           label="最近信号"
           value={String(signals.length)}
-          icon={<span style={{ fontSize: 12, fontWeight: 700 }}>SIG</span>}
+          icon={<span className="metric-tile__chip">SIG</span>}
           iconGradient="cyan"
         />
         <MetricTile
           label="AI 决策"
-          value={
-            aiReport?.decision === "long"
-              ? "做多"
-              : aiReport?.decision === "short"
-                ? "做空"
-                : aiReport
-                  ? "观望"
-                  : "--"
-          }
-          icon={<span style={{ fontSize: 12, fontWeight: 700 }}>AI</span>}
+          value={aiDecisionText}
+          icon={<span className="metric-tile__chip">AI</span>}
           iconGradient={
             aiReport?.decision === "long"
               ? "green"
@@ -187,28 +178,20 @@ export function StrategiesPage() {
         />
         <MetricTile
           label="策略模式"
-          value={
-            strategies.some((s) => s.mode === "live")
-              ? "实盘"
-              : strategies.some((s) => s.mode === "paper")
-                ? "模拟"
-                : "--"
-          }
-          icon={<span style={{ fontSize: 12, fontWeight: 700 }}>MODE</span>}
+          value={modeText}
+          icon={<span className="metric-tile__chip">MODE</span>}
           iconGradient="orange"
         />
         <MetricTile
           label="引擎状态"
           value={engine?.running ? "运行" : "停止"}
-          icon={<span style={{ fontSize: 12, fontWeight: 700 }}>ENG</span>}
+          icon={<span className="metric-tile__chip">ENG</span>}
           iconGradient={engine?.running ? "green" : "red"}
         />
       </div>
 
-      {/* AI form + AI report (with inline expand) share the left column;
-          SMA form is in the right column. */}
       <div className="page__grid page__grid--split">
-        <div style={{ display: "flex", flexDirection: "column", gap: "16px" }}>
+        <div className="strategies-col">
           <Card title="AI 分析" subtitle="大模型一次性市场分析（不自动下单）">
             <div className="form-grid form-grid--inline">
               <label className="field">
@@ -293,10 +276,9 @@ export function StrategiesPage() {
             <div className="field">
               <button
                 type="button"
-                className="action action--primary"
+                className="action action--primary strategies-create-btn"
                 onClick={createSma}
                 disabled={busy === "create"}
-                style={{ width: "100%" }}
               >
                 {busy === "create" ? "创建中" : "创建 SMA"}
               </button>
@@ -327,7 +309,7 @@ export function StrategiesPage() {
                         s.mode === "paper" ? "模拟盘" : "只信号"
                       }`}
                       trailing={
-                        <span className="list-row__trailing" style={{ gap: 6 }}>
+                        <span className="list-row__trailing strategies-row-actions">
                           <button
                             type="button"
                             className={`action action--ghost action--xs ${s.mode === "paper" ? "is-on" : ""}`}

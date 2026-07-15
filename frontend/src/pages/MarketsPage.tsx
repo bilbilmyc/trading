@@ -14,9 +14,9 @@ import type {
 } from "../api";
 import { CandleChart, type Candle } from "../components/CandleChart";
 import { EmptyState } from "../components/EmptyState";
-import { KPIHero } from "../components/KPIHero";
+import { MarketSnapshot } from "../components/MarketSnapshot";
 import { PageHeader } from "../components/PageHeader";
-import { Sparkline } from "../components/Sparkline";
+import { SectionPanel } from "../components/SectionPanel";
 import { formatNumber, formatPercent } from "../utils/format";
 
 const EXCHANGES: { value: ExchangeName; label: string }[] = [
@@ -26,6 +26,14 @@ const EXCHANGES: { value: ExchangeName; label: string }[] = [
 ];
 
 const INTERVALS = ["1m", "5m", "15m", "1h", "4h", "1d"] as const;
+
+type MiniTone = "pos" | "neg" | "muted";
+
+interface MiniMetric {
+  label: string;
+  value: string;
+  tone?: MiniTone;
+}
 
 export function MarketsPage() {
   const [location] = useLocation();
@@ -109,6 +117,7 @@ export function MarketsPage() {
   const changePct = ticker?.price_change_pct_24h ?? 0;
   const changeAbs = ticker?.price_change_24h ?? 0;
   const isUp = changePct >= 0;
+  const priceChangePct = ticker?.price_change_pct_24h ?? 0;
 
   // ticker-tape (top contracts, derive change vs last_price)
   const tape = useMemo(
@@ -116,8 +125,33 @@ export function MarketsPage() {
     [contracts],
   );
 
+  const miniMetrics: MiniMetric[] = [
+    {
+      label: "最新价",
+      value: lastPrice ? `$${formatNumber(lastPrice, 2)}` : "—",
+      tone: "muted",
+    },
+    {
+      label: "24h 涨跌",
+      value: `${isUp ? "+" : ""}${formatNumber(changePct, 2)}%`,
+      tone: isUp ? "pos" : "neg",
+    },
+    {
+      label: "24h 成交额",
+      value: `$${formatNumber(ticker?.quote_volume_24h, 0)}`,
+      tone: "muted",
+    },
+    { label: "Maker", value: formatPercent(feeRate?.maker), tone: "muted" },
+    { label: "Taker", value: formatPercent(feeRate?.taker), tone: "muted" },
+    {
+      label: "买/卖价",
+      value: `${formatNumber(ticker?.bid_price, 2)} / ${formatNumber(ticker?.ask_price, 2)}`,
+      tone: "muted",
+    },
+  ];
+
   return (
-    <div className="page page--markets stack" style={{ paddingTop: 12 }}>
+    <div className="page page--markets stack">
       <PageHeader
         icon={<TrendingUp size={18} />}
         eyebrow="合约行情"
@@ -125,17 +159,16 @@ export function MarketsPage() {
         subtitle="K 线 / 深度 / 最近成交 / 24h 涨跌"
       />
 
-      {/* KPI strip — top-of-page market summary. */}
-      <div className="kpi-strip kpi-strip--four">
-        <KPIHero
+      {/* v0.4 stats strip — hairline tiles, tabular figures. */}
+      <div className="market-snap-strip">
+        <MarketSnapshot
           label={`${symbol} 最新价`}
-          value={lastPrice ? `$${formatNumber(lastPrice, 2)}` : "$--.--"}
+          value={lastPrice ? `$${formatNumber(lastPrice, 2)}` : "$—"}
           icon={<TrendingUp size={12} />}
-          iconGradient={isUp ? "green" : "red"}
           delta={
             ticker
               ? {
-                  value: `${isUp ? "+" : ""}${(changePct * 100).toFixed(2)}%`,
+                  value: `${isUp ? "+" : ""}${(priceChangePct * 100).toFixed(2)}%`,
                   tone: isUp ? "positive" : "negative",
                 }
               : undefined
@@ -143,38 +176,35 @@ export function MarketsPage() {
           sparkline={[10, 11, 12, 11, 13, 14, 13, 15, 14, 16, 15, 17]}
           hint="24h"
         />
-        <KPIHero
+        <MarketSnapshot
           label="24h 成交额"
-          value={ticker ? `$${(Number(ticker.quote_volume_24h) / 1e6).toFixed(1)}M` : "--"}
+          value={ticker ? `$${(Number(ticker.quote_volume_24h) / 1e6).toFixed(1)}M` : "—"}
           icon={<TrendingUp size={12} />}
-          iconGradient="cyan"
           sparkline={[8, 9, 8, 10, 11, 12, 11, 13, 12, 14, 13, 15]}
         />
-        <KPIHero
+        <MarketSnapshot
           label="24h 最高 / 最低"
           value={
             ticker
               ? `$${formatNumber(ticker.high_24h, 2)} / $${formatNumber(ticker.low_24h, 2)}`
-              : "--"
+              : "—"
           }
           icon={<TrendingUp size={12} />}
-          iconGradient="yellow"
         />
-        <KPIHero
+        <MarketSnapshot
           label="买 / 卖价"
           value={
             ticker
               ? `$${formatNumber(ticker.bid_price, 2)} / $${formatNumber(ticker.ask_price, 2)}`
-              : "--"
+              : "—"
           }
           icon={<TrendingUp size={12} />}
-          iconGradient="pink"
           hint="点差"
         />
       </div>
 
       {/* Filter row: compact, mono-style. */}
-      <div className="form-grid form-grid--inline" style={{ gap: 8 }}>
+      <div className="form-grid form-grid--inline markets-filter-row">
         <label className="field">
           <span>EXCHANGE</span>
           <select
@@ -193,7 +223,7 @@ export function MarketsPage() {
             value={symbol}
             onChange={(e) => setSymbol(e.target.value.toUpperCase())}
             placeholder="BTCUSDT"
-            style={{ fontFamily: "var(--font-mono)", letterSpacing: "0.04em" }}
+            className="num markets-symbol-input"
           />
         </label>
         <label className="field">
@@ -223,157 +253,91 @@ export function MarketsPage() {
         </datalist>
       </div>
 
-      {/* Function-key style hint bar. */}
       <div className="fn-bar">
         <span><span className="fn-bar__key">F2</span> BID/ASK</span>
         <span><span className="fn-bar__key">F4</span> TRADES</span>
         <span><span className="fn-bar__key">F5</span> DEPTH</span>
         <span><span className="fn-bar__key">F6</span> ORDERS</span>
-        <span style={{ marginLeft: "auto", color: "var(--text-faint)" }}>
+        <span className="fn-bar__hint">
           ⌘ CLICK a tape item to switch symbol
         </span>
       </div>
 
       {/* Hero price block — the "thesis" of the page. */}
-      <div
-        style={{
-          display: "flex",
-          alignItems: "baseline",
-          gap: 16,
-          padding: "12px 16px",
-          background: "var(--bg-elevated)",
-          border: "1px solid var(--border)",
-          borderRadius: "var(--radius-md)",
-          flexWrap: "wrap",
-        }}
-      >
-        <span style={{ display: "inline-flex", alignItems: "center", gap: 8 }}>
-          <TrendingUp size={16} className="text-muted" />
-          <span className="data-mono data-mono--md" style={{ color: "var(--text-secondary)", fontWeight: 600 }}>
-            {symbol}
-          </span>
-          <span className="data-mono data-mono--sm" style={{ color: "var(--text-muted)" }}>
+      <div className="markets-hero">
+        <span className="markets-hero__symbol-cluster">
+          <TrendingUp size={16} className="text-muted markets-hero__icon" />
+          <span className="markets-hero__symbol num">{symbol}</span>
+          <span className="markets-hero__meta num">
             {interval.toUpperCase()} · {exchange.replace("_", " ")}
           </span>
         </span>
-        <span className="big-price">
-          {lastPrice ? `$${formatNumber(lastPrice, 2)}` : "$--.--"}
+        <span className="markets-hero__price num">
+          {lastPrice ? `$${formatNumber(lastPrice, 2)}` : "$—"}
         </span>
         {ticker ? (
-          <span className={`big-price__delta ${isUp ? "big-price__delta--pos" : "big-price__delta--neg"}`}>
+          <span
+            className={`markets-hero__delta ${isUp ? "markets-hero__delta--pos" : "markets-hero__delta--neg"} num`}
+          >
             {isUp ? "▲" : "▼"} {isUp ? "+" : ""}
             {formatNumber(changeAbs, 2)} ({isUp ? "+" : ""}
             {formatNumber(changePct, 2)}%)
           </span>
         ) : null}
-        <span style={{ marginLeft: "auto", display: "flex", gap: 8 }}>
-          <span className="chip-sm">H ${formatNumber(ticker?.high_24h, 2)}</span>
-          <span className="chip-sm">L ${formatNumber(ticker?.low_24h, 2)}</span>
-          <span className="chip-sm">V ${formatNumber(ticker?.quote_volume_24h, 0)}</span>
+        <span className="markets-hero__chips">
+          <span className="markets-hero__chip">H ${formatNumber(ticker?.high_24h, 2)}</span>
+          <span className="markets-hero__chip">L ${formatNumber(ticker?.low_24h, 2)}</span>
+          <span className="markets-hero__chip">V ${formatNumber(ticker?.quote_volume_24h, 0)}</span>
         </span>
       </div>
 
-      {/* Terminal: 3-column OKX-style layout. */}
-      <div className="terminal">
-        {/* LEFT: 最近成交 (order book / trades). */}
-        <section
-          style={{
-            background: "var(--bg-elevated)",
-            border: "1px solid var(--border)",
-            borderRadius: "var(--radius-md)",
-            display: "flex",
-            flexDirection: "column",
-            overflow: "hidden",
-          }}
+      {/* 3-column terminal layout: trades / candles / open orders. */}
+      <div className="terminal-grid-markets">
+        <SectionPanel
+          title={`RECENT TRADES · ${symbol}`}
+          trailing={<span>{trades.length}</span>}
+          scroll="md"
         >
-          <header
-            style={{
-              padding: "6px 10px",
-              display: "flex",
-              justifyContent: "space-between",
-              alignItems: "center",
-              borderBottom: "1px solid var(--border)",
-              fontFamily: "var(--font-mono)",
-              fontSize: 11,
-              textTransform: "uppercase",
-              letterSpacing: "0.08em",
-              color: "var(--text-muted)",
-            }}
-          >
-            <span>RECENT TRADES</span>
-            <span>{trades.length}</span>
-          </header>
-          <div
-            style={{
-              display: "grid",
-              gridTemplateColumns: "44px 1fr 1fr",
-              padding: "4px 10px",
-              fontFamily: "var(--font-mono)",
-              fontSize: 10,
-              color: "var(--text-faint)",
-              textTransform: "uppercase",
-              letterSpacing: "0.06em",
-              borderBottom: "1px solid var(--border)",
-            }}
-          >
-            <span>Side</span><span style={{ textAlign: "right" }}>Price</span><span style={{ textAlign: "right" }}>Qty</span>
+          <div className="tr" style={{ gridTemplateColumns: "44px 1fr 1fr" }}>
+            <span>Side</span>
+            <span className="tr__head-num">Price</span>
+            <span className="tr__head-num">Qty</span>
           </div>
-          <div className="scroll-cap" style={{ flex: 1, minHeight: 0, maxHeight: 360 }}>
-            {trades.length ? (
-              trades.slice(0, 20).map((t) => {
-                const up = t.side === "buy";
-                return (
-                  <div
-                    key={t.trade_id}
-                    className="tr"
-                    style={{ gridTemplateColumns: "44px 1fr 1fr" }}
-                  >
-                    <span className={`tr__side ${up ? "tr__side--buy" : "tr__side--sell"}`}>
-                      {up ? "买" : "卖"}
-                    </span>
-                    <span className={`tr__price ${up ? "tr__price--up" : "tr__price--down"}`} style={{ textAlign: "right" }}>
-                      {formatNumber(t.price, 2)}
-                    </span>
-                    <span style={{ textAlign: "right" }}>{formatNumber(t.quantity, 4)}</span>
-                  </div>
-                );
-              })
-            ) : (
-              <div className="empty-state" style={{ margin: 8 }}>
-                <strong>暂无成交</strong>
-                <span>选择合约后会自动开始流式拉取</span>
-              </div>
-            )}
-          </div>
-        </section>
+          {trades.length ? (
+            trades.slice(0, 20).map((t) => {
+              const up = t.side === "buy";
+              return (
+                <div
+                  key={t.trade_id}
+                  className="tr"
+                  style={{ gridTemplateColumns: "44px 1fr 1fr" }}
+                >
+                  <span className={`tr__side ${up ? "tr__side--buy" : "tr__side--sell"}`}>
+                    {up ? "买" : "卖"}
+                  </span>
+                  <span className={`tr__price ${up ? "tr__price--up" : "tr__price--down"} num`}>
+                    {formatNumber(t.price, 2)}
+                  </span>
+                  <span className="tr__qty num">{formatNumber(t.quantity, 4)}</span>
+                </div>
+              );
+            })
+          ) : (
+            <div className="empty-state empty-state--compact">
+              <strong>暂无成交</strong>
+              <span>选择合约后会自动开始流式拉取</span>
+            </div>
+          )}
+        </SectionPanel>
 
-        {/* CENTER: chart with structured empty state. */}
-        <section
-          style={{
-            background: "var(--bg-elevated)",
-            border: "1px solid var(--border)",
-            borderRadius: "var(--radius-md)",
-            display: "flex",
-            flexDirection: "column",
-            overflow: "hidden",
-          }}
-        >
-          <header
-            style={{
-              padding: "6px 10px",
-              display: "flex",
-              justifyContent: "space-between",
-              alignItems: "center",
-              borderBottom: "1px solid var(--border)",
-              fontFamily: "var(--font-mono)",
-              fontSize: 11,
-              textTransform: "uppercase",
-              letterSpacing: "0.08em",
-              color: "var(--text-muted)",
-            }}
-          >
-            <span>CANDLES · {symbol} · {interval}</span>
-            <span style={{ display: "flex", gap: 6 }}>
+        <SectionPanel
+          title={
+            <span>
+              CANDLES · <span className="num">{symbol}</span> · <span className="num">{interval}</span>
+            </span>
+          }
+          trailing={
+            <span className="section-panel__trailing">
               {INTERVALS.map((i) => (
                 <button
                   key={i}
@@ -388,62 +352,35 @@ export function MarketsPage() {
                 </button>
               ))}
             </span>
-          </header>
-          <div style={{ padding: 8, minHeight: 320 }}>
+          }
+        >
+          <div className="markets-candle-host">
             {candles.length ? (
               <CandleChart candles={candles} />
             ) : (
               <div className="chart-empty">
                 <span>暂无 K 线数据</span>
-                <span className="chart-empty__hint">TIP · 等待 {symbol} 的首批 K 线回传 (3-5s)</span>
+                <span className="chart-empty__hint">
+                  TIP · 等待 {symbol} 的首批 K 线回传 (3-5s)
+                </span>
               </div>
             )}
           </div>
-        </section>
+        </SectionPanel>
 
-        {/* RIGHT: 当前挂单 + 6 指标. */}
-        <section
-          style={{
-            display: "flex",
-            flexDirection: "column",
-            gap: 12,
-            minWidth: 0,
-          }}
-        >
-          {/* 6 指标 grid */}
-          <div
-            style={{
-              display: "grid",
-              gridTemplateColumns: "1fr 1fr",
-              gap: 6,
-            }}
-          >
-            {[
-              { label: "最新价", value: lastPrice ? `$${formatNumber(lastPrice, 2)}` : "$--", tone: "default" as const },
-              { label: "24h 涨跌", value: `${isUp ? "+" : ""}${formatNumber(changePct, 2)}%`, tone: isUp ? "positive" as const : "negative" as const },
-              { label: "24h 成交额", value: `$${formatNumber(ticker?.quote_volume_24h, 0)}`, tone: "muted" as const },
-              { label: "Maker", value: formatPercent(feeRate?.maker), tone: "muted" as const },
-              { label: "Taker", value: formatPercent(feeRate?.taker), tone: "muted" as const },
-              { label: "买/卖价", value: `${formatNumber(ticker?.bid_price, 2)} / ${formatNumber(ticker?.ask_price, 2)}`, tone: "muted" as const },
-            ].map((m) => (
-              <div
-                key={m.label}
-                style={{
-                  background: "var(--bg-card)",
-                  border: "1px solid var(--border)",
-                  borderRadius: "var(--radius-sm)",
-                  padding: "8px 10px",
-                }}
-              >
-                <div style={{ fontSize: 10, textTransform: "uppercase", letterSpacing: "0.06em", color: "var(--text-muted)", marginBottom: 2 }}>
-                  {m.label}
-                </div>
+        <div className="markets-right-col">
+          <div className="markets-mini-grid">
+            {miniMetrics.map((m) => (
+              <div key={m.label} className="markets-mini">
+                <div className="markets-mini__label">{m.label}</div>
                 <div
-                  className="data-mono data-mono--md"
-                  style={{
-                    fontWeight: 600,
-                    color: m.tone === "positive" ? "var(--positive)" : m.tone === "negative" ? "var(--negative)" : "var(--text-primary)",
-                  }}
+                  className={`markets-mini__value num ${
+                    m.tone === "pos"
+                      ? "markets-mini__value--pos"
+                      : m.tone === "neg"
+                        ? "markets-mini__value--neg"
+                        : "markets-mini__value--muted"
+                  }`}
                 >
                   {m.value}
                 </div>
@@ -451,62 +388,42 @@ export function MarketsPage() {
             ))}
           </div>
 
-          {/* 当前挂单 */}
-          <section
-            style={{
-              background: "var(--bg-elevated)",
-              border: "1px solid var(--border)",
-              borderRadius: "var(--radius-md)",
-              display: "flex",
-              flexDirection: "column",
-              overflow: "hidden",
-              flex: 1,
-              minHeight: 0,
-            }}
+          <SectionPanel
+            title={`OPEN ORDERS · ${symbol}`}
+            trailing={<span>{openOrders.length}</span>}
+            flex
+            scroll="sm"
           >
-            <header
-              style={{
-                padding: "6px 10px",
-                display: "flex",
-                justifyContent: "space-between",
-                alignItems: "center",
-                borderBottom: "1px solid var(--border)",
-                fontFamily: "var(--font-mono)",
-                fontSize: 11,
-                textTransform: "uppercase",
-                letterSpacing: "0.08em",
-                color: "var(--text-muted)",
-              }}
-            >
-              <span>OPEN ORDERS</span>
-              <span>{openOrders.length}</span>
-            </header>
-            <div className="scroll-cap" style={{ flex: 1, minHeight: 0, maxHeight: 220 }}>
-              {openOrders.length ? (
-                openOrders.slice(0, 12).map((o, i) => (
-                  <div key={String(o.order_id ?? o.orderId ?? i)} className="tr" style={{ gridTemplateColumns: "1fr 1fr 1fr" }}>
-                    <span>{String(o.symbol ?? "--")}</span>
-                    <span style={{ textAlign: "right" }}>${String(o.price ?? "--")}</span>
-                    <span style={{ textAlign: "right", color: "var(--text-muted)" }}>
-                      {String(o.status ?? o.quantity ?? "--")}
-                    </span>
-                  </div>
-                ))
-              ) : (
-                <div className="empty-state" style={{ margin: 8 }}>
-                  <strong>暂无挂单</strong>
-                  <span>下单后会自动出现在此</span>
+            {openOrders.length ? (
+              openOrders.slice(0, 12).map((o, i) => (
+                <div
+                  key={String(o.order_id ?? o.orderId ?? i)}
+                  className="tr"
+                  style={{ gridTemplateColumns: "1fr 1fr 1fr" }}
+                >
+                  <span className="num">{String(o.symbol ?? "—")}</span>
+                  <span className="num tr__price--up" style={{ textAlign: "right" }}>
+                    ${String(o.price ?? "—")}
+                  </span>
+                  <span className="num" style={{ textAlign: "right", color: "var(--text-muted)" }}>
+                    {String(o.status ?? o.quantity ?? "—")}
+                  </span>
                 </div>
-              )}
-            </div>
-          </section>
-        </section>
+              ))
+            ) : (
+              <div className="empty-state empty-state--compact">
+                <strong>暂无挂单</strong>
+                <span>下单后会自动出现在此</span>
+              </div>
+            )}
+          </SectionPanel>
+        </div>
       </div>
 
       {/* Ticker tape: horizontal scrolling price strip (the "trader" affordance). */}
       <div className="ticker-tape" role="navigation" aria-label="热门合约">
         {tape.length === 0 ? (
-          <span style={{ padding: "0 14px", color: "var(--text-faint)", fontFamily: "var(--font-mono)", fontSize: 11 }}>
+          <span className="ticker-tape__empty num">
             {apiOnline ? "加载合约..." : "等待 API..."}
           </span>
         ) : (
@@ -514,13 +431,14 @@ export function MarketsPage() {
             <button
               key={c.symbol}
               type="button"
-              className="ticker-tape__item"
+              className={`ticker-tape__item ${symbol === c.symbol ? "is-on" : ""}`}
               onClick={() => setSymbol(c.symbol)}
               title={c.symbol}
-              style={{ background: symbol === c.symbol ? "var(--accent-soft)" : "transparent" }}
             >
               <span className="ticker-tape__symbol">{c.base_asset}</span>
-              <span className="ticker-tape__price">${formatNumber((c as any).last_price, 2) || "—"}</span>
+              <span className="ticker-tape__price num">
+                ${formatNumber((c as any).last_price, 2) || "—"}
+              </span>
             </button>
           ))
         )}

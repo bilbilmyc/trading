@@ -3892,6 +3892,257 @@ input, select, button, textarea {
   gap: var(--space-3);
 }
 
+/* SectionPanel — card with a labelled header bar. Replaces ~14 lines
+   of inline style={{ border / radius / display / overflow }} on pages
+   that compose "trades / candles / open orders / ...". */
+.section-panel {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  background: var(--bg-elevated);
+  border: var(--hairline);
+  border-radius: var(--radius-md);
+  min-width: 0;
+}
+.section-panel--flex {
+  flex: 1;
+  min-height: 0;
+}
+.section-panel__head {
+  padding: 6px 10px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  border-bottom: var(--hairline);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--text-muted);
+}
+.section-panel__title { font-weight: 500; }
+.section-panel__trailing {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
+.section-panel__body {
+  display: block;
+  overflow: hidden;
+}
+.section-panel__body.scroll-cap { padding: 0; }
+
+/* Markets-page terminal layout — 3 columns at wide, single column under. */
+.terminal-grid-markets {
+  display: grid;
+  grid-template-columns: minmax(220px, 280px) minmax(420px, 1fr) minmax(260px, 320px);
+  gap: var(--space-3);
+}
+@media (max-width: 1280px) {
+  .terminal-grid-markets {
+    grid-template-columns: minmax(220px, 280px) minmax(0, 1fr);
+  }
+  .terminal-grid-markets > :nth-child(3) {
+    grid-column: 1 / -1;
+  }
+}
+@media (max-width: 900px) {
+  .terminal-grid-markets {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* Markets-page mini metric grid (6 stats on right column). */
+.markets-mini-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px;
+}
+.markets-mini {
+  background: var(--bg-card);
+  border: var(--hairline);
+  border-radius: var(--radius-sm);
+  padding: 8px 10px;
+}
+.markets-mini__label {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-muted);
+  margin-bottom: 2px;
+}
+.markets-mini__value {
+  font-weight: 600;
+  font-family: var(--font-mono);
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+}
+.markets-mini__value--pos     { color: var(--positive); }
+.markets-mini__value--neg     { color: var(--negative); }
+.markets-mini__value--muted   { color: var(--text-primary); }
+
+/* Hero price block (v0.4 — hairline card with mono price + chips). */
+.markets-hero {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-4);
+  padding: var(--space-3) var(--space-4);
+  background: var(--bg-elevated);
+  border: var(--hairline);
+  border-radius: var(--radius-md);
+  flex-wrap: wrap;
+}
+.markets-hero__symbol {
+  font-family: var(--font-mono);
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text-secondary);
+  font-variant-numeric: tabular-nums;
+}
+.markets-hero__meta {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--text-muted);
+}
+.markets-hero__price {
+  font-family: var(--font-mono);
+  font-size: 28px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-primary);
+}
+.markets-hero__delta--pos { color: var(--positive); font-weight: 600; font-family: var(--font-mono); }
+.markets-hero__delta--neg { color: var(--negative); font-weight: 600; font-family: var(--font-mono); }
+.markets-hero__chips {
+  margin-left: auto;
+  display: flex;
+  gap: 6px;
+}
+.markets-hero__chip {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  padding: 2px 8px;
+  border: var(--hairline);
+  border-radius: var(--radius-sm);
+  color: var(--text-secondary);
+  font-variant-numeric: tabular-nums;
+}
+
+/* Function-key / keyboard hint bar (MarketsPage "F2 BID/ASK" etc.) */
+.fn-bar {
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+  font-size: 11px;
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+  padding: 4px 0;
+}
+.fn-bar__key {
+  display: inline-block;
+  padding: 1px 6px;
+  border: var(--hairline);
+  border-radius: 3px;
+  margin-right: 4px;
+  font-weight: 600;
+  color: var(--text-secondary);
+  background: var(--bg-elevated);
+}
+
+/* Chart empty state — restored (was orphaned class). */
+.chart-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  min-height: 280px;
+  color: var(--text-muted);
+  gap: 8px;
+}
+.chart-empty__hint { font-size: 11px; color: var(--text-faint); }
+
+/* Compact chip used by MarketsPage header bars. */
+.chip-sm {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 8px;
+  border: var(--hairline);
+  border-radius: 999px;
+  font-size: 11px;
+  font-family: var(--font-mono);
+  background: var(--bg-elevated);
+  color: var(--text-secondary);
+  font-variant-numeric: tabular-nums;
+  cursor: pointer;
+}
+.chip-sm.is-on {
+  background: var(--accent-soft);
+  color: var(--accent);
+  border-color: var(--accent);
+}
+.chip-sm:hover { background: var(--bg-hover); }
+
+/* Trades list row — restored format with mono digits. */
+.tr {
+  display: grid;
+  align-items: center;
+  padding: 4px 10px;
+  border-bottom: var(--hairline);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+.tr:hover { background: var(--bg-hover); }
+.tr__side { display: inline-flex; align-items: center; justify-content: center; width: 22px; height: 18px; border-radius: 3px; font-size: 10px; font-weight: 600; }
+.tr__side--buy  { background: var(--positive-soft); color: var(--positive); }
+.tr__side--sell { background: var(--negative-soft); color: var(--negative); }
+.tr__price--up   { color: var(--positive); }
+.tr__price--down { color: var(--negative); }
+
+/* Page level. */
+.page--markets { padding-top: 12px; }
+
+/* MarketsPage atoms — extracted from inline `style={{}}` in the v0.4
+   rewrite. None of these touch token colors; they only handle layout. */
+.markets-filter-row { gap: 8px; }
+.markets-symbol-input {
+  font-family: var(--font-mono);
+  letter-spacing: 0.04em;
+}
+.markets-candle-host { padding: 8px; min-height: 320px; }
+.markets-right-col {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  min-width: 0;
+}
+.fn-bar__hint { margin-left: auto; color: var(--text-faint); }
+.ticker-tape__empty {
+  padding: 0 14px;
+  color: var(--text-faint);
+  font-family: var(--font-mono);
+  font-size: 11px;
+}
+.ticker-tape__item.is-on {
+  background: var(--accent-soft);
+}
+.tr__head-num { text-align: right; }
+.tr__qty { text-align: right; }
+
+/* StrategiesPage atoms — extracted from inline `style={{}}` in v0.4. */
+.metric-tile__chip {
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+}
+.strategies-col {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+.strategies-create-btn { width: 100%; }
+.strategies-row-actions { gap: 6px; }
+
 /* BotMonitorPage atomic classes — extracted from inline style props. */
 .bot-toggle { width: 100%; }
 .bot-hint { color: var(--text-muted); font-size: 12px; margin: var(--space-2) 0 0; }
