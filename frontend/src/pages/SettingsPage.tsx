@@ -7,9 +7,28 @@ import { useSseStatus } from "../hooks/useSseStatus";
 import { api } from "../api";
 import { API_BASE } from "../api/_client";
 import { Metric } from "../components/atoms";
+import { AutocompleteInput } from "../components/AutocompleteInput";
 import { Card } from "../components/Card";
 import { KPIHero } from "../components/KPIHero";
 import { PageHeader } from "../components/PageHeader";
+
+const WEBHOOK_OPTIONS = [
+  {
+    value: "https://api.telegram.org/bot<token>/sendMessage",
+    description: "Telegram Bot API",
+    keywords: ["telegram"],
+  },
+  {
+    value: "https://discord.com/api/webhooks/<id>/<token>",
+    description: "Discord webhook",
+    keywords: ["discord"],
+  },
+  {
+    value: "https://hooks.slack.com/services/<workspace>/<channel>/<token>",
+    description: "Slack incoming webhook",
+    keywords: ["slack"],
+  },
+];
 
 function relativeAge(ts: number | null): string {
   if (ts === null) return "—";
@@ -176,10 +195,13 @@ export function SettingsPage() {
           <div className="form-grid form-grid--inline">
             <label className="field form-grid__span-2">
               <span>Webhook URL</span>
-              <input
+              <AutocompleteInput
                 value={webhookUrl}
-                onChange={(e) => setWebhookUrl(e.target.value)}
-                placeholder="https://api.telegram.org/bot.../sendMessage 或 https://hooks.slack.com/..."
+                onChange={setWebhookUrl}
+                options={WEBHOOK_OPTIONS}
+                inputMode="url"
+                placeholder="输入 webhook，或选择 Telegram / Discord / Slack 模板"
+                aria-label="Webhook URL"
               />
             </label>
             <div className="field">

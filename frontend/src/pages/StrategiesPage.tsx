@@ -5,11 +5,18 @@ import { useEngine } from "../contexts/EngineContext";
 import { api } from "../api";
 import type { LLMAnalysisResult } from "../api";
 import { AIReport } from "../components/AIReport";
-import { Metric, MetricTile } from "../components/atoms";
+import { AutocompleteInput } from "../components/AutocompleteInput";
 import { Card } from "../components/Card";
 import { ListRow } from "../components/ListRow";
 import { MarketSnapshot } from "../components/MarketSnapshot";
 import { PageHeader } from "../components/PageHeader";
+import { buildSymbolOptions } from "../utils/symbols";
+
+const SYMBOL_OPTIONS = buildSymbolOptions();
+const WINDOW_OPTIONS = ["3", "5", "7", "10", "20", "30", "50", "100", "200"].map((value) => ({
+  value,
+  description: "SMA 窗口预设",
+}));
 
 export function StrategiesPage() {
   const { strategies, signals, refresh, engine } = useEngine();
@@ -97,9 +104,6 @@ export function StrategiesPage() {
           ? "观望"
           : "--";
 
-  const modeHasLive = strategies.some((s) => s.mode === "live");
-  const modeHasPaper = strategies.some((s) => s.mode === "paper");
-  const modeText = modeHasLive ? "实盘" : modeHasPaper ? "模拟" : "--";
 
   return (
     <div className="page page--strategies stack">
@@ -145,51 +149,6 @@ export function StrategiesPage() {
         />
       </div>
 
-      <div className="metric-grid metric-grid--six">
-        <MetricTile
-          label="已加载"
-          value={String(strategies.length)}
-          icon={<Sigma size={16} />}
-          iconGradient="indigo"
-        />
-        <MetricTile
-          label="运行中"
-          value={String(strategies.filter((s) => s.running).length)}
-          icon={<span className="metric-tile__chip">RUN</span>}
-          iconGradient={strategies.some((s) => s.running) ? "green" : "indigo"}
-        />
-        <MetricTile
-          label="最近信号"
-          value={String(signals.length)}
-          icon={<span className="metric-tile__chip">SIG</span>}
-          iconGradient="cyan"
-        />
-        <MetricTile
-          label="AI 决策"
-          value={aiDecisionText}
-          icon={<span className="metric-tile__chip">AI</span>}
-          iconGradient={
-            aiReport?.decision === "long"
-              ? "green"
-              : aiReport?.decision === "short"
-                ? "red"
-                : "indigo"
-          }
-        />
-        <MetricTile
-          label="策略模式"
-          value={modeText}
-          icon={<span className="metric-tile__chip">MODE</span>}
-          iconGradient="orange"
-        />
-        <MetricTile
-          label="引擎状态"
-          value={engine?.running ? "运行" : "停止"}
-          icon={<span className="metric-tile__chip">ENG</span>}
-          iconGradient={engine?.running ? "green" : "red"}
-        />
-      </div>
-
       <div className="page__grid page__grid--split">
         <div className="strategies-col">
           <Card title="AI 分析" subtitle="大模型一次性市场分析（不自动下单）">
@@ -207,7 +166,13 @@ export function StrategiesPage() {
               </label>
               <label className="field">
                 <span>合约</span>
-                <input value={aiSymbol} onChange={(e) => setAiSymbol(e.target.value)} />
+                <AutocompleteInput
+                  value={aiSymbol}
+                  onChange={(value) => setAiSymbol(value.toUpperCase())}
+                  options={SYMBOL_OPTIONS}
+                  placeholder="输入 BTC、ETH、SOL…"
+                  aria-label="AI 分析合约"
+                />
               </label>
               <label className="field">
                 <span>周期</span>
@@ -259,18 +224,24 @@ export function StrategiesPage() {
             </label>
             <label className="field">
               <span>短窗口</span>
-              <input
+              <AutocompleteInput
                 value={shortWindow}
-                onChange={(e) => setShortWindow(e.target.value)}
+                onChange={setShortWindow}
+                options={WINDOW_OPTIONS}
                 inputMode="numeric"
+                placeholder="例如 5"
+                aria-label="短窗口"
               />
             </label>
             <label className="field">
               <span>长窗口</span>
-              <input
+              <AutocompleteInput
                 value={longWindow}
-                onChange={(e) => setLongWindow(e.target.value)}
+                onChange={setLongWindow}
+                options={WINDOW_OPTIONS}
                 inputMode="numeric"
+                placeholder="例如 20"
+                aria-label="长窗口"
               />
             </label>
             <div className="field">

@@ -13,6 +13,7 @@ import {
 
 import { api } from "../api";
 import { EquityCurveChart } from "../components/EquityCurveChart";
+import { EmptyState } from "../components/EmptyState";
 import { RiskGauge } from "../components/RiskGauge";
 import { Metric, MetricTile } from "../components/atoms";
 import { Card } from "../components/Card";
@@ -279,10 +280,12 @@ export function PortfolioPage() {
         >
           <div className="portfolio-chart-body">
             {Object.keys(curves).length === 0 ? (
-              <div className="empty-state empty-state--compact">
-                <strong>暂无权益曲线</strong>
-                <span>运行策略后这里会出现多策略净值曲线</span>
-              </div>
+              <EmptyState
+                variant="iconic"
+                title="尚未形成权益曲线"
+                hint="创建并运行策略后，这里会自动汇总多策略净值。"
+                action={{ label: "前往策略", href: "/strategies" }}
+              />
             ) : (
               <EquityCurveChart curves={curves} width={780} height={260} />
             )}
@@ -343,10 +346,12 @@ export function PortfolioPage() {
           density="compact"
         >
           {leaderboard.length === 0 ? (
-            <div className="empty-state empty-state--compact">
-              <strong>暂无策略数据</strong>
-              <span>运行策略后这里会出现排行</span>
-            </div>
+            <EmptyState
+              variant="compact"
+              title="暂无策略排行"
+              hint="运行策略后，将按综合评分展示。"
+              action={{ label: "前往策略", href: "/strategies" }}
+            />
           ) : (
             <>
               <div className="scroll-cap scroll-cap--md">

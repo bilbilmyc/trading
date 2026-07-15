@@ -3,10 +3,12 @@ import { Link } from "wouter";
 import { RefreshCw, Star, X } from "lucide-react";
 
 import { api } from "../api";
+import { AutocompleteInput } from "../components/AutocompleteInput";
 import { Card } from "../components/Card";
 import { KPIHero } from "../components/KPIHero";
 import { PageHeader } from "../components/PageHeader";
 import { Sparkline } from "../components/Sparkline";
+import { buildSymbolOptions } from "../utils/symbols";
 
 interface Ticker {
   symbol: string;
@@ -23,6 +25,7 @@ const KNOWN_SOURCES = [
 ];
 
 const STORAGE_KEY = "quant_trader_watchlist_v1";
+const SYMBOL_OPTIONS = buildSymbolOptions();
 
 type Exchange = "binance_usdm" | "okx_swap" | "bitget_usdt_futures";
 
@@ -178,11 +181,12 @@ export function WatchlistPage() {
         <div className="form-grid form-grid--inline">
           <label className="field">
             <span>合约代码</span>
-            <input
+            <AutocompleteInput
               value={newSymbol}
-              onChange={(e) => setNewSymbol(e.target.value.toUpperCase())}
-              placeholder="BTCUSDT"
-              onKeyDown={(e) => e.key === "Enter" && addItem()}
+              onChange={(value) => setNewSymbol(value.toUpperCase())}
+              options={SYMBOL_OPTIONS}
+              placeholder="输入 BTC、ETH、SOL…"
+              aria-label="合约代码"
             />
           </label>
           <label className="field">

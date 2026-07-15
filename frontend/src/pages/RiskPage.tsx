@@ -313,10 +313,12 @@ export function RiskPage() {
                   />
                 ))
               ) : (
-                <div className="empty-state">
-                  <strong>暂无模拟持仓</strong>
-                  <span>Runner 跑起来后会自动建仓</span>
-                </div>
+                <EmptyState
+                  variant="compact"
+                  title="模拟盘暂无线持仓"
+                  hint="启动策略 Runner 后，将自动建立模拟仓位。"
+                  action={{ label: "前往策略", href: "/strategies" }}
+                />
               )}
             </div>
           </div>
@@ -347,10 +349,12 @@ export function RiskPage() {
         subtitle={`共 ${positions?.positions.length ?? 0} · 显示前 8`}
       >
         {positions?.positions.length === 0 ? (
-          <div className="empty-state">
-            <strong>暂无本地持仓</strong>
-            <span>实盘或模拟下单后会自动出现</span>
-          </div>
+          <EmptyState
+            variant="compact"
+            title="暂无本地持仓"
+            hint="提交真实或模拟订单后，仓位会自动出现在这里。"
+            action={{ label: "前往下单", href: "/trade" }}
+          />
         ) : (
           <>
             <div className={`scroll-cap scroll-cap--md${localExpanded ? " is-expanded" : ""}`}>

@@ -124,6 +124,8 @@ export function Sidebar({ open, onClose }: SidebarProps) {
                     href={item.href}
                     className={`sidebar__item ${active ? "is-active" : ""}`}
                     onClick={onClose}
+                    aria-current={active ? "page" : undefined}
+                    title={item.description}
                   >
                     <span className="sidebar__icon">
                       <Icon size={16} strokeWidth={1.75} />

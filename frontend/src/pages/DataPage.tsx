@@ -4,7 +4,8 @@ import { Database } from "lucide-react";
 
 import { api } from "../api";
 import type { AppConfig } from "../api";
-import { EmptyState, Metric } from "../components/atoms";
+import { EmptyState } from "../components/atoms";
+import { AutocompleteInput } from "../components/AutocompleteInput";
 import { Card } from "../components/Card";
 import { DataTable, type Column } from "../components/DataTable";
 import { KPIHero } from "../components/KPIHero";
@@ -24,6 +25,16 @@ const KNOWN_SOURCES = [
 ];
 
 const CUSTOM_SOURCES_KEY = "quant_trader_custom_sources";
+const SOURCE_NAME_OPTIONS = [
+  { value: "binance-usdm", description: "Binance USDⓈ-M" },
+  { value: "bitget-futures", description: "Bitget USDT futures" },
+  { value: "okx-swap", description: "OKX swap" },
+];
+const SOURCE_URL_OPTIONS = [
+  { value: "https://fapi.binance.com", description: "Binance USDⓈ-M public API" },
+  { value: "https://api.bitget.com", description: "Bitget public API" },
+  { value: "https://www.okx.com", description: "OKX public API" },
+];
 
 function loadCustomSources(): Array<{ name: string; base_url: string }> {
   try {
@@ -184,12 +195,6 @@ export function DataPage() {
         />
       </div>
 
-      <div className="metric-grid">
-        <Metric label="已注册数据源" value={String(dataSources.length)} tone="muted" />
-        <Metric label="系统默认" value={String(enabledFromSettings.length)} tone="muted" />
-        <Metric label="自定义" value={String(customSources.length)} tone="muted" />
-      </div>
-
       {/* 2/3 + 1/3 split: the registered-sources table and the "add custom
           source" form share a row so the whole page fits in one viewport. */}
       <div className="page__grid page__grid--split">
@@ -212,18 +217,23 @@ export function DataPage() {
           <div className="form-grid form-grid--stacked">
             <label className="field">
               <span>名称</span>
-              <input
+              <AutocompleteInput
                 value={newName}
-                onChange={(e) => setNewName(e.target.value)}
-                placeholder="my-venue"
+                onChange={setNewName}
+                options={SOURCE_NAME_OPTIONS}
+                placeholder="选择预设或输入名称"
+                aria-label="数据源名称"
               />
             </label>
             <label className="field">
               <span>Base URL</span>
-              <input
+              <AutocompleteInput
                 value={newUrl}
-                onChange={(e) => setNewUrl(e.target.value)}
-                placeholder="https://api.example.com/v1"
+                onChange={setNewUrl}
+                options={SOURCE_URL_OPTIONS}
+                inputMode="url"
+                placeholder="选择预设或输入 Base URL"
+                aria-label="数据源 Base URL"
               />
             </label>
             <div className="field">

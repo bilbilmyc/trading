@@ -12,12 +12,13 @@ import type {
   RecentTrade,
   Ticker,
 } from "../api";
+import { AutocompleteInput } from "../components/AutocompleteInput";
 import { CandleChart, type Candle } from "../components/CandleChart";
 import { EmptyState } from "../components/EmptyState";
-import { MarketSnapshot } from "../components/MarketSnapshot";
 import { PageHeader } from "../components/PageHeader";
 import { SectionPanel } from "../components/SectionPanel";
 import { formatNumber, formatPercent } from "../utils/format";
+import { buildSymbolOptions } from "../utils/symbols";
 
 const EXCHANGES: { value: ExchangeName; label: string }[] = [
   { value: "binance_usdm", label: "Binance U 本位" },
@@ -124,6 +125,10 @@ export function MarketsPage() {
     () => contracts.slice(0, 24).map((c) => ({ ...c })),
     [contracts],
   );
+  const symbolOptions = useMemo(
+    () => buildSymbolOptions(contracts.map((contract) => contract.symbol)),
+    [contracts],
+  );
 
   const miniMetrics: MiniMetric[] = [
     {
@@ -160,50 +165,6 @@ export function MarketsPage() {
         freshness={{ at: lastRefreshedAt, label: "状态" }}
       />
 
-      {/* v0.4 stats strip — hairline tiles, tabular figures. */}
-      <div className="market-snap-strip">
-        <MarketSnapshot
-          label={`${symbol} 最新价`}
-          value={lastPrice ? `$${formatNumber(lastPrice, 2)}` : "$—"}
-          icon={<TrendingUp size={12} />}
-          delta={
-            ticker
-              ? {
-                  value: `${isUp ? "+" : ""}${(priceChangePct * 100).toFixed(2)}%`,
-                  tone: isUp ? "positive" : "negative",
-                }
-              : undefined
-          }
-          sparkline={[10, 11, 12, 11, 13, 14, 13, 15, 14, 16, 15, 17]}
-          hint="24h"
-        />
-        <MarketSnapshot
-          label="24h 成交额"
-          value={ticker ? `$${(Number(ticker.quote_volume_24h) / 1e6).toFixed(1)}M` : "—"}
-          icon={<TrendingUp size={12} />}
-          sparkline={[8, 9, 8, 10, 11, 12, 11, 13, 12, 14, 13, 15]}
-        />
-        <MarketSnapshot
-          label="24h 最高 / 最低"
-          value={
-            ticker
-              ? `$${formatNumber(ticker.high_24h, 2)} / $${formatNumber(ticker.low_24h, 2)}`
-              : "—"
-          }
-          icon={<TrendingUp size={12} />}
-        />
-        <MarketSnapshot
-          label="买 / 卖价"
-          value={
-            ticker
-              ? `$${formatNumber(ticker.bid_price, 2)} / $${formatNumber(ticker.ask_price, 2)}`
-              : "—"
-          }
-          icon={<TrendingUp size={12} />}
-          hint="点差"
-        />
-      </div>
-
       {/* Filter row: compact, mono-style. */}
       <div className="form-grid form-grid--inline markets-filter-row">
         <label className="field">
@@ -219,12 +180,13 @@ export function MarketsPage() {
         </label>
         <label className="field">
           <span>SYMBOL</span>
-          <input
-            list="markets-symbol-list"
+          <AutocompleteInput
             value={symbol}
-            onChange={(e) => setSymbol(e.target.value.toUpperCase())}
-            placeholder="BTCUSDT"
+            onChange={(value) => setSymbol(value.toUpperCase())}
+            options={symbolOptions}
+            placeholder="输入 BTC、ETH、SOL…"
             className="num markets-symbol-input"
+            aria-label="合约代码"
           />
         </label>
         <label className="field">
@@ -245,13 +207,6 @@ export function MarketsPage() {
             ↻ REFRESH
           </button>
         </div>
-        <datalist id="markets-symbol-list">
-          {contracts.slice(0, 200).map((c) => (
-            <option key={`${c.exchange}-${c.symbol}`} value={c.symbol}>
-              {c.base_asset} / {c.exchange}
-            </option>
-          ))}
-        </datalist>
       </div>
 
       <div className="fn-bar">
@@ -358,12 +313,12 @@ export function MarketsPage() {
             {candles.length ? (
               <CandleChart candles={candles} />
             ) : (
-              <div className="chart-empty">
-                <span>暂无 K 线数据</span>
-                <span className="chart-empty__hint">
-                  TIP · 等待 {symbol} 的首批 K 线回传 (3-5s)
-                </span>
-              </div>
+              <EmptyState
+                variant="iconic"
+                title="等待 K 线数据"
+                hint={`${symbol} 的首批 ${interval} K 线返回后将自动绘制。`}
+                action={{ label: "刷新行情", onClick: refreshMarket }}
+              />
             )}
           </div>
         </SectionPanel>

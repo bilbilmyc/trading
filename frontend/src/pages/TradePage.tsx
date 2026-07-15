@@ -256,7 +256,7 @@ export function TradePage() {
       />
 
       {/* v0.4 stats strip — hairline cards, tabular figures. */}
-      <div className="market-snap-strip">
+      <section className="market-snap-strip" aria-label="市场概览">
         <MarketSnapshot
           label={`${symbol} 最新价`}
           value={
@@ -300,10 +300,10 @@ export function TradePage() {
           sparkline={Array.from({ length: 12 }, (_, i) => notional / 1000 + Math.sin(i) * 2)}
           hint={`数量 ${quantity}`}
         />
-      </div>
+      </section>
 
       {/* Symbol bar — compact command strip. */}
-      <div className="symbol-bar">
+      <section className="symbol-bar" aria-label="当前合约命令信息">
         <span className="symbol-bar__field">
           <span className="symbol-bar__field-label">EXCHANGE</span>
           <span className="symbol-bar__field-value">{exchange.replace("_", " ")}</span>
@@ -341,9 +341,9 @@ export function TradePage() {
             <span className="text-muted num">—</span>
           )}
         </span>
-      </div>
+      </section>
 
-      <div className="terminal-grid">
+      <section className="terminal-grid" aria-label="交易工作区">
         <OrderPanel
           exchange={exchange}
           onExchangeChange={setExchange}
@@ -407,7 +407,7 @@ export function TradePage() {
           signals={engine.signals.slice(0, 5)}
           notional={notional}
         />
-      </div>
+      </section>
     </div>
   );
 }

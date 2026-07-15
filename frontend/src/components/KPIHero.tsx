@@ -12,9 +12,9 @@ interface KPIHeroProps {
   sparkline?: number[];
   /** Sparkline stroke override. */
   sparklineColor?: string;
-  /** Decorative icon chip (gradient square). */
+  /** Supporting icon for fast scanning. */
   icon?: ReactNode;
-  /** Icon chip gradient (CSS background). */
+  /** Semantic icon tone. Custom CSS colors remain supported for callers. */
   iconGradient?: string;
   /** Optional footer hint (e.g. "last 24h"). */
   hint?: string;
@@ -32,19 +32,11 @@ const TONE_CLASS: Record<NonNullable<NonNullable<KPIHeroProps["delta"]>["tone"]>
   default: "kpi-hero__delta--muted",
 };
 
-const GRADIENT_PRESETS: Record<string, string> = {
-  indigo: "linear-gradient(135deg, #6366F1 0%, #8B5CF6 100%)",
-  green: "linear-gradient(135deg, #22C55E 0%, #14B8A6 100%)",
-  red: "linear-gradient(135deg, #EF4444 0%, #EC4899 100%)",
-  cyan: "linear-gradient(135deg, #06B6D4 0%, #6366F1 100%)",
-  orange: "linear-gradient(135deg, #F97316 0%, #EF4444 100%)",
-  yellow: "linear-gradient(135deg, #EAB308 0%, #F97316 100%)",
-  pink: "linear-gradient(135deg, #EC4899 0%, #8B5CF6 100%)",
-};
+const ICON_TONES = new Set(["indigo", "green", "red", "cyan", "orange", "yellow", "pink"]);
 
 /**
- * Hero KPI tile — the "Bloomberg big-number" treatment.
- * Designed to live in a 5-column strip across the top of dashboard pages.
+ * Compact terminal KPI. Icon hues are semantic and intentionally flat so the
+ * values remain the strongest visual signal on the page.
  */
 export function KPIHero({
   label,
@@ -59,6 +51,8 @@ export function KPIHero({
   ariaLabel,
 }: KPIHeroProps) {
   const Tag = onClick ? "button" : "div";
+  const knownTone = ICON_TONES.has(iconGradient);
+
   return (
     <Tag
       className={`kpi-hero ${onClick ? "kpi-hero--clickable" : ""}`}
@@ -70,11 +64,8 @@ export function KPIHero({
         <span className="kpi-hero__label">{label}</span>
         {icon ? (
           <span
-            className="kpi-hero__icon"
-            style={{
-              background:
-                GRADIENT_PRESETS[iconGradient] ?? iconGradient,
-            }}
+            className={`kpi-hero__icon ${knownTone ? `kpi-hero__icon--${iconGradient}` : ""}`}
+            style={knownTone ? undefined : { background: iconGradient }}
             aria-hidden="true"
           >
             {icon}

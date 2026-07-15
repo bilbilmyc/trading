@@ -50,18 +50,56 @@ const POLL_INTERVAL_MS = 5_000;
 const VENUE_POLL_INTERVAL_MS = 15_000;
 const MOVERS_POLL_INTERVAL_MS = 30_000;
 
-/** Short label for the venue strip. Keeps the strip narrow. */
-const VENUE_SHORT: Record<string, string> = {
-  binance: "BIN",
-  binance_usdm: "BIN",
-  okx: "OKX",
-  okx_swap: "OKX",
-  bitget: "BIT",
-  bitget_usdt_futures: "BIT",
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+/**
+ * The health endpoint may return both adapter and product identifiers (for
+ * example `binance` and `binance_usdm`). Group them so the header reports a
+ * single understandable status for each venue instead of repeating acronyms.
+ */
+const VENUE_META: Record<string, { key: string; label: string }> = {
+  binance: { key: "binance", label: "Binance" },
+  binance_usdm: { key: "binance", label: "Binance" },
+  bitget: { key: "bitget", label: "Bitget" },
+  bitget_usdt_futures: { key: "bitget", label: "Bitget" },
+  okx: { key: "okx", label: "OKX" },
+  okx_swap: { key: "okx", label: "OKX" },
 };
 
-function shortName(venue: string): string {
-  return VENUE_SHORT[venue] ?? venue.slice(0, 3).toUpperCase();
+const VENUE_STATE_PRIORITY = { off: 0, ok: 1, degraded: 2, fail: 3 } as const;
+
+interface VenueSummary {
+  key: string;
+  label: string;
+  health: VenueHealth;
+}
+
+function getVenueSummaries(venues: Record<string, VenueHealth>): VenueSummary[] {
+  const grouped = new Map<string, VenueSummary>();
+
+  for (const [name, health] of Object.entries(venues)) {
+    const meta = VENUE_META[name] ?? { key: name, label: name };
+    const current = grouped.get(meta.key);
+    if (!current || VENUE_STATE_PRIORITY[dotState(health)] >= VENUE_STATE_PRIORITY[dotState(current.health)]) {
+      grouped.set(meta.key, { key: meta.key, label: meta.label, health });
+    }
+  }
+
+  const knownOrder = ["binance", "bitget", "okx"];
+  return [...grouped.values()].sort((a, b) => {
+    const aIndex = knownOrder.indexOf(a.key);
+    const bIndex = knownOrder.indexOf(b.key);
+    return (aIndex === -1 ? knownOrder.length : aIndex) - (bIndex === -1 ? knownOrder.length : bIndex);
+  });
+}
+
+function statusLabel(state: ReturnType<typeof dotState>): string {
+  if (state === "ok") return "正常";
+  if (state === "degraded") return "部分可用";
+  if (state === "fail") return "不可用";
+  return "未配置";
 }
 
 function dotState(v: VenueHealth | undefined): "ok" | "fail" | "degraded" | "off" {
@@ -109,7 +147,7 @@ export const TopTicker = memo(function TopTicker() {
       try {
         const data = await marketApi.prices();
         if (!cancelled) {
-          setPrices(data);
+          setPrices(isRecord(data) ? (data as Record<string, number>) : {});
           setOnline(true);
         }
       } catch {
@@ -121,7 +159,7 @@ export const TopTicker = memo(function TopTicker() {
       try {
         const data = await marketApi.prices();
         if (!cancelled) {
-          setPrices(data);
+          setPrices(isRecord(data) ? (data as Record<string, number>) : {});
           setOnline(true);
         }
       } catch {
@@ -139,7 +177,7 @@ export const TopTicker = memo(function TopTicker() {
     const tick = async () => {
       try {
         const data = await metaApi.venueHealth();
-        if (!cancelled) setVenues(data.venues);
+        if (!cancelled) setVenues(isRecord(data?.venues) ? (data.venues as Record<string, VenueHealth>) : {});
       } catch {
         // Silent: a stale dot is better than no ticker at all.
       }
@@ -159,7 +197,7 @@ export const TopTicker = memo(function TopTicker() {
         const data = await marketApi.topMovers({ symbols: DISPLAY_SYMBOLS });
         if (cancelled) return;
         const next: Record<string, number> = {};
-        for (const it of data.items) {
+        for (const it of data?.items ?? []) {
           if (it.change_pct_24h !== null && it.change_pct_24h !== undefined) {
             next[it.symbol] = it.change_pct_24h;
           }
@@ -188,28 +226,34 @@ export const TopTicker = memo(function TopTicker() {
   // Duplicate for the seamless marquee loop.
   const loop = [...items, ...items];
 
-  const venueEntries = Object.entries(venues);
+  const venueEntries = getVenueSummaries(venues);
 
   return (
     <div className="top-ticker" role="marquee" aria-label="热门合约行情">
       {venueEntries.length > 0 ? (
-        <div className="top-ticker__venues" aria-label="交易所连接状态">
-          {venueEntries.map(([name, v]) => {
-            const s = dotState(v);
+        <div
+          className="top-ticker__venues"
+          aria-label="交易所连接状态：绿色为正常，黄色为部分可用，红色为不可用"
+        >
+          <span className="top-ticker__venues-label">连接</span>
+          {venueEntries.map((venue) => {
+            const state = dotState(venue.health);
             return (
               <span
-                key={name}
-                className={`top-ticker__venue top-ticker__venue--${s}`}
-                title={dotTitle(v, name)}
+                key={venue.key}
+                className={`top-ticker__venue top-ticker__venue--${state}`}
+                title={dotTitle(venue.health, venue.label)}
               >
                 <span className="top-ticker__venue-dot" aria-hidden="true" />
-                {shortName(name)}
+                <span className="top-ticker__venue-name">{venue.label}</span>
+                <span className="top-ticker__venue-status">{statusLabel(state)}</span>
               </span>
             );
           })}
         </div>
       ) : null}
-      <div className="top-ticker__track">
+      <div className="top-ticker__track-viewport">
+        <div className="top-ticker__track">
         {loop.map((item, i) => {
           const chg = formatChange(item.change);
           return (
@@ -231,7 +275,11 @@ export const TopTicker = memo(function TopTicker() {
             </span>
           );
         })}
+        </div>
       </div>
     </div>
   );
 });
+
+
+

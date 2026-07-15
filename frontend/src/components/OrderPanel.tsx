@@ -9,6 +9,8 @@ import type {
   MarginMode,
   PositionSide,
 } from "../api";
+import { buildSymbolOptions } from "../utils/symbols";
+import { AutocompleteInput } from "./AutocompleteInput";
 import { EmptyState, Metric, SectionTitle } from "./atoms";
 
 const EXCHANGE_OPTIONS: Array<{ value: ExchangeName; label: string }> = [
@@ -37,6 +39,12 @@ const POSITION_SIDES: Array<{ value: PositionSide; label: string }> = [
   { value: "short", label: "空仓" },
   { value: "net", label: "单向持仓" },
 ];
+
+const LEVERAGE_OPTIONS = ["1", "2", "3", "5", "10", "20", "25", "50", "75", "100", "125"].map((value) => ({
+  value,
+  label: `${value}x`,
+  description: "杠杆预设",
+}));
 
 const MARGIN_MODES: Array<{ value: MarginMode; label: string }> = [
   { value: "cross", label: "全仓" },
@@ -99,6 +107,12 @@ export function OrderPanel(props: OrderPanelProps) {
   const numericQuantity = Number(props.quantity);
   const numericPrice = Number(props.price);
   const canPreview = props.apiOnline && Boolean(props.symbol) && numericQuantity > 0;
+  const symbolOptions = buildSymbolOptions(props.contracts.map((contract) => contract.symbol));
+  const contractSearchOptions = props.contracts.map((contract) => ({
+    value: contract.symbol,
+    description: `${contract.base_asset} / ${contract.quote_asset}`,
+    keywords: [contract.base_asset, contract.quote_asset],
+  }));
 
   return (
     <section className="panel panel--order">
@@ -117,16 +131,29 @@ export function OrderPanel(props: OrderPanelProps) {
         </label>
         <label className="field">
           <span>合约代码</span>
-          <input value={props.symbol} onChange={(e) => props.onSymbolChange(e.target.value)} />
+          <AutocompleteInput
+            value={props.symbol}
+            onChange={(value) => props.onSymbolChange(value.toUpperCase())}
+            options={symbolOptions}
+            placeholder="输入 BTC、ETH、SOL…"
+            aria-label="合约代码"
+          />
         </label>
       </div>
 
       <label className="field">
         <span>搜索合约 · {props.contractsLoading ? "加载中" : `${props.contractsTotal} 个`}</span>
-        <input
-          placeholder="BTC / ETH / SOL ..."
+        <AutocompleteInput
+          placeholder="输入 BTC、ETH、SOL…"
           value={props.contractSearch}
-          onChange={(e) => props.onContractSearchChange(e.target.value)}
+          onChange={props.onContractSearchChange}
+          options={contractSearchOptions.length ? contractSearchOptions : symbolOptions}
+          onOptionSelect={(option) => {
+            const contract = props.contracts.find((item) => item.symbol === option.value);
+            if (contract) props.onContractSelect(contract);
+            else props.onSymbolChange(option.value);
+          }}
+          aria-label="搜索合约"
         />
       </label>
 
@@ -178,10 +205,13 @@ export function OrderPanel(props: OrderPanelProps) {
         </label>
         <label className="field">
           <span>杠杆倍数</span>
-          <input
+          <AutocompleteInput
             value={props.leverage}
-            onChange={(e) => props.onLeverageChange(e.target.value)}
+            onChange={props.onLeverageChange}
+            options={LEVERAGE_OPTIONS}
             inputMode="numeric"
+            placeholder="例如 10"
+            aria-label="杠杆倍数"
           />
         </label>
         <label className="field">

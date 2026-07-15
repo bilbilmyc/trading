@@ -58,7 +58,7 @@ export default function App() {
                 <TopTicker />
                 <Suspense fallback={<LoadingFallback title="加载中" hint="请稍候" />}>
                   <Switch>
-                    <Route path="/" component={() => <Redirect to="/data" />} />
+                    <Route path="/" component={() => <Redirect to="/markets" />} />
                     <Route path="/data" component={DataPage} />
                     <Route path="/watchlist" component={WatchlistPage} />
                     <Route path="/portfolio" component={PortfolioPage} />
@@ -88,3 +88,4 @@ export default function App() {
     </ThemeProvider>
   );
 }
+
