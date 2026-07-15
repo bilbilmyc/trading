@@ -18,6 +18,8 @@ interface StatusContextValue {
   config: AppConfig | null;
   killSwitch: KillSwitchStatus | null;
   liveTrading: boolean;
+  /** ms-since-epoch of the most recent successful `refresh()` call. */
+  lastRefreshedAt: number | null;
   refresh: () => Promise<void>;
   setLiveTrading: (enabled: boolean) => void;
 }
@@ -33,6 +35,7 @@ export function StatusProvider({ children }: { children: ReactNode }) {
   const [config, setConfig] = useState<AppConfig | null>(null);
   const [killSwitch, setKillSwitch] = useState<KillSwitchStatus | null>(null);
   const [liveTradingEnabled, setLiveTradingEnabled] = useState(false);
+  const [lastRefreshedAt, setLastRefreshedAt] = useState<number | null>(null);
   const esRef = useRef<EventSource | null>(null);
 
   const refresh = useCallback(async () => {
@@ -47,6 +50,7 @@ export function StatusProvider({ children }: { children: ReactNode }) {
       setConfig(runtimeConfig);
       setLiveTradingEnabled(Boolean(runtimeConfig.live_trading_enabled));
       setKillSwitch(kill);
+      setLastRefreshedAt(Date.now());
     } catch {
       setApiOnline(false);
     }
@@ -85,10 +89,11 @@ export function StatusProvider({ children }: { children: ReactNode }) {
       config: config ? { ...config, live_trading_enabled: liveTradingEnabled } : null,
       killSwitch,
       liveTrading: liveTradingEnabled,
+      lastRefreshedAt,
       refresh,
       setLiveTrading: setLiveTradingEnabled,
     }),
-    [apiOnline, env, config, killSwitch, refresh, liveTradingEnabled]
+    [apiOnline, env, config, killSwitch, refresh, liveTradingEnabled, lastRefreshedAt]
   );
 
   return <StatusContext.Provider value={value}>{children}</StatusContext.Provider>;

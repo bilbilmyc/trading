@@ -4,6 +4,22 @@
 
 ## [Unreleased]
 
+### Added (前端信息密度)
+- `StatusDrawer` 升级：顶栏加 4 个 level 过滤 tab（全部 / CRIT / ERR /
+  WARN），badge 计数仍反映全 buffer；行可点击展开详情（exchange /
+  symbol / category / level / timestamp）；每行加 category chip
+  （system / order / risk / position / fill / cancel / error 不同色）
+- 新增 `frontend/src/hooks/useSseStatus.ts`（SSE 连接级 hook：state =
+  connecting/open/closed + lastEventAt 时间戳）
+- `SettingsPage` 加"运行信息"Card：API 端点（`API_BASE`）/ 后端 env
+  （testnet 警示）/ SSE 连接状态（重连中=warning）/ 上次心跳相对时间
+  / 上次刷新绝对时间
+- `StatusContext` 暴露 `lastRefreshedAt`
+- `styles.css` 加 `.status-drawer__filter` / `__chip` / `__row-detail` /
+  `__detail` 等 7 组新规则（severity → var(--negative/warning/info/...)）
+- 新增 `StatusDrawer.test.tsx`（5 用例：empty state / 折叠态 / 过滤
+  toggle / badge 不随 filter 隐藏 / 行展开详情）
+
 ### Added (dev 易用性)
 - 根目录 `Makefile` 单入口：`make help / install / dev / test / test-frontend /
   test-all / lint / typecheck / format / ci / smoke / build / clean`

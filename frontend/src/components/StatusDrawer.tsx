@@ -9,14 +9,41 @@
  * through EngineContext which was always 0–5s stale.
  *
  * Sort: CRITICAL > ERROR > WARNING > INFO, then most-recent first.
+ * Filter: top-bar tabs (All / Critical / Error / Warning) scope which
+ * rows render. Counters in the bar always reflect the FULL buffer so
+ * the badge stays honest — the user can still see "there are 3 ERRs
+ * even if the filter is on Critical".
+ *
+ * Click a row to expand: reveals exchange / symbol / category /
+ * timestamp fields that don't fit in the one-line preview.
  */
 
 import { useMemo, useState } from "react";
 
 import { useLiveEvents, type LiveEvent } from "../hooks/useLiveEvents";
 
-function severityLabel(level?: string): string {
-  switch ((level ?? "info").toLowerCase()) {
+type LevelFilter = "all" | "critical" | "error" | "warning";
+
+const RANK: Record<string, number> = {
+  critical: 4,
+  error: 3,
+  warning: 2,
+  info: 1,
+};
+
+const LEVELS: { key: LevelFilter; label: string; cls: string }[] = [
+  { key: "all", label: "全部", cls: "" },
+  { key: "critical", label: "CRIT", cls: "status-drawer__filter--crit" },
+  { key: "error", label: "ERR", cls: "status-drawer__filter--err" },
+  { key: "warning", label: "WARN", cls: "status-drawer__filter--warn" },
+];
+
+function levelOf(e: LiveEvent): string {
+  return (e.level ?? "info").toLowerCase();
+}
+
+function severityLabel(level: string): string {
+  switch (level) {
     case "critical":
       return "CRIT";
     case "error":
@@ -28,8 +55,8 @@ function severityLabel(level?: string): string {
   }
 }
 
-function severityClass(level?: string): string {
-  switch ((level ?? "info").toLowerCase()) {
+function severityClass(level: string): string {
+  switch (level) {
     case "critical":
       return "status-drawer__row--critical";
     case "error":
@@ -46,29 +73,36 @@ function shortTime(iso?: string): string {
   return iso.slice(11, 19);
 }
 
-const RANK: Record<string, number> = {
-  critical: 4,
-  error: 3,
-  warning: 2,
-  info: 1,
-};
+function eventKey(e: LiveEvent, idx: number): string {
+  return `${e.event_type ?? "?"}-${e.timestamp ?? idx}`;
+}
 
 export function StatusDrawer() {
   const [open, setOpen] = useState(false);
+  const [filter, setFilter] = useState<LevelFilter>("all");
+  const [expandedKey, setExpandedKey] = useState<string | null>(null);
   const events = useLiveEvents();
 
+  // Sort: severity desc, then newest first.
   const sorted = useMemo<LiveEvent[]>(() => {
-    const rank = (e: LiveEvent) => RANK[(e.level ?? "info").toLowerCase()] ?? 0;
-    return [...events].sort((a, b) => rank(b) - rank(a));
+    const rank = (e: LiveEvent) => RANK[levelOf(e)] ?? 0;
+    return [...events].sort((a, b) => {
+      const r = rank(b) - rank(a);
+      if (r !== 0) return r;
+      return (b.timestamp ?? "").localeCompare(a.timestamp ?? "");
+    });
   }, [events]);
 
-  const recent = sorted.slice(0, 50);
-  const criticalCount = recent.filter(
-    (e) => (e.level ?? "").toLowerCase() === "critical",
-  ).length;
-  const errorCount = recent.filter(
-    (e) => (e.level ?? "").toLowerCase() === "error",
-  ).length;
+  // Badges reflect the FULL buffer (not the filter) so the user can see
+  // there's a CRIT/ERR even while looking at the INFO stream.
+  const criticalCount = sorted.filter((e) => levelOf(e) === "critical").length;
+  const errorCount = sorted.filter((e) => levelOf(e) === "error").length;
+
+  // Apply the active filter for the body rows.
+  const visible = useMemo<LiveEvent[]>(() => {
+    if (filter === "all") return sorted;
+    return sorted.filter((e) => levelOf(e) === filter);
+  }, [sorted, filter]);
 
   return (
     <div
@@ -76,15 +110,31 @@ export function StatusDrawer() {
       role="region"
       aria-label="最近告警抽屉"
     >
-      <button
-        className="status-drawer__bar"
-        onClick={() => setOpen((v) => !v)}
-        aria-expanded={open}
-        type="button"
-      >
-        <span className="status-drawer__bar-title">
+      <div className="status-drawer__bar">
+        <button
+          className="status-drawer__bar-title status-drawer__bar-toggle"
+          onClick={() => setOpen((v) => !v)}
+          aria-expanded={open}
+          type="button"
+        >
           {open ? "▾ 收起告警" : "▴ 展开告警"}
-        </span>
+        </button>
+        <div className="status-drawer__filters" role="tablist" aria-label="按级别过滤">
+          {LEVELS.map((lv) => (
+            <button
+              key={lv.key}
+              type="button"
+              role="tab"
+              aria-selected={filter === lv.key}
+              className={`status-drawer__filter ${lv.cls} ${
+                filter === lv.key ? "status-drawer__filter--active" : ""
+              }`}
+              onClick={() => setFilter(lv.key)}
+            >
+              {lv.label}
+            </button>
+          ))}
+        </div>
         {criticalCount > 0 ? (
           <span className="status-drawer__bar-badge status-drawer__bar-badge--crit">
             CRIT ×{criticalCount}
@@ -95,31 +145,90 @@ export function StatusDrawer() {
             ERR ×{errorCount}
           </span>
         ) : null}
-        <span className="status-drawer__bar-count">{recent.length} 条</span>
-      </button>
+        <span className="status-drawer__bar-count">{visible.length} 条</span>
+      </div>
       <div className="status-drawer__body">
-        {recent.length === 0 ? (
+        {visible.length === 0 ? (
           <div className="status-drawer__row-empty">
-            暂无告警 — 系统运行平稳
+            {events.length === 0
+              ? "暂无告警 — 系统运行平稳"
+              : `当前过滤下无告警（共 ${events.length} 条）`}
           </div>
         ) : (
-          recent.map((e, i) => (
-            <div
-              key={`${e.event_type ?? "?"}-${e.timestamp ?? i}`}
-              className={`status-drawer__row ${severityClass(e.level ?? "")}`}
-            >
-              <span className={`status-drawer__row-sev status-drawer__row-sev--${(e.level ?? "info").toLowerCase()}`}>
-                {severityLabel(e.level ?? "")}
-              </span>
-              <span>{shortTime(e.timestamp)}</span>
-              <span>{e.message ?? ""}</span>
-              <span className="status-drawer__row-type">
-                {e.event_type ?? "system"}
-              </span>
-            </div>
-          ))
+          visible.map((e, i) => {
+            const lvl = levelOf(e);
+            const key = eventKey(e, i);
+            const expanded = expandedKey === key;
+            return (
+              <div key={key}>
+                <button
+                  type="button"
+                  className={`status-drawer__row status-drawer__row--clickable ${severityClass(lvl)} ${
+                    expanded ? "status-drawer__row--expanded" : ""
+                  }`}
+                  onClick={() => setExpandedKey(expanded ? null : key)}
+                  aria-expanded={expanded}
+                >
+                  <span
+                    className={`status-drawer__row-sev status-drawer__row-sev--${lvl}`}
+                  >
+                    {severityLabel(lvl)}
+                  </span>
+                  <span className="status-drawer__row-time">
+                    {shortTime(e.timestamp)}
+                  </span>
+                  {e.category ? (
+                    <span
+                      className={`status-drawer__chip status-drawer__chip--cat-${e.category.toLowerCase()}`}
+                    >
+                      {e.category}
+                    </span>
+                  ) : (
+                    <span />
+                  )}
+                  <span className="status-drawer__row-msg">
+                    {e.message ?? ""}
+                  </span>
+                  <span className="status-drawer__row-type">
+                    {e.event_type ?? "system"}
+                  </span>
+                </button>
+                {expanded ? (
+                  <div className="status-drawer__row-detail">
+                    <Detail label="exchange" value={e.exchange} />
+                    <Detail label="symbol" value={e.symbol} />
+                    <Detail label="category" value={e.category} />
+                    <Detail label="event_type" value={e.event_type} />
+                    <Detail label="level" value={e.level} />
+                    <Detail label="timestamp" value={e.timestamp} fullWidth />
+                  </div>
+                ) : null}
+              </div>
+            );
+          })
         )}
       </div>
+    </div>
+  );
+}
+
+function Detail({
+  label,
+  value,
+  fullWidth,
+}: {
+  label: string;
+  value: string | undefined;
+  fullWidth?: boolean;
+}) {
+  return (
+    <div
+      className={`status-drawer__detail ${
+        fullWidth ? "status-drawer__detail--full" : ""
+      }`}
+    >
+      <span className="status-drawer__detail-label">{label}</span>
+      <span className="status-drawer__detail-value">{value ?? "—"}</span>
     </div>
   );
 }

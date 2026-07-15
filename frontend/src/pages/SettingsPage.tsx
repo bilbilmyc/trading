@@ -3,16 +3,27 @@ import { Moon, Settings as SettingsIcon, Sun } from "lucide-react";
 
 import { useStatus } from "../contexts/StatusContext";
 import { useTheme, type Theme } from "../contexts/ThemeContext";
+import { useSseStatus } from "../hooks/useSseStatus";
 import { api } from "../api";
+import { API_BASE } from "../api/_client";
 import { Metric } from "../components/atoms";
 import { Card } from "../components/Card";
 import { KPIHero } from "../components/KPIHero";
 import { PageHeader } from "../components/PageHeader";
-import { Sparkline } from "../components/Sparkline";
+
+function relativeAge(ts: number | null): string {
+  if (ts === null) return "—";
+  const diff = Math.max(0, Math.floor((Date.now() - ts) / 1000));
+  if (diff < 5) return "刚刚";
+  if (diff < 60) return `${diff}s 前`;
+  if (diff < 3600) return `${Math.floor(diff / 60)}m 前`;
+  return `${Math.floor(diff / 3600)}h 前`;
+}
 
 export function SettingsPage() {
-  const { config, refresh } = useStatus();
+  const { config, refresh, apiOnline, env, killSwitch, lastRefreshedAt } = useStatus();
   const { theme, setTheme } = useTheme();
+  const sse = useSseStatus("/api/v1/stream/events?heartbeat_seconds=10");
   const [error, setError] = useState("");
   const [message, setMessage] = useState("");
 
@@ -248,6 +259,51 @@ export function SettingsPage() {
           <Metric label="默认合约" value={config?.default_symbol ?? "--"} tone="muted" />
           <Metric label="存储驱动" value={config?.persistence.driver ?? "--"} tone="muted" />
           <Metric label="数据库" value={config?.persistence.path ?? "--"} tone="muted" />
+        </div>
+      </Card>
+
+      <Card title="运行信息" subtitle="连接 · 心跳 · 版本">
+        <div className="metric-grid metric-grid--four">
+          <Metric
+            label="API 端点"
+            value={API_BASE}
+            tone="muted"
+            hint={apiOnline ? "可达" : "不可达"}
+          />
+          <Metric
+            label="后端 env"
+            value={env}
+            tone={env === "production" ? "warning" : "muted"}
+            hint={killSwitch?.enabled ? "kill switch 已开" : "kill switch 关闭"}
+          />
+          <Metric
+            label="SSE 连接"
+            value={
+              sse.state === "open"
+                ? "已建立"
+                : sse.state === "connecting"
+                ? "重连中"
+                : "已关闭"
+            }
+            tone={
+              sse.state === "open"
+                ? "positive"
+                : sse.state === "connecting"
+                ? "warning"
+                : "negative"
+            }
+            hint={
+              sse.lastEventAt
+                ? `上次心跳 ${relativeAge(sse.lastEventAt)}`
+                : "暂无心跳"
+            }
+          />
+          <Metric
+            label="上次刷新"
+            value={relativeAge(lastRefreshedAt)}
+            tone="muted"
+            hint={lastRefreshedAt ? new Date(lastRefreshedAt).toLocaleTimeString() : "—"}
+          />
         </div>
       </Card>
     </div>

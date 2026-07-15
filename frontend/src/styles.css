@@ -3574,15 +3574,61 @@ input, select, button, textarea {
   gap: var(--space-3);
   padding: 0 var(--space-4);
   border-bottom: var(--hairline);
-  cursor: pointer;
   user-select: none;
   background: var(--bg-card);
+}
+/* The toggle is a <button> so reset native chrome. */
+.status-drawer__bar-toggle {
+  background: transparent;
+  border: 0;
+  padding: 0;
+  cursor: pointer;
+  font: inherit;
+  color: inherit;
 }
 .status-drawer__bar-title {
   font-size: 11px;
   letter-spacing: 0.08em;
   text-transform: uppercase;
   color: var(--text-muted);
+}
+.status-drawer__filters {
+  display: flex;
+  gap: 2px;
+  margin-left: var(--space-2);
+}
+.status-drawer__filter {
+  background: transparent;
+  border: var(--hairline);
+  border-radius: var(--radius-sm);
+  padding: 1px 6px;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  color: var(--text-faint);
+  cursor: pointer;
+  font-family: var(--font-mono);
+  text-transform: uppercase;
+  transition: color var(--transition-fast), border-color var(--transition-fast),
+    background var(--transition-fast);
+}
+.status-drawer__filter:hover { color: var(--text-muted); }
+.status-drawer__filter--active {
+  color: var(--text-primary);
+  background: var(--bg-elevated);
+  border-color: var(--text-faint);
+}
+.status-drawer__filter--crit.status-drawer__filter--active {
+  color: var(--negative);
+  border-color: var(--negative);
+}
+.status-drawer__filter--err.status-drawer__filter--active {
+  color: var(--warning);
+  border-color: var(--warning);
+}
+.status-drawer__filter--warn.status-drawer__filter--active {
+  color: var(--info);
+  border-color: var(--info);
 }
 .status-drawer__bar-count {
   font-size: 11px;
@@ -3599,13 +3645,74 @@ input, select, button, textarea {
 }
 .status-drawer__row {
   display: grid;
-  grid-template-columns: 64px 80px 1fr 100px;
+  grid-template-columns: 64px 80px 96px 1fr 100px;
   gap: var(--space-3);
   padding: 4px var(--space-4);
   border-bottom: var(--hairline);
 }
-.status-drawer__row:hover {
-  background: var(--bg-card-hover);
+.status-drawer__row--clickable {
+  width: 100%;
+  background: transparent;
+  border: 0;
+  border-bottom: var(--hairline);
+  text-align: left;
+  cursor: pointer;
+  font: inherit;
+  color: inherit;
+}
+.status-drawer__row--clickable:hover { background: var(--bg-card-hover); }
+.status-drawer__row--expanded { background: var(--bg-card-hover); }
+.status-drawer__row-time { color: var(--text-muted); }
+.status-drawer__row-msg { color: var(--text-primary); }
+.status-drawer__chip {
+  display: inline-block;
+  padding: 0 6px;
+  border-radius: var(--radius-sm);
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  background: var(--bg-elevated);
+  color: var(--text-muted);
+  border: var(--hairline);
+  width: fit-content;
+  align-self: center;
+}
+.status-drawer__chip--cat-system    { color: var(--text-faint); }
+.status-drawer__chip--cat-order     { color: var(--info);     border-color: var(--info); }
+.status-drawer__chip--cat-risk      { color: var(--warning);  border-color: var(--warning); }
+.status-drawer__chip--cat-position  { color: var(--positive); border-color: var(--positive); }
+.status-drawer__chip--cat-fill      { color: var(--positive); border-color: var(--positive); }
+.status-drawer__chip--cat-cancel    { color: var(--text-muted); }
+.status-drawer__chip--cat-error     { color: var(--negative); border-color: var(--negative); }
+.status-drawer__row-detail {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: var(--space-2) var(--space-3);
+  padding: 8px var(--space-4) 12px;
+  background: var(--bg-card);
+  border-bottom: var(--hairline);
+  font-size: 11px;
+}
+.status-drawer__detail {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+.status-drawer__detail--full { grid-column: 1 / -1; }
+.status-drawer__detail-label {
+  color: var(--text-faint);
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+.status-drawer__detail-value {
+  color: var(--text-primary);
+  font-family: var(--font-mono);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .status-drawer__row--critical {
   border-left: 2px solid var(--negative);
