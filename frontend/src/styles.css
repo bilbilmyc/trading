@@ -1423,6 +1423,35 @@ input, select, button, textarea {
   color: var(--text-primary);
   line-height: 1.25;
 }
+.page-header__title-row {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-3);
+  flex-wrap: wrap;
+}
+.page-header__freshness {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  padding: 2px 8px;
+  border-radius: 999px;
+  border: var(--hairline);
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+.page-header__freshness--fresh { color: var(--positive); border-color: var(--positive); }
+.page-header__freshness--stale { color: var(--warning);  border-color: var(--warning); }
+.page-header__freshness--old   { color: var(--text-faint); }
+.page-header__freshness-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: currentColor;
+}
 
 .page-header__subtitle {
   margin: 0;
@@ -3229,6 +3258,52 @@ input, select, button, textarea {
   display: flex;
   align-items: center;
 }
+.top-ticker__venues {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: 0 14px 0 16px;
+  border-right: 1px solid var(--border);
+  margin-right: 4px;
+  flex-shrink: 0;
+  height: 100%;
+  background: linear-gradient(
+    90deg,
+    rgba(11, 17, 32, 0.6) 0%,
+    rgba(11, 17, 32, 0) 100%
+  );
+}
+.top-ticker__venue {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  color: var(--text-faint);
+}
+.top-ticker__venue-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: currentColor;
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.4);
+}
+.top-ticker__venue--ok       { color: var(--positive); }
+.top-ticker__venue--ok .top-ticker__venue-dot { animation: pulse-ok 2s ease-in-out infinite; }
+.top-ticker__venue--degraded { color: var(--warning); }
+.top-ticker__venue--fail     { color: var(--negative); }
+.top-ticker__venue--fail .top-ticker__venue-dot { animation: pulse-fail 1s ease-in-out infinite; }
+.top-ticker__venue--off      { color: var(--text-faint); opacity: 0.5; }
+@keyframes pulse-ok {
+  0%, 100% { box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.4), 0 0 0 0 rgba(52, 211, 153, 0.6); }
+  50%      { box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.4), 0 0 0 4px rgba(52, 211, 153, 0); }
+}
+@keyframes pulse-fail {
+  0%, 100% { box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.4), 0 0 0 0 rgba(248, 113, 113, 0.6); }
+  50%      { box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.4), 0 0 0 4px rgba(248, 113, 113, 0); }
+}
 .top-ticker__track {
   display: flex;
   align-items: center;
@@ -3915,6 +3990,13 @@ input, select, button, textarea {
   height: 100%;
   border-radius: 2px;
   transition: width 0.4s ease;
+}
+
+/* 5-guard risk bars — a vertical stack of ProgressBar rows with extra gap. */
+.risk-bars {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
 }
 
 /* StatusDrawer severity tokens — replaces inline color spans. */

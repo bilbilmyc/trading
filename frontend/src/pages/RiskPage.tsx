@@ -10,12 +10,25 @@ import { EmptyState } from "../components/EmptyState";
 import { KPIHero } from "../components/KPIHero";
 import { ListRow } from "../components/ListRow";
 import { PageHeader } from "../components/PageHeader";
+import { ProgressBar } from "../components/ProgressBar";
 import { Sparkline } from "../components/Sparkline";
 import { formatNumber } from "../utils/format";
 
+/** Colour a progress bar by usage band: safe / warning / danger. */
+function bandGradient(pct: number): string {
+  if (pct >= 80) return "linear-gradient(90deg, var(--negative) 0%, #B91C1C 100%)";
+  if (pct >= 50) return "linear-gradient(90deg, var(--warning) 0%, #D97706 100%)";
+  return "linear-gradient(90deg, var(--positive) 0%, #059669 100%)";
+}
+
+function bandPct(current: number, max: number): number {
+  if (max <= 0) return 0;
+  return Math.max(0, Math.min(100, (Math.abs(current) / max) * 100));
+}
+
 export function RiskPage() {
   const { engine, paper, refresh } = useEngine();
-  const { killSwitch, refresh: refreshStatus } = useStatus();
+  const { config, killSwitch, refresh: refreshStatus } = useStatus();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [message, setMessage] = useState("");
@@ -114,6 +127,74 @@ export function RiskPage() {
 
       {/* Kill Switch (compact) and 模拟盘 (taller) share a row. */}
       <div className="page__grid page__grid--two-thirds">
+        <Card title="5 重保险" subtitle="实时占用 vs 上限">
+          <div className="risk-bars">
+            <ProgressBar
+              label="Kill Switch"
+              value={killSwitch?.enabled ? "已熔断" : "正常"}
+              pct={killSwitch?.enabled ? 100 : 0}
+              gradient={
+                killSwitch?.enabled
+                  ? "linear-gradient(90deg, var(--negative) 0%, #B91C1C 100%)"
+                  : "linear-gradient(90deg, var(--positive) 0%, #059669 100%)"
+              }
+            />
+            <ProgressBar
+              label="当日 P&L 损失"
+              value={`$${formatNumber(Math.abs(risk?.daily_pnl ?? 0))} / $${formatNumber(config?.risk?.max_daily_loss ?? 0)}`}
+              pct={bandPct(
+                risk?.daily_pnl ?? 0,
+                config?.risk?.max_daily_loss ?? 0,
+              )}
+              gradient={bandGradient(
+                bandPct(risk?.daily_pnl ?? 0, config?.risk?.max_daily_loss ?? 0),
+              )}
+            />
+            <ProgressBar
+              label="当前回撤"
+              value={`${formatNumber((risk?.current_drawdown ?? 0) * 100, 2)}% / ${formatNumber((config?.risk?.max_drawdown_pct ?? 0) * 100, 0)}%`}
+              pct={bandPct(
+                risk?.current_drawdown ?? 0,
+                config?.risk?.max_drawdown_pct ?? 0,
+              )}
+              gradient={bandGradient(
+                bandPct(
+                  risk?.current_drawdown ?? 0,
+                  config?.risk?.max_drawdown_pct ?? 0,
+                ),
+              )}
+            />
+            <ProgressBar
+              label="活跃仓位名义价值"
+              value={`$${formatNumber(positions?.total_unrealized_pnl ?? 0)} / $${formatNumber(config?.risk?.max_position_value ?? 0)}`}
+              pct={bandPct(
+                Math.abs(positions?.total_unrealized_pnl ?? 0),
+                config?.risk?.max_position_value ?? 0,
+              )}
+              gradient={bandGradient(
+                bandPct(
+                  Math.abs(positions?.total_unrealized_pnl ?? 0),
+                  config?.risk?.max_position_value ?? 0,
+                ),
+              )}
+            />
+            <ProgressBar
+              label="每分钟订单"
+              value={`${risk?.orders_last_minute ?? 0} / ${risk?.max_orders_per_minute ?? 0}`}
+              pct={bandPct(
+                risk?.orders_last_minute ?? 0,
+                risk?.max_orders_per_minute ?? 0,
+              )}
+              gradient={bandGradient(
+                bandPct(
+                  risk?.orders_last_minute ?? 0,
+                  risk?.max_orders_per_minute ?? 0,
+                ),
+              )}
+            />
+          </div>
+        </Card>
+
         <Card title="Kill Switch" subtitle="全局闸门">
           <div className={`kill-switch ${killSwitch?.enabled ? "kill-switch--active" : ""}`}>
             <div>

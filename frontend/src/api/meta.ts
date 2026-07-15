@@ -36,6 +36,25 @@ export interface ExchangeCapabilities {
   supports_private_fee_lookup: boolean;
 }
 
+/** Per-venue health snapshot returned by `/api/v1/health/venues`. */
+export interface VenueHealth {
+  enabled: boolean;
+  use_testnet: boolean;
+  credentials_present: boolean;
+  public_api_ok: boolean;
+  public_api_error: string | null;
+  /** `null` when the venue has no API key configured (private probes skipped). */
+  private_api_ok: boolean | null;
+  private_api_error: string | null;
+  clock_skew_ms: number | null;
+  checked_at: string;
+}
+
+export interface VenueHealthResponse {
+  venues: Record<string, VenueHealth>;
+  timestamp: string;
+}
+
 // ── Methods ──────────────────────────────────────────────────────
 
 export const metaApi = {
@@ -46,4 +65,6 @@ export const metaApi = {
   exchanges: () => request<{ exchanges: string[]; enabled: string[] }>(
     "/api/v1/exchanges",
   ),
+
+  venueHealth: () => request<VenueHealthResponse>("/api/v1/health/venues"),
 };

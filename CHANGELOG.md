@@ -4,7 +4,25 @@
 
 ## [Unreleased]
 
-### Added (前端信息密度)
+### Fixed (frontend fetch wrapper)
+- `_client.ts` headers 合并：caller 传 init 不再覆盖默认 Content-Type
+- `_client.ts` JSON.parse 失败兜底：HTML 502 / 非 JSON body 错误信息
+  落回 response.statusText
+
+### Added (前端信息密度 — 第二轮)
+- `RiskPage` 加"5 重保险"Card：5 个 ProgressBar 显示实时占用 vs 上限
+  （Kill Switch / 当日 P&L / 当前回撤 / 活跃仓位名义价值 / 每分钟
+  订单），按 50% / 80% 阈值切色（绿/黄/红）
+- `TopTicker` 加左侧 venue strip：每 15s 拉 `/api/v1/health/venues`，
+  4 色 dot（绿=public ok / 黄=private fail / 红=public fail / 灰=disabled）
+  + pulse 动画，hover tooltip 显示 testnet + clock skew
+- `PageHeader` 加可选 `freshness` prop：标题旁渲染 "数据 · 3s 前"
+  pill，按 30s / 120s 阈值切色（fresh / stale / old），内部 1s tick
+- `api/meta.ts` 暴露 `VenueHealth` / `VenueHealthResponse` 类型 +
+  `metaApi.venueHealth()` 方法
+- `styles.css` 加 `.risk-bars` / `.top-ticker__venue*` / `pulse-ok/fail`
+  / `.page-header__freshness*` 一组规则（颜色全部走现有 token）
+
 - `StatusDrawer` 升级：顶栏加 4 个 level 过滤 tab（全部 / CRIT / ERR /
   WARN），badge 计数仍反映全 buffer；行可点击展开详情（exchange /
   symbol / category / level / timestamp）；每行加 category chip
