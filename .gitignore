@@ -183,4 +183,5 @@ dmypy.json
 # Local persistence
 data/*.sqlite3
 data/*.sqlite3-*
+data/*.db
 .understand-anything/
