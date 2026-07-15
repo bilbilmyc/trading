@@ -24,7 +24,7 @@ import { MarketSnapshot } from "../components/MarketSnapshot";
 import { PageHeader } from "../components/PageHeader";
 
 export function TradePage() {
-  const { apiOnline } = useStatus();
+  const { apiOnline, lastRefreshedAt } = useStatus();
   const engine = useEngine();
   const [tradingReady, setTradingReady] = useState<boolean | null>(null);
 
@@ -252,6 +252,7 @@ export function TradePage() {
         eyebrow="人工下单"
         title="下单"
         subtitle="合约预览 · 一键提交 · 预览后才下单"
+        freshness={{ at: lastRefreshedAt, label: "状态" }}
       />
 
       {/* v0.4 stats strip — hairline cards, tabular figures. */}

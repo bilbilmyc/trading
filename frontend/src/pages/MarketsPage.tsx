@@ -38,7 +38,7 @@ interface MiniMetric {
 export function MarketsPage() {
   const [location] = useLocation();
   const urlParams = new URLSearchParams(location.split("?")[1] || "");
-  const { apiOnline } = useStatus();
+  const { apiOnline, lastRefreshedAt } = useStatus();
 
   const [exchange, setExchange] = useState<ExchangeName>(
     (urlParams.get("source") as ExchangeName) || "binance_usdm",
@@ -157,6 +157,7 @@ export function MarketsPage() {
         eyebrow="合约行情"
         title="Markets"
         subtitle="K 线 / 深度 / 最近成交 / 24h 涨跌"
+        freshness={{ at: lastRefreshedAt, label: "状态" }}
       />
 
       {/* v0.4 stats strip — hairline tiles, tabular figures. */}

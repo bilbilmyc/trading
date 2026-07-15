@@ -90,6 +90,7 @@ export function SettingsPage() {
         eyebrow="系统配置"
         title="设置"
         subtitle="外观 · 实盘开关 · 交易所能力 · 通知 webhook"
+        freshness={{ at: lastRefreshedAt, label: "配置" }}
       />
 
       {/* KPI strip — runtime summary. */}

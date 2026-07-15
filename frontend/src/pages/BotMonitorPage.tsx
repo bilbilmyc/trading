@@ -41,7 +41,7 @@ function fmtHour(h: number): string {
 
 export function BotMonitorPage() {
   const { engine, refresh } = useEngine();
-  const { killSwitch } = useStatus();
+  const { killSwitch, lastRefreshedAt } = useStatus();
   const [flipPending, setFlipPending] = useState(false);
   const [flipError, setFlipError] = useState<string | null>(null);
 
@@ -94,6 +94,7 @@ export function BotMonitorPage() {
         eyebrow="Bot 监控"
         title="Telegram Bot 监控盯盘"
         subtitle="从 bot 调用的命令表 / quiet hours / 与 kill switch 同屏"
+        freshness={{ at: lastRefreshedAt, label: "Bot" }}
       />
 
       <div className="bot-grid">
