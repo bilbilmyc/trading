@@ -73,10 +73,10 @@ export function StatusTicker() {
         </span>
       ) : null}
 
-      <span className="status-ticker__cell" style={{ marginLeft: "auto" }}>
+      <span className="status-ticker__cell status-ticker__cell--clock">
         <span className="status-ticker__label">UTC</span>
         <span className="data-mono">{utc}</span>
-        <span className="status-ticker__label" style={{ marginLeft: 8 }}>LOCAL</span>
+        <span className="status-ticker__label status-ticker__label--local">LOCAL</span>
         <span className="data-mono">{local}</span>
       </span>
 

@@ -291,7 +291,7 @@ export function RiskPage() {
                     title={p.symbol}
                     subtitle={p.exchange}
                     trailing={
-                      <div className="list-row__trailing" style={{ flexDirection: "column", alignItems: "flex-end", gap: 4 }}>
+                      <div className="list-row__trailing flex-column-end flex-column-end--loose">
                         <strong className="data-table__cell--num">
                           {formatNumber(p.quantity, 6)}
                         </strong>
@@ -361,7 +361,7 @@ export function RiskPage() {
                     title={p.symbol}
                     subtitle={p.exchange}
                     trailing={
-                      <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 2 }}>
+                      <div className="flex-column-end flex-column-end--tight">
                         <strong className="data-table__cell--num">
                           {formatNumber(p.quantity, 6)}
                         </strong>

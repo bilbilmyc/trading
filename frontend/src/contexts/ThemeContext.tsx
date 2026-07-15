@@ -16,6 +16,15 @@ const ThemeContext = createContext<ThemeContextValue | undefined>(undefined);
 
 function readInitialTheme(): Theme {
   if (typeof window === "undefined") return DEFAULT_THEME;
+  // ?theme=light|dark in the URL wins — useful for share-links and
+  // for screenshot tooling that needs a deterministic theme without
+  // mutating localStorage.
+  try {
+    const param = new URLSearchParams(window.location.search).get("theme");
+    if (param === "dark" || param === "light") return param;
+  } catch {
+    // ignore
+  }
   try {
     const stored = window.localStorage.getItem(STORAGE_KEY);
     if (stored === "dark" || stored === "light") return stored;

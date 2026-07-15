@@ -475,6 +475,56 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             }
         )
 
+    async def _on_llm_decision(payload: dict[str, Any]) -> None:
+        """Observer for LLMAnalyzer — persists every fresh decision (and
+        LLMError) to the events table so the right-hand audit panel can
+        show "why did the model say hold?" alongside orders and risk
+        transitions.
+
+        Failures here are swallowed by LLMAnalyzer itself (audit must
+        never block the trading path). Errors writing to the store are
+        additionally guarded here so the closure is safe to await.
+        """
+        # Failed LLM calls get level=warning so they stand out from
+        # successful 'hold' (low-confidence neutral) decisions.
+        level = "warning" if payload.get("failed") else "info"
+        decision = payload.get("decision") or "hold"
+        confidence = payload.get("confidence")
+        reason = payload.get("reason") or ""
+        message = (
+            f"LLM → {decision}"
+            f"{f' (conf={confidence:.2f})' if isinstance(confidence, (int, float)) else ''}"
+            f"{f' — {reason}' if reason else ''}"
+        )
+        try:
+            record_event(
+                category="llm",
+                event_type="llm_decision",
+                level=level,
+                exchange=payload.get("exchange") or None,
+                symbol=payload.get("symbol"),
+                strategy=None,
+                message=message,
+                details={
+                    "decision": decision,
+                    "confidence": confidence,
+                    "reason": reason,
+                    "model": payload.get("model"),
+                    "risk_level": payload.get("risk_level"),
+                    "interval": payload.get("interval"),
+                    "prompt_tokens": payload.get("prompt_tokens"),
+                    "completion_tokens": payload.get("completion_tokens"),
+                    "latency_ms": payload.get("latency_ms"),
+                    "failed": payload.get("failed"),
+                    "cache_hit": payload.get("cache_hit"),
+                },
+            )
+        except Exception:
+            # Belt-and-suspenders: LLMAnalyzer already swallows observer
+            # errors, but if a caller awaits us directly we don't want
+            # store hiccups to bubble up either.
+            _loguru_logger.exception("failed to persist llm_decision event")
+
     def reject_live_disabled(
         *,
         action: str,
@@ -1558,7 +1608,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 + state.engine.paper_account.summary().get("unrealized_pnl", 0),
             }
 
-        analyzer = LLMAnalyzer(llm_config)
+        analyzer = LLMAnalyzer(llm_config, on_decision=_on_llm_decision)
         try:
             result = await analyzer.analyze(
                 exchange=client,
@@ -1600,7 +1650,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             min_candles=state.settings.llm_min_candles,
             max_candles=state.settings.llm_max_candles,
         )
-        analyzer = LLMAnalyzer(llm_config)
+        analyzer = LLMAnalyzer(llm_config, on_decision=_on_llm_decision)
 
         amount = request.default_order_amount or state.settings.llm_default_order_amount
         strategy_name = request.name or f"llm_{request.symbol.lower()}_{request.interval}"
@@ -1660,7 +1710,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             min_candles=state.settings.llm_min_candles,
             max_candles=state.settings.llm_max_candles,
         )
-        analyzer = LLMAnalyzer(llm_config)
+        analyzer = LLMAnalyzer(llm_config, on_decision=_on_llm_decision)
         amount = default_order_amount or state.settings.llm_default_order_amount
 
         filter_ = LLMSignalFilter(

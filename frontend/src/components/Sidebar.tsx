@@ -12,6 +12,7 @@ import {
   Sigma,
   Star,
   TrendingUp,
+  Zap,
 } from "lucide-react";
 
 import { useStatus } from "../contexts/StatusContext";
@@ -103,7 +104,7 @@ export function Sidebar({ open, onClose }: SidebarProps) {
       <aside className={`sidebar ${open ? "sidebar--open" : ""}`}>
         <div className="sidebar__brand">
           <div className="brand-mark gradient-brand glow" aria-hidden="true">
-            ⚡
+            <Zap size={18} strokeWidth={2.25} />
           </div>
           <div>
             <h2 className="text-gradient-brand sidebar__title">Quant Trader</h2>

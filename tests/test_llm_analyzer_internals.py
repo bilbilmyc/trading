@@ -437,3 +437,161 @@ async def test_analyze_method_respects_min_max_candles() -> None:
     # The K-line body caps at max_compact_rows (default 30)
     # so the rendered count is at most min(max_compact_rows, max_candles) = 30
     assert provider.calls[0].messages[1].content.count(" o:") <= 30
+
+
+# ── on_decision observer ──────────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_on_decision_fires_on_fresh_call() -> None:
+    """A fresh call must invoke the observer exactly once with the decision."""
+    provider = FakeProvider(responses=[_ok_response()])
+    seen: list[Dict[str, Any]] = []
+
+    async def on_decision(payload: Dict[str, Any]) -> None:
+        seen.append(payload)
+
+    a = LLMAnalyzer(
+        config=LLMAnalyzerConfig(api_key="k"),
+        on_decision=on_decision,
+    )
+    a._provider = provider
+
+    await a.analyze_raw(
+        ticker=_ticker(), klines=_klines(30),
+        symbol="BTCUSDT", interval="1h",
+    )
+
+    assert len(seen) == 1
+    payload = seen[0]
+    assert payload["symbol"] == "BTCUSDT"
+    assert payload["interval"] == "1h"
+    assert payload["decision"] == "buy"
+    assert payload["confidence"] == 0.8
+    assert payload["risk_level"] == "low"
+    assert payload["model"] == "test-model"
+    assert payload["cache_hit"] is False
+    # No exchange passed → empty string (audit row still written)
+    assert payload["exchange"] == ""
+
+
+@pytest.mark.asyncio
+async def test_on_decision_not_fired_on_cache_hit() -> None:
+    """The observer captures fresh calls only — second call must not fire."""
+    provider = FakeProvider(responses=[_ok_response()])
+    seen: list[Dict[str, Any]] = []
+
+    async def on_decision(payload: Dict[str, Any]) -> None:
+        seen.append(payload)
+
+    a = LLMAnalyzer(
+        config=LLMAnalyzerConfig(api_key="k"),
+        on_decision=on_decision,
+    )
+    a._provider = provider
+
+    # First call: provider fires, observer fires
+    await a.analyze_raw(
+        ticker=_ticker(), klines=_klines(30),
+        symbol="BTCUSDT", interval="1h",
+    )
+    # Second call: same input → cache hit, observer must be silent
+    await a.analyze_raw(
+        ticker=_ticker(), klines=_klines(30),
+        symbol="BTCUSDT", interval="1h",
+    )
+    assert len(seen) == 1
+
+
+@pytest.mark.asyncio
+async def test_on_decision_carries_exchange_name() -> None:
+    """When analyze() passes exchange, observer must see its name."""
+    provider = FakeProvider(responses=[_ok_response()])
+    seen: list[Dict[str, Any]] = []
+
+    async def on_decision(payload: Dict[str, Any]) -> None:
+        seen.append(payload)
+
+    a = LLMAnalyzer(
+        config=LLMAnalyzerConfig(api_key="k"),
+        on_decision=on_decision,
+    )
+    a._provider = provider
+
+    class NamedExchange:
+        name = "binance_usdm"
+        async def get_ticker(self, symbol):
+            return _ticker()
+        async def get_klines(self, symbol, interval, limit):
+            return _klines(n=limit)
+
+    await a.analyze(NamedExchange(), "BTCUSDT", interval="1h", limit=30)
+    assert seen[0]["exchange"] == "binance_usdm"
+
+
+@pytest.mark.asyncio
+async def test_on_decision_exception_does_not_break_analyze() -> None:
+    """An audit failure must never bubble up and block the trading path."""
+    provider = FakeProvider(responses=[_ok_response()])
+
+    async def on_decision_boom(payload: Dict[str, Any]) -> None:
+        raise RuntimeError("audit log down")
+
+    a = LLMAnalyzer(
+        config=LLMAnalyzerConfig(api_key="k"),
+        on_decision=on_decision_boom,
+    )
+    a._provider = provider
+
+    # Should NOT raise — observer errors are swallowed by design.
+    result = await a.analyze_raw(
+        ticker=_ticker(), klines=_klines(30),
+        symbol="BTCUSDT", interval="1h",
+    )
+    assert result.decision == "buy"
+
+
+@pytest.mark.asyncio
+async def test_on_decision_fires_on_failed_response() -> None:
+    """LLMError responses must still surface to the audit log so failures
+    are visible (and distinguishable from successful 'hold' decisions)."""
+    provider = FakeProvider(responses=[
+        _err_response(kind=LLMErrorKind.NETWORK, msg="upstream timeout"),
+    ])
+    seen: list[Dict[str, Any]] = []
+
+    async def on_decision(payload: Dict[str, Any]) -> None:
+        seen.append(payload)
+
+    a = LLMAnalyzer(
+        config=LLMAnalyzerConfig(api_key="k"),
+        on_decision=on_decision,
+    )
+    a._provider = provider
+
+    result = await a.analyze_raw(
+        ticker=_ticker(), klines=_klines(30),
+        symbol="BTCUSDT", interval="1h",
+    )
+
+    # analyze_raw degrades to 'hold' on error
+    assert result.decision == "hold"
+    assert result.error_kind == "network"
+    # But the observer still recorded the failed call
+    assert len(seen) == 1
+    assert seen[0]["failed"] == "network"
+    assert seen[0]["decision"] is None
+
+
+@pytest.mark.asyncio
+async def test_analyze_raw_without_observer_does_not_break() -> None:
+    """The observer kwarg is optional — default behavior must be unchanged."""
+    provider = FakeProvider(responses=[_ok_response()])
+    a = LLMAnalyzer(config=LLMAnalyzerConfig(api_key="k"))  # no on_decision
+    a._provider = provider
+
+    result = await a.analyze_raw(
+        ticker=_ticker(), klines=_klines(30),
+        symbol="BTCUSDT", interval="1h",
+    )
+    assert result.decision == "buy"

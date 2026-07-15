@@ -17,11 +17,17 @@
     />
     <script>
       // Set the theme attribute synchronously before React mounts so the
-      // initial paint already has the right tokens (no FOUC).
+      // initial paint already has the right tokens (no FOUC). Order of
+      // precedence: ?theme= URL param (wins, useful for share links and
+      // screenshot tooling) → localStorage → dark default.
       (function () {
         try {
+          var fromUrl = new URLSearchParams(location.search).get("theme");
           var stored = localStorage.getItem("qt-theme");
-          var theme = stored === "light" || stored === "dark" ? stored : "dark";
+          var theme =
+            (fromUrl === "light" || fromUrl === "dark")
+              ? fromUrl
+              : (stored === "light" || stored === "dark" ? stored : "dark");
           document.documentElement.setAttribute("data-theme", theme);
         } catch (e) {
           document.documentElement.setAttribute("data-theme", "dark");

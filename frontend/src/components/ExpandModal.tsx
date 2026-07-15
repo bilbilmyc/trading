@@ -63,7 +63,7 @@ export function ExpandModal({
             <h2 className="modal__title">{title}</h2>
             {subtitle ? <p className="modal__sub">{subtitle}</p> : null}
           </div>
-          <div style={{ display: "flex", alignItems: "center", gap: "var(--space-3)" }}>
+          <div className="modal__toolbar">
             {toolbar}
             <button
               ref={closeRef}

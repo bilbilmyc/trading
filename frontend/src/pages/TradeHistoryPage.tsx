@@ -125,8 +125,7 @@ export function TradeHistoryPage() {
       width: "0.7fr",
       render: (t) => (
         <span
-          className={t.side === "buy" ? "text-positive" : "text-negative"}
-          style={{ fontWeight: 600 }}
+          className={`${t.side === "buy" ? "text-positive" : "text-negative"} text-strong`}
         >
           {t.side === "buy" ? "买入" : "卖出"}
         </span>
@@ -156,7 +155,7 @@ export function TradeHistoryPage() {
       width: "0.8fr",
       align: "right",
       render: (t) => (
-        <span className={pnlClass(t.realized_pnl)} style={{ fontWeight: 600 }}>
+        <span className={`${pnlClass(t.realized_pnl)} text-strong`}>
           {formatPnl(t.realized_pnl)}
         </span>
       ),

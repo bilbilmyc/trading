@@ -29,7 +29,7 @@ interface DataTableProps<T> {
 }
 
 const DEFAULT_EMPTY = (
-  <div style={{ padding: "var(--space-6)", textAlign: "center", color: "var(--text-muted)" }}>
+  <div className="data-table__empty">
     暂无数据
   </div>
 );

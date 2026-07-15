@@ -149,7 +149,7 @@ export function PortfolioPage() {
       width: "0.7fr",
       align: "right",
       render: (e) => (
-        <span className="data-table__cell--num" style={{ fontWeight: 600 }}>
+        <span className="data-table__cell--num text-strong">
           {e.score.toFixed(2)}
         </span>
       ),
@@ -204,10 +204,9 @@ export function PortfolioPage() {
       align: "right",
       render: (e) => (
         <span
-          className={`data-table__cell--num ${
+          className={`data-table__cell--num text-strong ${
             e.metrics.expectancy >= 0 ? "text-positive" : "text-negative"
           }`}
-          style={{ fontWeight: 600 }}
         >
           {money(e.metrics.expectancy)}
         </span>
@@ -271,14 +270,14 @@ export function PortfolioPage() {
       </div>
 
       {/* Row 2 — equity curve (8) + risk gauge (4). */}
-      <div className="terminal-grid" style={{ gridTemplateColumns: "minmax(0, 3fr) minmax(0, 1fr)" }}>
+      <div className="terminal-grid terminal-grid--equity">
         <Card
           title="权益曲线"
           subtitle="所有策略历史净值"
           density="compact"
           padded={false}
         >
-          <div style={{ padding: "10px 14px 14px" }}>
+          <div className="portfolio-chart-body">
             {Object.keys(curves).length === 0 ? (
               <div className="empty-state empty-state--compact">
                 <strong>暂无权益曲线</strong>
@@ -292,7 +291,7 @@ export function PortfolioPage() {
 
         <Card title="风险指标" subtitle="回撤 / 期望 / 稳定度" density="compact">
           {metrics ? (
-            <div className="stack" style={{ alignItems: "center", padding: "8px 0 4px" }}>
+            <div className="stack portfolio-risk-stack">
               <RiskGauge
                 value={Math.min(Math.abs(dd) / 0.25, 1)}
                 caption="Drawdown"
@@ -302,24 +301,16 @@ export function PortfolioPage() {
                 warnAt={0.4}
                 size={170}
               />
-              <div
-                style={{
-                  display: "grid",
-                  gridTemplateColumns: "1fr 1fr",
-                  gap: 6,
-                  width: "100%",
-                  marginTop: 4,
-                }}
-              >
-                <div className="metric" style={{ padding: "6px 8px" }}>
+              <div className="portfolio-risk-metrics">
+                <div className="metric portfolio-risk-metric">
                   <span className="metric__label">Profit Factor</span>
                   <strong className="metric__value">{metrics.profit_factor.toFixed(2)}</strong>
                 </div>
-                <div className="metric" style={{ padding: "6px 8px" }}>
+                <div className="metric portfolio-risk-metric">
                   <span className="metric__label">Sortino</span>
                   <strong className="metric__value">{metrics.sortino_ratio.toFixed(2)}</strong>
                 </div>
-                <div className="metric" style={{ padding: "6px 8px" }}>
+                <div className="metric portfolio-risk-metric">
                   <span className="metric__label">Expectancy</span>
                   <strong
                     className={`metric__value ${metrics.expectancy >= 0 ? "metric--positive" : "metric--negative"}`}
@@ -327,7 +318,7 @@ export function PortfolioPage() {
                     {money(metrics.expectancy)}
                   </strong>
                 </div>
-                <div className="metric" style={{ padding: "6px 8px" }}>
+                <div className="metric portfolio-risk-metric">
                   <span className="metric__label">连胜</span>
                   <strong className="metric__value text-positive">
                     {metrics.max_consecutive_wins}
@@ -345,7 +336,7 @@ export function PortfolioPage() {
       </div>
 
       {/* Row 3 — strategy leaderboard (7) + top movers / allocation (5). */}
-      <div className="terminal-grid" style={{ gridTemplateColumns: "minmax(0, 2fr) minmax(0, 1.2fr)" }}>
+      <div className="terminal-grid terminal-grid--leaderboard">
         <Card
           title="策略排行榜"
           subtitle={`共 ${leaderboard.length} 策略 · 按综合得分排序`}
@@ -393,21 +384,20 @@ export function PortfolioPage() {
                   return (
                     <div
                       key={e.strategy}
-                      className="row row--between"
-                      style={{ padding: "6px 0", borderBottom: "1px solid var(--border)" }}
+                      className="row row--between portfolio-movers-row"
                     >
-                      <span className="row truncate-1" style={{ gap: 8, minWidth: 0 }}>
+                      <span className="row truncate-1 portfolio-movers-name">
                         <span
-                          className={`badge ${up ? "badge--green" : "badge--red"}`}
-                          style={{ flexShrink: 0 }}
+                          className={`badge portfolio-movers-badge ${up ? "badge--green" : "badge--red"}`}
                         >
                           {up ? "▲" : "▼"}
                         </span>
                         <strong className="truncate-1">{e.strategy}</strong>
                       </span>
                       <span
-                        className="data-table__cell--num"
-                        style={{ color: up ? "var(--positive)" : "var(--negative)", fontWeight: 600 }}
+                        className={`data-table__cell--num portfolio-movers-value ${
+                          up ? "text-positive" : "text-negative"
+                        }`}
                       >
                         {up ? "+" : ""}
                         {(e.metrics.sharpe_ratio * 0.8).toFixed(2)}%
@@ -421,7 +411,7 @@ export function PortfolioPage() {
 
           <Card title="关键二级指标" subtitle="8 项" density="compact">
             {metrics ? (
-              <div className="metric-grid metric-grid--four metric-grid--dense" style={{ gap: 6 }}>
+              <div className="metric-grid metric-grid--four metric-grid--dense">
                 <Metric label="Annualized" value={pct(metrics.annualized_return, 1)} tone={toneFor(metrics.annualized_return)} />
                 <Metric label="DD Periods" value={String(metrics.max_drawdown_periods)} tone="muted" />
                 <Metric label="Total Trades" value={String(metrics.total_trades)} tone="muted" />
@@ -442,35 +432,32 @@ export function PortfolioPage() {
       <div className="kpi-strip kpi-strip--four">
         <Card title="最近成交" subtitle="top 5" density="compact">
           <div className="empty-state empty-state--compact">
-            <Receipt size={14} style={{ display: "inline", marginRight: 6 }} />
+            <Receipt size={14} className="inline-icon" />
             <strong>暂无成交</strong>
             <span>策略成交后会显示</span>
           </div>
         </Card>
         <Card title="当前挂单" subtitle="0 个" density="compact">
           <div className="empty-state empty-state--compact">
-            <ClipboardList size={14} style={{ display: "inline", marginRight: 6 }} />
+            <ClipboardList size={14} className="inline-icon" />
             <strong>暂无挂单</strong>
             <span>挂单提交后会显示</span>
           </div>
         </Card>
         <Card title="策略信号" subtitle="实时" density="compact">
           <div className="empty-state empty-state--compact">
-            <Bell size={14} style={{ display: "inline", marginRight: 6 }} />
+            <Bell size={14} className="inline-icon" />
             <strong>暂无信号</strong>
             <span>启动 runner 后出现</span>
           </div>
         </Card>
         <Card title="模拟盘 P&L" subtitle="paper" density="compact">
           {metrics ? (
-            <div className="stack" style={{ alignItems: "center" }}>
+            <div className="stack portfolio-pnl-stack">
               <span
-                className="data-table__cell--num"
-                style={{
-                  fontSize: 32,
-                  fontWeight: 700,
-                  color: metrics.expectancy >= 0 ? "var(--positive)" : "var(--negative)",
-                }}
+                className={`data-table__cell--num portfolio-pnl-value ${
+                  metrics.expectancy >= 0 ? "text-positive" : "text-negative"
+                }`}
               >
                 {signedMoney(metrics.expectancy * 8)}
               </span>

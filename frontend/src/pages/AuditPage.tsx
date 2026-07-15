@@ -163,7 +163,7 @@ export function AuditPage() {
         title="审计事件 · 全部"
         subtitle={`${filtered.length} 条 · 倒序`}
         toolbar={
-          <div className="filter-row" style={{ marginTop: 0 }}>
+          <div className="filter-row filter-row--flush">
             {LEVELS.map((l) => (
               <button
                 key={l}

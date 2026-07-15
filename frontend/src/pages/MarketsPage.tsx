@@ -299,7 +299,7 @@ export function MarketsPage() {
           trailing={<span>{trades.length}</span>}
           scroll="md"
         >
-          <div className="tr" style={{ gridTemplateColumns: "44px 1fr 1fr" }}>
+          <div className="tr markets-trades-row">
             <span>Side</span>
             <span className="tr__head-num">Price</span>
             <span className="tr__head-num">Qty</span>
@@ -310,8 +310,7 @@ export function MarketsPage() {
               return (
                 <div
                   key={t.trade_id}
-                  className="tr"
-                  style={{ gridTemplateColumns: "44px 1fr 1fr" }}
+                  className="tr markets-trades-row"
                 >
                   <span className={`tr__side ${up ? "tr__side--buy" : "tr__side--sell"}`}>
                     {up ? "买" : "卖"}
@@ -399,14 +398,13 @@ export function MarketsPage() {
               openOrders.slice(0, 12).map((o, i) => (
                 <div
                   key={String(o.order_id ?? o.orderId ?? i)}
-                  className="tr"
-                  style={{ gridTemplateColumns: "1fr 1fr 1fr" }}
+                  className="tr markets-orders-row"
                 >
                   <span className="num">{String(o.symbol ?? "—")}</span>
-                  <span className="num tr__price--up" style={{ textAlign: "right" }}>
+                  <span className="num tr__price--up text-right">
                     ${String(o.price ?? "—")}
                   </span>
-                  <span className="num" style={{ textAlign: "right", color: "var(--text-muted)" }}>
+                  <span className="num text-right tr__status">
                     {String(o.status ?? o.quantity ?? "—")}
                   </span>
                 </div>

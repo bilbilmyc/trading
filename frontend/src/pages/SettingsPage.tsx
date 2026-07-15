@@ -122,7 +122,7 @@ export function SettingsPage() {
         <Card title="外观" subtitle="主题">
           <div className="settings-row">
             <div>
-              <p className="text-muted" style={{ margin: 0, fontSize: 13 }}>
+              <p className="text-muted settings-description">
                 切换深色 / 浅色主题，偏好会自动保存到浏览器。
               </p>
             </div>
@@ -174,7 +174,7 @@ export function SettingsPage() {
             <code>{"{title, message, severity, timestamp, extra}"}</code>。
           </p>
           <div className="form-grid form-grid--inline">
-            <label className="field" style={{ gridColumn: "span 2" }}>
+            <label className="field form-grid__span-2">
               <span>Webhook URL</span>
               <input
                 value={webhookUrl}
@@ -203,7 +203,7 @@ export function SettingsPage() {
             </div>
             <div className="field">
               <span>&nbsp;</span>
-              <div style={{ display: "flex", gap: 8 }}>
+              <div className="inline-actions">
                 <button
                   type="button"
                   className="action action--secondary"

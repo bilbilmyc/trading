@@ -115,6 +115,18 @@
   --chart-series-5: #EC4899;
   --chart-series-6: #06B6D4;
 
+  /* TopTicker (sticky marquee under StatusTicker). Same dark-on-dark
+     read in both themes. */
+  --ticker-bg: linear-gradient(180deg, #0F172A 0%, #0B1120 100%);
+  --ticker-venue-bg: linear-gradient(
+    90deg,
+    rgba(15, 23, 42, 0.7) 0%,
+    rgba(15, 23, 42, 0) 100%
+  );
+  --ticker-fg: #E2E8F0;
+  --ticker-fg-soft: #94A3B8;
+  --ticker-divider: rgba(99, 102, 241, 0.18);
+
   color-scheme: dark;
 }
 
@@ -130,14 +142,14 @@
   --bg-overlay-soft: rgba(255, 255, 255, 0.5);
   --scrim: rgba(15, 23, 42, 0.4);
 
-  --border: #E2E8F0;
-  --border-strong: #CBD5E1;
+  --border: #CBD5E1;
+  --border-strong: #94A3B8;
   --border-glow: rgba(2, 132, 199, 0.3);
 
   --text-primary: #0F172A;
-  --text-secondary: #475569;
-  --text-muted: #64748B;
-  --text-faint: #94A3B8;
+  --text-secondary: #334155;
+  --text-muted: #475569;
+  --text-faint: #64748B;
 
   --accent: #4F46E5;
   --accent-hover: #6366F1;
@@ -179,6 +191,19 @@
   --chart-series-5: #DB2777;
   --chart-series-6: #0891B2;
 
+  /* Light mode: dark-tinted strip so symbols + prices still pop, but
+     not so dark it looks like the wrong screen. Sits between
+     --bg-elevated and the page so it feels intentional. */
+  --ticker-bg: linear-gradient(180deg, #1E293B 0%, #0F172A 100%);
+  --ticker-venue-bg: linear-gradient(
+    90deg,
+    rgba(15, 23, 42, 0.85) 0%,
+    rgba(15, 23, 42, 0) 100%
+  );
+  --ticker-fg: #F1F5F9;
+  --ticker-fg-soft: #CBD5E1;
+  --ticker-divider: rgba(148, 163, 184, 0.25);
+
   color-scheme: light;
 }
 
@@ -193,13 +218,26 @@ html, body {
   font-family: var(--font-sans);
   background: var(--bg-base);
   color: var(--text-primary);
-  font-size: 15px;
-  line-height: 1.55;
+  /* Slightly larger default size (15 → 15.5) + a hair more line-height.
+     The 15px body was too tight on high-DPI displays and made the
+     whole UI feel "scrunched". 15.5 sits between 14 (mobile) and
+     16 (desktop default) so dense tables and KPI cards still fit
+     while secondary copy reads comfortably. */
+  font-size: 15.5px;
+  line-height: 1.6;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
   /* Inter renders nicer with these enabled — tabular numerals for tables. */
   text-rendering: optimizeLegibility;
   font-feature-settings: "cv11", "ss01", "ss03";
+  /* Slight baseline weight bump for default body text. Default 400
+     in Inter looks thin on light backgrounds at small sizes, which
+     made the UI feel "fuzzy / tiring to read". 450 is the in-between
+     weight that's heavy enough to hold its shape but doesn't feel
+     chunky at body size. Browsers that don't ship Inter fall back
+     to the system stack at native weights. */
+  font-weight: 450;
+  font-synthesis: none;
 }
 
 input, select, button, textarea {
@@ -247,36 +285,72 @@ input, select, button, textarea {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 12px 24px;
+  gap: 16px;
+  /* More vertical air so the brand and pills don't feel pressed
+     against the top edge. */
+  padding: 14px 28px;
   border-bottom: 1px solid var(--border);
   background: var(--bg-overlay);
   backdrop-filter: blur(8px);
 }
 
+.topbar__brand {
+  /* Let the brand shrink so the status pills never get pushed
+     off-screen on narrow viewports. */
+  min-width: 0;
+  flex: 1 1 auto;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
 .topbar__brand .eyebrow {
   margin: 0;
-  font-size: 13px;
+  font-size: 12px;
+  font-weight: 600;
   text-transform: uppercase;
-  letter-spacing: 0.12em;
-  color: var(--text-muted);
+  letter-spacing: 0.14em;
+  color: var(--text-secondary);
 }
 
 .topbar__brand h1 {
   margin: 4px 0 2px;
-  font-size: 20px;
-  font-weight: 600;
+  font-size: 22px;
+  font-weight: 700;
   letter-spacing: -0.02em;
+  /* Brand title is the only long text in the topbar — truncate
+     gracefully if the column gets squeezed. */
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .topbar__subtitle {
   font-size: 12px;
+  font-weight: 500;
   color: var(--text-muted);
 }
 
 .topbar__status {
   display: flex;
+  gap: 12px;
+  align-items: center;
+  flex-shrink: 0;
+  /* Visual separator + extra right-edge air so the toggle isn't
+     glued to the viewport border. */
+  padding-right: 4px;
+}
+
+/* The pill cluster (API/KS/实盘/env) sits inside the status row
+   and is allowed to wrap. The theme toggle is a sibling — it
+   always renders at the rightmost edge of the topbar, never gets
+   pushed off by long pill rows. */
+.topbar__pills {
+  display: flex;
   gap: 8px;
   align-items: center;
+  flex-wrap: wrap;
+  justify-content: flex-end;
 }
 
 .topbar__refresh {
@@ -310,6 +384,11 @@ input, select, button, textarea {
   border: 1px solid var(--border);
   background: var(--bg-card);
   color: var(--text-secondary);
+  /* Pills carry short labels — never break "在线" / "实盘 ON" across lines. */
+  white-space: nowrap;
+  /* Slight contrast boost: stronger border on the dark theme so
+     the pill doesn't disappear against the overlay background. */
+  border-color: var(--border-strong);
 }
 
 .status-pill--ok { color: var(--positive); border-color: var(--positive-soft); background: var(--positive-soft); }
@@ -1055,11 +1134,16 @@ input, select, button, textarea {
 
 .app-shell--with-sidebar {
   display: grid;
-  grid-template-columns: 240px 1fr;
+  grid-template-columns: 240px minmax(0, 1fr);
   grid-template-rows: 1fr;
   /* Lock the shell to the viewport so the inner columns own their own scroll.
      Without this, body becomes the scroll container and the sidebar's
-     `position: sticky` only sticks within its (now too tall) grid cell. */
+     `position: sticky` only sticks within its (now too tall) grid cell.
+     `minmax(0, 1fr)` (rather than plain `1fr`) is critical: the default
+     minimum track size is `min-content`, which means a long status pill row
+     or wide TopTicker would push the column wider than the viewport, hiding
+     the theme toggle. The explicit 0 floor lets the inner flex children
+     apply their own `min-width: 0` / truncation. */
   height: 100vh;
   overflow: hidden;
 }
@@ -1070,6 +1154,10 @@ input, select, button, textarea {
   /* Fill the grid cell exactly; own the vertical scroll. */
   height: 100vh;
   min-height: 0;
+  /* Required for the same reason as `minmax(0, 1fr)` on the grid:
+     flex children default to min-content width, which lets long pill
+     rows stretch the column past the viewport. */
+  min-width: 0;
   overflow-y: auto;
   background: var(--bg-base);
 }
@@ -1109,10 +1197,14 @@ input, select, button, textarea {
   height: 100vh;
   background: var(--bg-elevated);
   border-right: 1px solid var(--border);
-  padding: 20px 12px;
+  padding: 14px 10px;
   display: flex;
   flex-direction: column;
-  gap: 16px;
+  gap: 12px;
+  /* When nav overflows, the inner region scrolls so the footer
+     status card stays pinned at the bottom and the last nav
+     items (Settings, etc.) never get clipped. */
+  min-height: 0;
 }
 
 .sidebar__brand h2 {
@@ -1123,23 +1215,40 @@ input, select, button, textarea {
 }
 
 .sidebar__subtitle {
-  font-size: 12px;
-  color: var(--text-muted);
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-secondary);
   text-transform: uppercase;
-  letter-spacing: 0.08em;
+  letter-spacing: 0.1em;
 }
 
 .sidebar__nav {
   display: flex;
   flex-direction: column;
   gap: 2px;
+  /* Take the remaining height between brand and footer; allow
+     the list to scroll independently when the viewport is too
+     short to show every group at once. */
+  flex: 1 1 0;
+  min-height: 0;
+  overflow-y: auto;
+  /* Slim scrollbar so it doesn't fight the 240px column. */
+  scrollbar-width: thin;
+  scrollbar-color: var(--border-strong) transparent;
 }
+
+.sidebar__nav::-webkit-scrollbar { width: 6px; }
+.sidebar__nav::-webkit-scrollbar-thumb {
+  background: var(--border-strong);
+  border-radius: 3px;
+}
+.sidebar__nav::-webkit-scrollbar-track { background: transparent; }
 
 .sidebar__item {
   display: flex;
   align-items: center;
-  gap: 12px;
-  padding: 10px 12px;
+  gap: 10px;
+  padding: 6px 10px;
   border-radius: var(--radius-sm);
   text-decoration: none;
   color: var(--text-secondary);
@@ -1158,26 +1267,37 @@ input, select, button, textarea {
 
 .sidebar__item strong {
   display: block;
-  font-size: 13px;
+  font-size: 14px;
   font-weight: 600;
+  line-height: 1.2;
 }
 
 .sidebar__item small {
   display: block;
-  font-size: 13px;
+  font-size: 12px;
+  font-weight: 500;
   color: var(--text-muted);
+  /* letter-spacing tightens muted small text so it reads as a
+     caption rather than a second line of body copy. */
+  letter-spacing: 0.01em;
+  /* In the narrow 240px sidebar column, the per-item description
+     either gets clipped (truncation) or pushes later items off
+     screen. Group labels + item labels are enough orientation;
+     descriptions still appear as `title` tooltips on hover. */
+  display: none;
 }
 
 .sidebar__icon {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 28px;
-  height: 28px;
+  width: 24px;
+  height: 24px;
   border-radius: var(--radius-sm);
   background: var(--bg-card);
   font-size: 13px;
   color: var(--text-secondary);
+  flex-shrink: 0;
 }
 
 .sidebar__item.is-active .sidebar__icon {
@@ -1186,7 +1306,12 @@ input, select, button, textarea {
 }
 
 .sidebar__footer {
-  margin-top: auto;
+  /* Don't grow — the nav above owns the flex:1 slot and scrolls
+     internally when it overflows. We used `margin-top: auto` here
+     to push the footer to the bottom, but that fights with
+     `flex: 1 1 auto` on the nav and lets the nav overflow the
+     sidebar instead of scrolling. */
+  flex: 0 0 auto;
   display: flex;
   flex-direction: column;
   gap: 6px;
@@ -1209,13 +1334,15 @@ input, select, button, textarea {
 /* ===== Pages ========================================================= */
 
 .page {
-  /* Compact vertical rhythm so typical pages fit in one viewport;
-     the page scrolls within `.app-main` if it overflows. */
-  padding: 16px 32px 24px;
+  /* Generous interior padding so cards and section titles never
+     feel pressed against the viewport edge. The extra left/right
+     also gives a little more room for sticky elements like the
+     TopTicker to breathe before they hit the page column. */
+  padding: 24px 40px 32px;
   display: flex;
   flex-direction: column;
-  gap: 16px;
-  max-width: 1400px;
+  gap: 20px;
+  max-width: 1500px;
   margin: 0 auto;
   width: 100%;
 }
@@ -1374,7 +1501,7 @@ input, select, button, textarea {
   align-items: flex-start;
   justify-content: space-between;
   gap: var(--space-4);
-  margin-bottom: var(--space-2);
+  margin-bottom: var(--space-5);
   flex-wrap: wrap;
 }
 
@@ -1394,7 +1521,6 @@ input, select, button, textarea {
   border-radius: var(--radius-sm);
   background: var(--accent-soft);
   color: var(--accent);
-  margin-bottom: 4px;
   flex-shrink: 0;
 }
 /* AutoClip-style: gradient indigo→purple icon background with color glow. */
@@ -1417,15 +1543,15 @@ input, select, button, textarea {
 
 .page-header__title {
   margin: 0;
-  font-size: 20px;
-  font-weight: 600;
+  font-size: 24px;
+  font-weight: 700;
   letter-spacing: -0.02em;
   color: var(--text-primary);
-  line-height: 1.25;
+  line-height: 1.2;
 }
 .page-header__title-row {
   display: flex;
-  align-items: baseline;
+  align-items: center;
   gap: var(--space-3);
   flex-wrap: wrap;
 }
@@ -1463,9 +1589,9 @@ input, select, button, textarea {
   overflow-wrap: anywhere;
   word-break: break-word;
 }
-.page-header--compact .page-header__title { font-size: 17px; }
+.page-header--compact .page-header__title { font-size: 18px; }
 .page-header--compact .page-header__icon { width: 26px; height: 26px; border-radius: 8px; }
-.page-header--compact .page-header__subtitle { font-size: 12px; }
+.page-header--compact .page-header__subtitle { font-size: 13px; }
 .page-header--flush { margin-bottom: 8px; }
 
 .page-header__actions {
@@ -1491,6 +1617,9 @@ input, select, button, textarea {
   flex-direction: column;
   gap: var(--space-3);
   min-width: 0;
+  /* Default cards get a comfortable interior buffer so content
+     never touches the border. Opt out with .card--flush. */
+  padding: var(--space-5);
   background: var(--bg-elevated);
   border: 1px solid var(--border);
   border-radius: var(--radius-lg);
@@ -1506,7 +1635,9 @@ input, select, button, textarea {
 }
 
 .card--padded {
-  padding: var(--space-4);
+  /* .card already has padding; this is a backwards-compat alias
+     for explicit "give me a card with breathing room" intent. */
+  padding: var(--space-5);
 }
 .card--compact {
   padding: 10px 12px;
@@ -1514,7 +1645,7 @@ input, select, button, textarea {
 }
 .card--compact .card__header { gap: var(--space-2); }
 .card--loose {
-  padding: 20px 22px;
+  padding: 24px 28px;
   gap: var(--space-4);
 }
 .card--flat {
@@ -1702,12 +1833,12 @@ input, select, button, textarea {
 .sidebar__group + .sidebar__group { margin-top: var(--space-4); }
 
 .sidebar__group-label {
-  padding: 0 var(--space-3) var(--space-2);
-  font-size: 13px;
-  font-weight: 600;
+  padding: 10px 10px 4px;
+  font-size: 11px;
+  font-weight: 700;
   text-transform: uppercase;
-  letter-spacing: 0.08em;
-  color: var(--text-faint);
+  letter-spacing: 0.12em;
+  color: var(--text-secondary);
 }
 
 .sidebar__item--compact { padding: 8px 12px; }
@@ -1720,14 +1851,18 @@ input, select, button, textarea {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 32px;
-  height: 32px;
+  width: 36px;
+  height: 36px;
   border-radius: var(--radius-sm);
-  border: 1px solid var(--border);
+  border: 1px solid var(--border-strong);
   background: var(--bg-card);
-  color: var(--text-secondary);
+  color: var(--text-primary);
   cursor: pointer;
   transition: all var(--transition-fast);
+  /* Subtle shadow so the button reads on light surfaces where
+     border + card are both very light. */
+  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.06);
+  flex-shrink: 0;
 }
 
 .theme-toggle:hover {
@@ -3241,37 +3376,36 @@ input, select, button, textarea {
   .kpi-strip > * { grid-column: 1 / -1; }
 }
 
-/* TopTicker — sticky horizontal marquee rendered under the StatusTicker. */
+/* TopTicker — sticky horizontal marquee rendered under the StatusTicker.
+   The bar needs to read in BOTH themes. The original used a hard-coded
+   dark gradient which made the text invisible on the light theme; we now
+   pull the surface from --ticker-bg so each theme can override. */
 .top-ticker {
   position: relative;
   flex-shrink: 0;
   overflow: hidden;
   border-bottom: 1px solid var(--border);
-  background: linear-gradient(
-    180deg,
-    rgba(15, 23, 42, 0.92) 0%,
-    rgba(11, 17, 32, 0.92) 100%
-  );
+  background: var(--ticker-bg);
   backdrop-filter: blur(20px);
   -webkit-backdrop-filter: blur(20px);
   height: 36px;
   display: flex;
   align-items: center;
+  /* Venue strip and items get a stronger base color, the track rides on
+     a soft gradient that fades into the surface — keeps the marquee
+     legible regardless of what's behind. */
+  color: var(--ticker-fg);
 }
 .top-ticker__venues {
   display: flex;
   align-items: center;
   gap: var(--space-2);
   padding: 0 14px 0 16px;
-  border-right: 1px solid var(--border);
+  border-right: 1px solid var(--ticker-divider);
   margin-right: 4px;
   flex-shrink: 0;
   height: 100%;
-  background: linear-gradient(
-    90deg,
-    rgba(11, 17, 32, 0.6) 0%,
-    rgba(11, 17, 32, 0) 100%
-  );
+  background: var(--ticker-venue-bg);
 }
 .top-ticker__venue {
   display: inline-flex;
@@ -3281,7 +3415,7 @@ input, select, button, textarea {
   font-size: 10px;
   font-weight: 600;
   letter-spacing: 0.06em;
-  color: var(--text-faint);
+  color: var(--ticker-fg-soft);
 }
 .top-ticker__venue-dot {
   width: 6px;
@@ -3322,18 +3456,18 @@ input, select, button, textarea {
   padding: 0 18px;
   font-family: var(--font-mono);
   font-size: 12px;
-  border-right: 1px solid var(--border);
+  border-right: 1px solid var(--ticker-divider);
   line-height: 36px;
   height: 36px;
 }
 .top-ticker__symbol {
-  color: var(--text-secondary);
-  font-weight: 600;
+  color: var(--ticker-fg-soft);
+  font-weight: 700;
   letter-spacing: 0.04em;
 }
 .top-ticker__price {
-  color: var(--text-primary);
-  font-weight: 500;
+  color: var(--ticker-fg);
+  font-weight: 600;
   font-variant-numeric: tabular-nums;
 }
 .top-ticker__change {
@@ -3622,6 +3756,8 @@ input, select, button, textarea {
   display: flex;
   flex: 1;
   min-height: 0;
+  /* Same floor as .app-main — keeps the 1fr column honest. */
+  min-width: 0;
 }
 
 /* ===== Status drawer ================================================= */
@@ -4199,8 +4335,8 @@ input, select, button, textarea {
 .status-drawer__row-type { color: var(--text-faint); }
 
 /* Section title row inside BotMonitorPage cards. */
-.section-title-row { margin: 0 0 var(--space-3); font-size: 15px; font-weight: 600; }
-.section-title-row--h4 { margin-top: var(--space-5); font-size: 13px; }
+.section-title-row { margin: 0 0 var(--space-3); font-size: 16px; font-weight: 600; }
+.section-title-row--h4 { margin-top: var(--space-5); font-size: 14px; font-weight: 600; }
 
 /* Market snapshot tile — v0.4 baseline replacement for KPIHero. */
 .market-snap {
@@ -4527,3 +4663,370 @@ input, select, button, textarea {
 .kv-row__value--tone-muted { color: var(--text-muted); }
 
 
+
+/* =====================================================================
+   Cohesion pass — one visual language across legacy + v0.4 surfaces
+   ---------------------------------------------------------------------
+   Keep the trading-console character (indigo accent + mono numerics), but
+   make surfaces, radii, motion and hierarchy behave the same everywhere.
+   ===================================================================== */
+
+:root {
+  --surface-page: var(--bg-base);
+  --surface-panel: var(--bg-card);
+  --surface-subtle: var(--bg-elevated);
+  --surface-hover: var(--bg-card-hover);
+  --border-surface: var(--border);
+  --radius-surface: var(--radius-md);
+  --shadow-surface: none;
+}
+
+.app-shell {
+  background: var(--surface-page);
+}
+
+/* Ambient colour is an accent, not a second background system. */
+.app-bg::before,
+.app-bg::after {
+  width: 420px;
+  height: 420px;
+  opacity: 0.14;
+  filter: blur(160px);
+}
+
+/* Every content surface now shares the same flat hairline treatment. */
+.card,
+.panel,
+.metric,
+.metric-tile,
+.kpi-hero,
+.tile,
+.section-panel,
+.hairline-card,
+.glass-card {
+  background: var(--surface-panel);
+  border: var(--hairline);
+  border-radius: var(--radius-surface);
+  box-shadow: var(--shadow-surface);
+}
+
+.card:not(.card--static):hover,
+.card--hoverable:hover,
+.kpi-hero:hover,
+.metric:hover {
+  transform: none;
+  background: var(--surface-hover);
+  border-color: var(--border-strong);
+  box-shadow: none;
+}
+
+.card--accent,
+.tile--accent,
+.panel--featured {
+  border-color: var(--border-glow);
+  box-shadow: none;
+}
+
+.panel--featured::before {
+  display: none;
+}
+
+/* Page headers use a quiet icon chip; the brand mark remains the only
+   deliberately expressive gradient element outside primary actions. */
+.page-header__icon--gradient,
+.page-header__icon--glow {
+  background: var(--accent-soft);
+  color: var(--accent);
+  border: var(--hairline);
+  box-shadow: none;
+}
+
+/* Keep the two header strips related instead of stacking two unrelated
+   glass effects at the top of every page. */
+.topbar,
+.status-ticker,
+.top-ticker {
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+}
+
+.topbar {
+  background: var(--surface-page);
+}
+
+.status-ticker {
+  background: var(--surface-subtle);
+}
+
+.top-ticker {
+  background: var(--surface-subtle);
+}
+
+/* Use the same content rhythm on wide and narrow layouts. */
+.page {
+  gap: var(--space-5);
+}
+
+@media (max-width: 960px) {
+  .page {
+    padding-inline: var(--space-6);
+  }
+}
+
+@media (max-width: 640px) {
+  .page {
+    padding: var(--space-5) var(--space-4) var(--space-7);
+    gap: var(--space-4);
+  }
+
+  .topbar {
+    padding: 12px var(--space-4);
+  }
+
+  .topbar__brand-mark {
+    width: 36px;
+    height: 36px;
+  }
+
+  .topbar__subtitle {
+    display: none;
+  }
+}
+
+/* Fixed layout helpers replace repeated inline presentation styles. */
+.flex-column-end {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+}
+.flex-column-end--tight { gap: 2px; }
+.flex-column-end--loose { gap: 4px; }
+.text-strong { font-weight: 600; }
+.text-right { text-align: right; }
+.filter-row--flush { margin-top: 0; }
+.markets-trades-row { grid-template-columns: 44px 1fr 1fr; }
+.markets-orders-row { grid-template-columns: 1fr 1fr 1fr; }
+
+/* Native controls inherit the same radius and focus language as cards. */
+select {
+  border-radius: var(--radius-sm);
+}
+
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    scroll-behavior: auto !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
+/* Small layout primitives keep repeated page composition out of JSX. */
+.status-ticker__cell--clock { margin-left: auto; }
+.status-ticker__label--local { margin-left: var(--space-2); }
+.modal__toolbar {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+}
+.data-table__empty {
+  padding: var(--space-6);
+  text-align: center;
+  color: var(--text-muted);
+}
+.settings-description { margin: 0; font-size: 13px; }
+.form-grid__span-2 { grid-column: span 2; }
+.inline-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+}
+.tr__status { color: var(--text-muted); }
+.terminal-grid--equity { grid-template-columns: minmax(0, 3fr) minmax(0, 1fr); }
+.terminal-grid--leaderboard { grid-template-columns: minmax(0, 2fr) minmax(0, 1.2fr); }
+.portfolio-chart-body { padding: 10px 14px 14px; }
+.portfolio-risk-stack { align-items: center; padding: 8px 0 4px; }
+.portfolio-risk-metrics {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px;
+  width: 100%;
+  margin-top: 4px;
+}
+.portfolio-risk-metric { padding: 6px 8px; }
+
+@media (max-width: 640px) {
+  .form-grid__span-2 { grid-column: auto; }
+  .portfolio-risk-metrics { grid-template-columns: 1fr; }
+}
+
+.portfolio-movers-row {
+  padding: 6px 0;
+  border-bottom: var(--hairline);
+}
+.portfolio-movers-name { gap: var(--space-2); min-width: 0; }
+.portfolio-movers-badge { flex-shrink: 0; }
+.portfolio-movers-value { font-weight: 600; }
+.metric-grid--dense { gap: 6px; }
+.inline-icon { display: inline; margin-right: var(--space-2); }
+.portfolio-pnl-stack { align-items: center; }
+.portfolio-pnl-value { font-size: 32px; font-weight: 700; }
+
+/* ===== Bot monitor cohesion pass ==================================== */
+.bot-monitor-grid {
+  align-items: start;
+}
+.bot-panel-title {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+.bot-command-panel .section-panel__body {
+  overflow-x: auto;
+}
+.bot-command-panel .bot-cmd-table {
+  min-width: 620px;
+  table-layout: fixed;
+}
+.bot-command-panel .bot-cmd-table th:first-child,
+.bot-command-panel .bot-cmd-table td:first-child {
+  width: 32%;
+}
+.bot-command-panel .bot-cmd-table th:nth-child(2),
+.bot-command-panel .bot-cmd-table td:nth-child(2) {
+  width: 18%;
+}
+.bot-command-panel .bot-cmd-table th,
+.bot-command-panel .bot-cmd-table td {
+  padding: 9px 14px;
+}
+.bot-command-panel .bot-cmd-table tbody tr:last-child td {
+  border-bottom: 0;
+}
+.bot-command-panel .bot-cmd-table tbody tr:hover {
+  background: var(--bg-card-hover);
+}
+.bot-command-panel .bot-cmd-table code {
+  white-space: nowrap;
+}
+.bot-command-category {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 7px;
+  border: var(--hairline);
+  border-radius: var(--radius-sm);
+  font-size: 11px;
+}
+.bot-command-category--query {
+  color: var(--info);
+  background: var(--info-soft);
+  border-color: var(--info-soft);
+}
+.bot-command-category--action {
+  color: var(--warning);
+  background: var(--warning-soft);
+  border-color: var(--warning-soft);
+}
+.bot-command-note {
+  margin: var(--space-3);
+  margin-bottom: var(--space-4);
+  border-left-color: var(--info);
+}
+.bot-status-list .kv-row__label {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+.bot-kill-card--armed {
+  border-color: var(--danger);
+}
+.bot-kill-action {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-4);
+}
+.bot-kill-action strong {
+  display: block;
+  font-size: 14px;
+}
+.bot-kill-action p {
+  margin: 4px 0 0;
+  color: var(--text-muted);
+  font-size: 12px;
+}
+.bot-kill-action .action {
+  flex-shrink: 0;
+}
+.bot-quiet-panel .section-panel__body {
+  padding: var(--space-4);
+}
+.bot-quiet-summary {
+  display: grid;
+  grid-template-columns: minmax(160px, 1fr) minmax(160px, 1fr) minmax(260px, 2fr);
+  align-items: center;
+  gap: var(--space-4);
+  margin-top: var(--space-4);
+}
+.bot-quiet-stat {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+.bot-quiet-stat strong {
+  font-size: 15px;
+}
+.bot-quiet-summary .bot-hint {
+  margin: 0;
+}
+
+@media (max-width: 960px) {
+  .bot-quiet-summary {
+    grid-template-columns: 1fr 1fr;
+  }
+  .bot-quiet-summary .bot-hint {
+    grid-column: 1 / -1;
+  }
+}
+@media (max-width: 640px) {
+  .bot-quiet-summary {
+    grid-template-columns: 1fr;
+  }
+  .bot-kill-action {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+  .bot-kill-action .action {
+    width: 100%;
+  }
+  .bot-quiet-summary .bot-hint {
+    grid-column: auto;
+  }
+}
+
+/* ===== Page title cleanup ============================================ */
+/* PageHeader keeps the document outline, but no longer paints a banner on every route. */
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+.page-header__actions--standalone {
+  justify-content: flex-end;
+  margin-bottom: calc(var(--space-2) * -1);
+}

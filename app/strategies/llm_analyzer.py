@@ -10,6 +10,7 @@ Internally uses `OpenAIProvider` (retry policy, three-state errors) and
 from __future__ import annotations
 
 import os
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from datetime import datetime
 from decimal import Decimal
@@ -234,6 +235,7 @@ class LLMAnalyzer:
         config: LLMAnalyzerConfig | None = None,
         provider: OpenAIProvider | None = None,
         cache: LLMFingerprintCache | None = None,
+        on_decision: "Callable[[dict[str, Any]], Awaitable[None]] | None" = None,
     ) -> None:
         self.config = config or LLMAnalyzerConfig()
         if not self.config.api_key:
@@ -248,6 +250,11 @@ class LLMAnalyzer:
             ttl_seconds=self.config.cache_ttl_seconds,
             max_entries=self.config.cache_max_entries,
         )
+        # Optional observer — fired once per LLM decision (after the
+        # response comes back, before the result is returned to the
+        # caller). Used by traders / API endpoints to persist the
+        # decision as an audit event. Errors here are swallowed.
+        self._on_decision = on_decision
 
     def _select_provider(self) -> OpenAIProvider:
         """Pick provider class by config.base_url prefix."""
@@ -309,6 +316,7 @@ class LLMAnalyzer:
             position_context=position_context,
             risk_context=risk_context,
             trade_history=trade_history,
+            exchange=exchange,
         )
 
     async def analyze_raw(
@@ -320,6 +328,7 @@ class LLMAnalyzer:
         position_context: dict[str, Any] | None = None,
         risk_context: dict[str, Any] | None = None,
         trade_history: dict[str, Any] | None = None,
+        exchange: ExchangeBase | None = None,
     ) -> LLMAnalysisResult:
         position_signature = self._position_signature(position_context)
         last_candle = klines[-1] if klines else {}
@@ -334,6 +343,10 @@ class LLMAnalyzer:
         if cached is not None and cached.is_ok:
             return self._translate(cached, symbol, interval, len(klines), cache_hit=True)
 
+        # From here on we are making a fresh provider call. Bind `cache_hit`
+        # explicitly so the observer / final return can refer to it without
+        # relying on the early-return above to "guard" the name.
+        cache_hit = False
         prompt = self._build_prompt(
             symbol, interval, ticker, klines,
             position_context=position_context,
@@ -353,6 +366,29 @@ class LLMAnalyzer:
         response = await self._provider.complete(request)
         if response.is_ok:
             self._cache.put(cache_key, response)
+        # Fire observer (best-effort) so the trader / API can persist
+        # this decision as an audit event. Skip when we hit the cache
+        # — observers are intended to capture fresh calls.
+        if self._on_decision is not None and not cache_hit:
+            try:
+                await self._on_decision({
+                    "symbol": symbol,
+                    "interval": interval,
+                    "exchange": str(getattr(exchange, "name", "") or ""),
+                    "decision": response.decided.decision if response.decided else None,
+                    "confidence": response.decided.confidence if response.decided else None,
+                    "reason": response.decided.reason if response.decided else None,
+                    "model": response.decided.model if response.decided else "",
+                    "risk_level": response.decided.risk_level if response.decided else "",
+                    "prompt_tokens": response.prompt_tokens,
+                    "completion_tokens": response.completion_tokens,
+                    "latency_ms": response.latency_ms,
+                    "failed": response.failed.kind.value if response.failed else None,
+                    "cache_hit": cache_hit,
+                })
+            except Exception:
+                # Audit failures must never break the trading path.
+                pass
         return self._translate(response, symbol, interval, len(klines), cache_hit=False)
 
     # ── Internals ──────────────────────────────────────────────
