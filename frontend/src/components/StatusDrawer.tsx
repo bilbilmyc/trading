@@ -4,11 +4,16 @@
  * Collapsed by default (28px bar with the count summary).
  * Click to expand (28vh max-height, scrolling).
  *
+ * Data source: `useLiveEvents()` which subscribes to
+ * ``/api/v1/stream/events`` over SSE. Replaces the prior 5s polling
+ * through EngineContext which was always 0–5s stale.
+ *
  * Sort: CRITICAL > ERROR > WARNING > INFO, then most-recent first.
  */
 
-import { useState } from "react";
-import { useEngine } from "../contexts/EngineContext";
+import { useMemo, useState } from "react";
+
+import { useLiveEvents, type LiveEvent } from "../hooks/useLiveEvents";
 
 function severityLabel(level?: string): string {
   switch ((level ?? "info").toLowerCase()) {
@@ -38,28 +43,31 @@ function severityClass(level?: string): string {
 
 function shortTime(iso?: string): string {
   if (!iso) return "—";
-  // Trim to HH:MM:SS for the drawer.
   return iso.slice(11, 19);
 }
 
-interface DrawerEvent {
-  level?: string;
-  event_type?: string;
-  title?: string;
-  message?: string;
-  timestamp?: string;
-}
+const RANK: Record<string, number> = {
+  critical: 4,
+  error: 3,
+  warning: 2,
+  info: 1,
+};
 
 export function StatusDrawer() {
   const [open, setOpen] = useState(false);
-  const { events } = useEngine();
-  const list: DrawerEvent[] = (events ?? []) as DrawerEvent[];
-  const recent = list.slice(0, 50);
+  const events = useLiveEvents();
+
+  const sorted = useMemo<LiveEvent[]>(() => {
+    const rank = (e: LiveEvent) => RANK[(e.level ?? "info").toLowerCase()] ?? 0;
+    return [...events].sort((a, b) => rank(b) - rank(a));
+  }, [events]);
+
+  const recent = sorted.slice(0, 50);
   const criticalCount = recent.filter(
-    (e) => (e.level ?? "").toLowerCase() === "critical"
+    (e) => (e.level ?? "").toLowerCase() === "critical",
   ).length;
   const errorCount = recent.filter(
-    (e) => (e.level ?? "").toLowerCase() === "error"
+    (e) => (e.level ?? "").toLowerCase() === "error",
   ).length;
 
   return (
@@ -97,14 +105,14 @@ export function StatusDrawer() {
         ) : (
           recent.map((e, i) => (
             <div
-              key={`${e.event_type ?? "?"}-${i}`}
+              key={`${e.event_type ?? "?"}-${e.timestamp ?? i}`}
               className={`status-drawer__row ${severityClass(e.level ?? "")}`}
             >
               <span className={`status-drawer__row-sev status-drawer__row-sev--${(e.level ?? "info").toLowerCase()}`}>
                 {severityLabel(e.level ?? "")}
               </span>
               <span>{shortTime(e.timestamp)}</span>
-              <span>{e.message ?? e.title ?? ""}</span>
+              <span>{e.message ?? ""}</span>
               <span className="status-drawer__row-type">
                 {e.event_type ?? "system"}
               </span>

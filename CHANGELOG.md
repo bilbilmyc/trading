@@ -4,6 +4,18 @@
 
 ## [Unreleased]
 
+### Added (SSE alerts stream → StatusDrawer)
+- `/api/v1/stream/events` 升级：除 snapshot + heartbeat 外，轮询
+  `engine.monitor.recent_alerts(50)` 与 `store.recent_events(50)`，
+  按"游标 = 最高已发 timestamp"过滤，避免新连接重放历史
+- 新增 `frontend/src/hooks/useLiveEvents.ts`：`EventSource` 订阅 SSE，
+  仅保留 `kind: "event"` 载荷，浏览器原生重连 + buffer 自动重置
+- `StatusDrawer` 改用 `useLiveEvents`，删除 5s 轮询（EngineContext.events
+  通道），告警延迟从 0–5s 降到秒内
+- 新增 `tests/test_sse_alerts_stream.py`（3 个）：snapshot 首发、
+  Monitor.push 进入流、回填告警被 snapshot 游标过滤
+- 修 `sqlite_store.append_events` 末尾重复 `self._conn.commit()` bug
+
 ### Added (bot 监控盯盘)
 - Telegram bot 监控盯盘：从表面 5 个文件扩展到完整可启动的服务
 - 新增 `app/bot/runner.py`（TradingBot 编排器：start/stop/run_forever + 异常不死）

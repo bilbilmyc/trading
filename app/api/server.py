@@ -1721,14 +1721,25 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     async def stream_events(
         request: Request,
         state: AppState = Depends(get_state),
-        max_events: int = 360,
+        max_events: int = 600,
         heartbeat_seconds: float = 10.0,
+        poll_interval_seconds: float = 1.0,
     ):
-        """SSE endpoint: status snapshot + heartbeats.
+        """SSE endpoint: status snapshot + alert/audit stream + heartbeats.
 
-        Replaces 5s polling from the frontend. First event is a snapshot;
-        subsequent events are heartbeats. When audit-event push is wired
-        in, audit events will arrive between heartbeats.
+        Replaces 5s polling from the frontend. Each iteration reads
+        from two sources:
+
+          - ``state.engine.monitor.recent_alerts(50)`` — live
+            in-memory alerts (drawdown, ping failure, kill switch …).
+            These never persist to SQLite, so this is the only path
+            to push them to the drawer.
+          - ``state.store.recent_events(50)`` — historical events
+            persisted by CompositeObserver (live orders, risk rejects).
+
+        A per-connection cursor tracks the highest-seen timestamp;
+        only events newer than the cursor are shipped, so a fresh
+        connection does not replay the entire history.
         """
         import asyncio as _asyncio
         import json as _json
@@ -1751,19 +1762,67 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             except Exception as exc:  # noqa: BLE001
                 yield f"data: {_json.dumps({'kind': 'error', 'message': str(exc)})}\n\n"
 
-            # Heartbeat loop — exit cleanly when client disconnects.
+            cursor = datetime.utcnow().isoformat()
+            since_last_heartbeat = 0.0
+
+            def _emit(payload: dict) -> str:
+                return f"data: {_json.dumps(payload, ensure_ascii=False)}\n\n"
+
             for _ in range(max_events):
                 if await request.is_disconnected():
                     return
-                await _asyncio.sleep(heartbeat_seconds)
-                yield f"data: {_json.dumps({'kind': 'heartbeat', 'timestamp': datetime.utcnow().isoformat()})}\n\n"
+                try:
+                    # Live in-memory alerts from Monitor — these never
+                    # land in SQLite (Monitor is a ring buffer), so
+                    # SSE must read them directly.
+                    for alert in state.engine.monitor.recent_alerts(limit=50):
+                        ts = alert.get("timestamp") or ""
+                        if ts and ts > cursor:
+                            cursor = ts
+                            yield _emit({
+                                "kind": "event",
+                                "category": alert.get("category"),
+                                "title": alert.get("title"),
+                                "message": alert.get("message"),
+                                "level": alert.get("level"),
+                                "timestamp": ts,
+                                "exchange": alert.get("exchange"),
+                                "symbol": alert.get("symbol"),
+                            })
+                    # Historical events from CompositeObserver.
+                    for ev in state.store.recent_events(limit=50):
+                        ts = ev.get("timestamp", "")
+                        if ts and ts > cursor:
+                            cursor = ts
+                            yield _emit({
+                                "kind": "event",
+                                "category": ev.get("category"),
+                                "event_type": ev.get("event_type"),
+                                "title": ev.get("title"),
+                                "message": ev.get("message"),
+                                "level": ev.get("level"),
+                                "timestamp": ts,
+                                "exchange": ev.get("exchange"),
+                                "symbol": ev.get("symbol"),
+                            })
+                    since_last_heartbeat += poll_interval_seconds
+                    if since_last_heartbeat >= heartbeat_seconds:
+                        yield _emit({
+                            "kind": "heartbeat",
+                            "timestamp": datetime.utcnow().isoformat(),
+                        })
+                        since_last_heartbeat = 0.0
+                except Exception as exc:  # noqa: BLE001
+                    yield _emit({"kind": "error", "message": str(exc)})
+
+                await _asyncio.sleep(poll_interval_seconds)
 
         return StreamingResponse(
             gen(),
             media_type="text/event-stream",
             headers={
                 "Cache-Control": "no-cache",
-                "X-Accel-Buffering": "no",  # disable nginx buffering
+                "X-Accel-Buffering": "no",
                 "Connection": "keep-alive",
             },
         )

@@ -262,6 +262,10 @@ class SQLiteStore:
         Use this when emitting multiple audit events from a single logical
         operation (e.g. signal veto + risk reject + observer push). One
         commit replaces N commits, cutting SQLite fsync overhead.
+
+        The transaction is committed before this method returns, so a
+        second connection (e.g. the SSE generator's polling loop) sees
+        the new rows on its next read.
         """
         if not events:
             return
