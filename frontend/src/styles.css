@@ -27,6 +27,18 @@
     "Hiragino Sans GB", "Microsoft YaHei", "Helvetica Neue", Arial, sans-serif;
   --font-mono: "JetBrains Mono", "SF Mono", Menlo, Monaco, Consolas,
     "PingFang SC", monospace;
+
+  /* v0.4 tokens — overload addition, kept on :root so light/dark inherit. */
+  --font-num: "JetBrains Mono", "SF Mono", Menlo, Consolas, monospace;
+  --num-tracking: -0.01em;
+  --num-leading: 1.15;
+  --hairline: 1px solid var(--border);
+  --hairline-strong: 1px solid var(--border-strong);
+  --spine-width: 4px;
+  --spine-segment-gap: 1px;
+  --tile-h-sm: 64px;
+  --tile-h-md: 96px;
+  --tile-h-lg: 144px;
 }
 
 /* ----- Dark theme (default) --------------------------------------- */
@@ -3414,4 +3426,414 @@ input, select, button, textarea {
 }
 .symbol-bar__price-delta--up   { color: var(--positive); }
 .symbol-bar__price-delta--down { color: var(--negative); }
+
+
+/* =====================================================================
+   v0.4 — design tokens, the Spine, tabular numerics, status drawer
+   ===================================================================== */
+
+/* Tabular numeric utility — every number on screen should opt into this. */
+.num {
+  font-family: var(--font-num);
+  font-variant-numeric: tabular-nums;
+  letter-spacing: var(--num-tracking);
+  line-height: var(--num-leading);
+}
+.num--lg  { font-size: 28px; font-weight: 700; }
+.num--md  { font-size: 18px; font-weight: 600; }
+.num--sm  { font-size: 13px; font-weight: 500; color: var(--text-secondary); }
+
+/* Inline-key-value pair (label/value, used by sidebar footer, audit rows) */
+.kv-row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-3);
+  padding: 6px 0;
+  border-bottom: var(--hairline);
+}
+.kv-row:last-child { border-bottom: 0; }
+.kv-row__label {
+  font-size: 11px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+.kv-row__value { font-size: 13px; }
+
+/* Generic 1px hairline card — replaces most .glass-card usages.
+   Use only when the glass effect isn't earning data legibility. */
+.hairline-card {
+  border: var(--hairline);
+  border-radius: var(--radius-md);
+  background: var(--bg-card);
+  padding: var(--space-3) var(--space-4);
+}
+
+/* ===== The Spine (signature) ========================================= */
+
+/* Outer wrapper sits between Sidebar and main column.
+   Width is exactly --spine-width. Each segment is a 1px-tall row. */
+.spine {
+  width: var(--spine-width);
+  flex-shrink: 0;
+  background: var(--bg-elevated);
+  border-left: var(--hairline);
+  border-right: var(--hairline);
+  align-self: stretch;
+  display: flex;
+  flex-direction: column;
+  gap: var(--spine-segment-gap);
+  padding: var(--spine-segment-gap) 0;
+}
+.spine__seg {
+  flex: 1;
+  min-height: 24px;
+  background: var(--bg-card);
+  /* default = neutral; segment swaps it via class */
+}
+.spine__seg--live-off { background: var(--text-faint); }
+.spine__seg--live-on  { background: var(--negative); }
+
+.spine__seg--api-ok {
+  background: var(--positive);
+}
+.spine__seg--api-bad {
+  background: var(--negative);
+  animation: spine-pulse 1.6s ease-in-out infinite;
+}
+@keyframes spine-pulse {
+  0%, 100% { opacity: 1; }
+  50%      { opacity: 0.35; }
+}
+
+.spine__seg--ks-off { background: var(--bg-card); }
+.spine__seg--ks-on  { background: var(--negative); }
+
+.spine__seg--bot-disabled { background: var(--text-faint); }
+.spine__seg--bot-enabled  { background: var(--info); }
+.spine__seg--bot-alerting { background: var(--warning); animation: spine-pulse 1s ease-in-out infinite; }
+
+.spine__seg--dd-low      { background: var(--positive); }
+.spine__seg--dd-medium   { background: var(--warning); }
+.spine__seg--dd-high     { background: var(--negative); }
+
+/* Hover tooltip — Python-like spec on hover. */
+.spine__seg { position: relative; }
+.spine__seg:hover::after {
+  content: attr(data-tip);
+  position: absolute;
+  left: calc(100% + 8px);
+  top: 50%;
+  transform: translateY(-50%);
+  background: var(--bg-elevated);
+  color: var(--text-primary);
+  border: var(--hairline);
+  border-radius: var(--radius-sm);
+  padding: 4px 8px;
+  font-size: 11px;
+  white-space: nowrap;
+  z-index: 10;
+  pointer-events: none;
+}
+
+.app-shell--with-spine .app-main {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+.app-main-row {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+}
+
+/* ===== Status drawer ================================================= */
+
+.status-drawer {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  max-height: 28vh;
+  background: var(--bg-elevated);
+  border-top: var(--hairline-strong);
+  z-index: 50;
+  display: flex;
+  flex-direction: column;
+  transition: transform var(--transition-med), max-height var(--transition-med);
+}
+.status-drawer--collapsed {
+  transform: translateY(calc(100% - 28px));
+}
+.status-drawer__bar {
+  height: 28px;
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: 0 var(--space-4);
+  border-bottom: var(--hairline);
+  cursor: pointer;
+  user-select: none;
+  background: var(--bg-card);
+}
+.status-drawer__bar-title {
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+.status-drawer__bar-count {
+  font-size: 11px;
+  color: var(--text-faint);
+  margin-left: auto;
+  font-variant-numeric: tabular-nums;
+}
+.status-drawer__body {
+  flex: 1;
+  overflow-y: auto;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  line-height: 1.6;
+}
+.status-drawer__row {
+  display: grid;
+  grid-template-columns: 64px 80px 1fr 100px;
+  gap: var(--space-3);
+  padding: 4px var(--space-4);
+  border-bottom: var(--hairline);
+}
+.status-drawer__row:hover {
+  background: var(--bg-card-hover);
+}
+.status-drawer__row--critical {
+  border-left: 2px solid var(--negative);
+  padding-left: calc(var(--space-4) - 2px);
+}
+.status-drawer__row--error {
+  border-left: 2px solid var(--warning);
+  padding-left: calc(var(--space-4) - 2px);
+}
+.status-drawer__row--warning {
+  border-left: 2px solid var(--info);
+  padding-left: calc(var(--space-4) - 2px);
+}
+.status-drawer__row-empty {
+  padding: var(--space-4);
+  color: var(--text-muted);
+  text-align: center;
+}
+
+/* ===== Bot monitor page ============================================= */
+
+.bot-grid {
+  display: grid;
+  grid-template-columns: 360px 1fr 320px;
+  gap: var(--space-4);
+  padding: var(--space-4) var(--space-5);
+}
+@media (max-width: 1280px) {
+  .bot-grid { grid-template-columns: 320px 1fr; }
+  .bot-grid > :nth-child(3) { grid-column: 1 / -1; }
+}
+@media (max-width: 900px) {
+  .bot-grid { grid-template-columns: 1fr; }
+}
+
+.bot-quiet-bar {
+  position: relative;
+  height: 28px;
+  background: var(--bg-elevated);
+  border: var(--hairline);
+  border-radius: var(--radius-sm);
+  overflow: hidden;
+}
+.bot-quiet-bar__quiet {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  background: var(--accent-soft);
+}
+.bot-quiet-bar__now {
+  position: absolute;
+  top: -2px;
+  bottom: -2px;
+  width: 2px;
+  background: var(--accent);
+}
+.bot-quiet-bar__label {
+  font-size: 11px;
+  color: var(--text-muted);
+  display: flex;
+  justify-content: space-between;
+  margin-top: 4px;
+  letter-spacing: 0.04em;
+}
+
+.bot-cmd-table {
+  width: 100%;
+  border-collapse: collapse;
+}
+.bot-cmd-table th, .bot-cmd-table td {
+  padding: 6px 10px;
+  border-bottom: var(--hairline);
+  text-align: left;
+  vertical-align: top;
+}
+.bot-cmd-table th {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-muted);
+  font-weight: 500;
+}
+.bot-cmd-table code {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--accent);
+  background: var(--bg-elevated);
+  padding: 1px 6px;
+  border-radius: 4px;
+}
+
+/* Live top-ticker spine accent dot */
+.top-ticker__item .pulse-dot--live {
+  display: inline-block;
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--positive);
+  margin-right: 6px;
+  vertical-align: middle;
+  animation: spine-pulse 2s ease-in-out infinite;
+}
+
+/* Brand mark — shared between Sidebar and Topbar. */
+.brand-mark {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--accent-fg-on);
+  font-weight: 700;
+  font-size: 18px;
+  flex-shrink: 0;
+  border-radius: 12px;
+}
+.topbar__brand-mark {
+  width: 40px;
+  height: 40px;
+}
+.sidebar__brand .brand-mark {
+  width: 36px;
+  height: 36px;
+  border-radius: 10px;
+  font-size: 18px;
+}
+
+/* Topbar inner element widths (extracted from inline styles). */
+.topbar__brand {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+}
+.topbar__brand-mark {
+  width: 40px;
+  height: 40px;
+}
+.topbar__eyebrow {
+  color: var(--text-muted);
+  letter-spacing: 0.18em;
+  margin: 0;
+}
+.topbar__title {
+  margin: 2px 0 0;
+  font-size: 20px;
+  font-weight: 700;
+  line-height: 1.1;
+}
+.sidebar__title { margin: 0; font-size: 15px; }
+
+/* Sidebar status card (replaces inline glass-card in Sidebar). */
+.sidebar__status-card {
+  border-radius: 12px;
+  padding: 10px;
+  border: var(--hairline);
+  background: var(--bg-card);
+}
+.sidebar__status-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 8px;
+}
+.sidebar__pulse {
+  width: 6px;
+  height: 6px;
+  border-radius: 3px;
+  display: inline-block;
+}
+.sidebar__pulse--ok  { background: var(--positive); }
+.sidebar__pulse--bad { background: var(--negative); }
+.sidebar__status-text { font-size: 11px; font-weight: 500; }
+.sidebar__status-text--ok  { color: var(--positive); }
+.sidebar__status-text--bad { color: var(--negative); }
+
+/* Progress row — used by ProgressBar component. */
+.progress-row {
+  display: block;
+  margin-bottom: 8px;
+}
+.progress-row:last-child { margin-bottom: 0; }
+.progress-row__head {
+  display: flex;
+  justify-content: space-between;
+  font-size: 10px;
+  color: var(--text-muted);
+  margin-bottom: 3px;
+  letter-spacing: 0.04em;
+}
+.progress-row__value {
+  font-family: var(--font-num);
+  font-variant-numeric: tabular-nums;
+}
+.progress-row__track {
+  width: 100%;
+  height: 4px;
+  background: var(--bg-elevated);
+  border-radius: 2px;
+  overflow: hidden;
+}
+.progress-row__fill {
+  height: 100%;
+  border-radius: 2px;
+  transition: width 0.4s ease;
+}
+
+/* StatusDrawer severity tokens — replaces inline color spans. */
+.status-drawer__bar-badge {
+  font-weight: 600;
+  font-size: 11px;
+}
+.status-drawer__bar-badge--crit { color: var(--negative); }
+.status-drawer__bar-badge--err  { color: var(--warning); }
+.status-drawer__row-sev { font-weight: 600; }
+.status-drawer__row-sev--critical { color: var(--negative); }
+.status-drawer__row-sev--error    { color: var(--warning); }
+.status-drawer__row-sev--warning  { color: var(--info); }
+.status-drawer__row-sev--info     { color: var(--text-muted); }
+.status-drawer__row-type { color: var(--text-faint); }
+
+/* Section title row inside BotMonitorPage cards. */
+.section-title-row { margin: 0 0 var(--space-3); font-size: 15px; font-weight: 600; }
+.section-title-row--h4 { margin-top: var(--space-5); font-size: 13px; }
+
+/* BotMonitorPage atomic classes — extracted from inline style props. */
+.bot-toggle { width: 100%; }
+.bot-hint { color: var(--text-muted); font-size: 12px; margin: var(--space-2) 0 0; }
+.bot-cmd-category { color: var(--text-muted); }
+.kv-row--spaced { margin-top: var(--space-4); }
+.kv-row__value--tone-positive { color: var(--positive); }
+.kv-row__value--tone-muted { color: var(--text-muted); }
+
 

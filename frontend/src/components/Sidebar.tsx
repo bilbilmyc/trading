@@ -4,7 +4,9 @@ import {
   ClipboardList,
   Database,
   History,
+  MessageSquare,
   PieChart,
+  Send,
   Settings,
   Shield,
   Sigma,
@@ -14,6 +16,7 @@ import {
 
 import { useStatus } from "../contexts/StatusContext";
 import { useEngine } from "../contexts/EngineContext";
+import { ProgressBar } from "./ProgressBar";
 import { StatusPill } from "./atoms";
 
 interface NavItem {
@@ -56,6 +59,7 @@ const NAV_GROUPS: NavGroup[] = [
     items: [
       { href: "/risk", label: "风控", icon: Shield, description: "Kill switch · 风险指标" },
       { href: "/audit", label: "审计", icon: ClipboardList, description: "事件流 · 按级别过滤" },
+      { href: "/bot", label: "Bot 监控", icon: Send, description: "Telegram bot · 命令速查 · 静默" },
     ],
   },
   {
@@ -78,44 +82,30 @@ function isActive(currentPath: string, href: string): boolean {
 
 export function Sidebar({ open, onClose }: SidebarProps) {
   const [location] = useLocation();
-  const { apiOnline, env, killSwitch } = useStatus();
-  // Destructure both — `engineStatus` is the EngineStatus | null object,
-  // `strategies` is the StrategyInfo[] (the local `engine` name conflicted
-  // with EngineStatus.strategies which is string[] of exchange names).
-  const { engine: engineStatus, strategies } = useEngine();
-  const ordersLastMin = engineStatus?.risk?.orders_last_minute ?? 0;
-  const maxOrders = engineStatus?.risk?.max_orders_per_minute ?? 100;
+  const { apiOnline, killSwitch } = useStatus();
+  const { engine, strategies } = useEngine();
+
+  // Note: `engine` IS the status object (not array of strategies). The
+  // local variable name comes from useEngine's bundle alias to avoid
+  // colliding with `engineStatus.strategies` (which is a string[] of
+  // exchange names downstream code might expect).
+  const ordersLastMin = engine?.risk?.orders_last_minute ?? 0;
+  const maxOrders = engine?.risk?.max_orders_per_minute ?? 100;
   const ratePct = maxOrders > 0 ? Math.min(100, (ordersLastMin / maxOrders) * 100) : 0;
   const liveCount = strategies.filter((s) => s.running).length;
   const totalStrategies = strategies.length;
-  const loadPct = totalStrategies > 0 ? Math.min(100, (liveCount / totalStrategies) * 100) : 0;
+  const loadPct =
+    totalStrategies > 0 ? Math.min(100, (liveCount / totalStrategies) * 100) : 0;
 
   return (
     <>
       <aside className={`sidebar ${open ? "sidebar--open" : ""}`}>
-        <div className="sidebar__brand" style={{ display: "flex", alignItems: "center", gap: 10 }}>
-          <div
-            className="gradient-brand glow"
-            style={{
-              width: 36,
-              height: 36,
-              borderRadius: 10,
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "center",
-              color: "#fff",
-              fontSize: 18,
-              fontWeight: 700,
-              flexShrink: 0,
-            }}
-            aria-hidden="true"
-          >
+        <div className="sidebar__brand">
+          <div className="brand-mark gradient-brand glow" aria-hidden="true">
             ⚡
           </div>
           <div>
-            <h2 className="text-gradient-brand" style={{ margin: 0, fontSize: 15 }}>
-              Quant Trader
-            </h2>
+            <h2 className="text-gradient-brand sidebar__title">Quant Trader</h2>
             <span className="sidebar__subtitle">量化交易控制台</span>
           </div>
         </div>
@@ -146,103 +136,39 @@ export function Sidebar({ open, onClose }: SidebarProps) {
             </div>
           ))}
         </nav>
-        {/* System status card (AutoClip style: dot + 2 progress bars). */}
         <div className="sidebar__footer">
-          <div className="glass-card" style={{ borderRadius: 12, padding: 10 }}>
-            <div
-              style={{
-                display: "flex",
-                alignItems: "center",
-                gap: 6,
-                marginBottom: 8,
-              }}
-            >
+          <div className="sidebar__status-card">
+            <div className="sidebar__status-head">
               <span
-                className="pulse-dot"
-                style={{
-                  width: 6,
-                  height: 6,
-                  borderRadius: 3,
-                  background: apiOnline ? "var(--positive)" : "var(--negative)",
-                }}
+                className={`sidebar__pulse ${apiOnline ? "sidebar__pulse--ok" : "sidebar__pulse--bad"}`}
                 aria-hidden="true"
               />
               <span
-                style={{
-                  fontSize: 11,
-                  color: apiOnline ? "var(--positive)" : "var(--negative)",
-                  fontWeight: 500,
-                }}
+                className={`sidebar__status-text ${apiOnline ? "sidebar__status-text--ok" : "sidebar__status-text--bad"}`}
               >
                 {apiOnline ? "System Online" : "System Offline"}
               </span>
+              {killSwitch?.enabled ? (
+                <StatusPill state="danger">
+                  <MessageSquare size={11} /> KS
+                </StatusPill>
+              ) : null}
             </div>
-            <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-              <ProgressBar
-                label="API Rate"
-                value={`${ordersLastMin}/${maxOrders}`}
-                pct={ratePct}
-                gradient="linear-gradient(90deg, var(--accent) 0%, var(--accent-purple) 100%)"
-              />
-              <ProgressBar
-                label="Runner Load"
-                value={`${liveCount}/${totalStrategies}`}
-                pct={loadPct}
-                gradient="linear-gradient(90deg, var(--info) 0%, var(--accent) 100%)"
-              />
-            </div>
+            <ProgressBar
+              label="API Rate"
+              value={`${ordersLastMin}/${maxOrders}`}
+              pct={ratePct}
+            />
+            <ProgressBar
+              label="Runner Load"
+              value={`${liveCount}/${totalStrategies}`}
+              pct={loadPct}
+              gradient="linear-gradient(90deg, var(--info) 0%, var(--accent) 100%)"
+            />
           </div>
         </div>
       </aside>
       {open ? <div className="sidebar__backdrop" onClick={onClose} /> : null}
     </>
-  );
-}
-
-function ProgressBar({
-  label,
-  value,
-  pct,
-  gradient,
-}: {
-  label: string;
-  value: string;
-  pct: number;
-  gradient: string;
-}) {
-  return (
-    <div>
-      <div
-        style={{
-          display: "flex",
-          justifyContent: "space-between",
-          fontSize: 10,
-          color: "var(--text-muted)",
-          marginBottom: 3,
-        }}
-      >
-        <span>{label}</span>
-        <span style={{ fontFamily: "var(--font-mono)" }}>{value}</span>
-      </div>
-      <div
-        style={{
-          width: "100%",
-          height: 4,
-          background: "var(--bg-elevated)",
-          borderRadius: 2,
-          overflow: "hidden",
-        }}
-      >
-        <div
-          style={{
-            height: "100%",
-            width: `${pct}%`,
-            background: gradient,
-            borderRadius: 2,
-            transition: "width 0.4s ease",
-          }}
-        />
-      </div>
-    </div>
   );
 }

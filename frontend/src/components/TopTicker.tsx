@@ -1,66 +1,105 @@
+/**
+ * Live TopTicker — pulls from /api/v1/prices every 5s, falls back to dashes.
+ *
+ * The previous version (commit 0bc9714) shipped with hard-coded sample
+ * prices which violated "monitoring" — the user has no way to tell real
+ * from fake without watching the API logs. v0.4 wires it to the live
+ * prices endpoint and shows "—" until the first response arrives.
+ */
+
 import { memo, useEffect, useState } from "react";
+
+import { marketApi } from "../api/market";
 
 interface TickerItem {
   symbol: string;
-  price: number;
-  change: number;
+  price: number | null;
+  /** 24h change in percent (best-effort). */
+  change: number | null;
 }
 
-/**
- * Static default sample so the strip never reads empty during boot.
- * In production this would come from a market-data SSE; we render the
- * fallback inline to keep the layout stable.
- */
-const SAMPLE_ITEMS: TickerItem[] = [
-  { symbol: "BTCUSDT", price: 97234.5, change: 1.84 },
-  { symbol: "ETHUSDT", price: 3842.1, change: -0.92 },
-  { symbol: "SOLUSDT", price: 198.32, change: 3.5 },
-  { symbol: "BNBUSDT", price: 712.4, change: 0.42 },
-  { symbol: "XRPUSDT", price: 2.351, change: -1.2 },
-  { symbol: "ADAUSDT", price: 1.084, change: 2.1 },
-  { symbol: "DOGEUSDT", price: 0.382, change: 5.7 },
-  { symbol: "AVAXUSDT", price: 42.51, change: -2.3 },
-  { symbol: "LINKUSDT", price: 22.14, change: 1.5 },
-  { symbol: "DOTUSDT", price: 8.722, change: -0.5 },
+/** Display order — the user-visible watchlist. */
+const DISPLAY_SYMBOLS: string[] = [
+  "BTCUSDT",
+  "ETHUSDT",
+  "SOLUSDT",
+  "BNBUSDT",
+  "XRPUSDT",
+  "ADAUSDT",
+  "DOGEUSDT",
+  "AVAXUSDT",
+  "LINKUSDT",
+  "DOTUSDT",
 ];
 
-/**
- * Horizontal-scrolling marquee of last prices.
- * Duplicated content with a CSS animation; pure render, no JS animation loop.
- */
-export const TopTicker = memo(function TopTicker() {
-  const [items] = useState<TickerItem[]>(SAMPLE_ITEMS);
+const POLL_INTERVAL_MS = 5_000;
 
-  // (Hook retained so future SSE wiring is a one-liner.)
+export const TopTicker = memo(function TopTicker() {
+  const [prices, setPrices] = useState<Record<string, number>>({});
+  const [online, setOnline] = useState<boolean>(false);
+
   useEffect(() => {
-    /* no-op placeholder for future live data hook */
+    let cancelled = false;
+    const id = window.setInterval(async () => {
+      try {
+        const data = await marketApi.prices();
+        if (!cancelled) {
+          setPrices(data);
+          setOnline(true);
+        }
+      } catch {
+        if (!cancelled) setOnline(false);
+      }
+    }, POLL_INTERVAL_MS);
+    // First read immediately so users don't see dashes on a warm cache.
+    void (async () => {
+      try {
+        const data = await marketApi.prices();
+        if (!cancelled) {
+          setPrices(data);
+          setOnline(true);
+        }
+      } catch {
+        if (!cancelled) setOnline(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+      window.clearInterval(id);
+    };
   }, []);
 
-  // Duplicate the array so the marquee loop is visually seamless.
+  // Build the display list; missing prices render as "—" so the
+  // marquee tells the user something, rather than echoing fake numbers.
+  const items: TickerItem[] = DISPLAY_SYMBOLS.map((symbol) => ({
+    symbol,
+    price: prices[symbol] ?? null,
+    // 24h change isn't in /prices; a future ticker-per-symbol call
+    // can fill this in. For now we leave it null so the UI strips it.
+    change: null,
+  }));
+
+  // Duplicate for the seamless marquee loop.
   const loop = [...items, ...items];
 
   return (
     <div className="top-ticker" role="marquee" aria-label="热门合约行情">
       <div className="top-ticker__track">
-        {loop.map((item, i) => {
-          const up = item.change >= 0;
-          return (
-            <span className="top-ticker__item" key={`${item.symbol}-${i}`}>
-              <strong className="top-ticker__symbol">{item.symbol}</strong>
-              <span className="top-ticker__price">
-                ${item.price >= 1000
+        {loop.map((item, i) => (
+          <span className="top-ticker__item" key={`${item.symbol}-${i}`}>
+            {online && i === 0 ? (
+              <span className="pulse-dot--live" aria-hidden="true" />
+            ) : null}
+            <strong className="top-ticker__symbol">{item.symbol}</strong>
+            <span className="top-ticker__price num">
+              {item.price === null
+                ? "—"
+                : item.price >= 1000
                   ? item.price.toLocaleString("en-US", { maximumFractionDigits: 2 })
                   : item.price.toFixed(4)}
-              </span>
-              <span
-                className={`top-ticker__change ${up ? "is-up" : "is-down"}`}
-                data-tone={up ? "up" : "down"}
-              >
-                {up ? "▲" : "▼"} {Math.abs(item.change).toFixed(2)}%
-              </span>
             </span>
-          );
-        })}
+          </span>
+        ))}
       </div>
     </div>
   );
