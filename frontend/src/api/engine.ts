@@ -11,6 +11,21 @@ import { request } from "./_client";
 
 // ── Types ─────────────────────────────────────────────────────────
 
+/** Subset of the Telegram bot config that the frontend consumes.
+ *  Returned by `/api/v1/engine/status.bot` and `/api/v1/bot`. */
+export interface BotStatus {
+  enabled: boolean;
+  allowed_chat_ids: number[];
+  /** Last 4 chars of the bearer token; never the full token. `null`
+   *  when the bot is unconfigured. */
+  token_tail: string | null;
+  /** Quiet-hours interval as a 2-tuple `[startHour, endHour]`. `null`
+   *  when quiet hours are disabled. */
+  quiet_hours: [number, number] | null;
+  min_alert_level: "info" | "warning" | "error" | "critical" | string;
+  alert_fingerprint_cooldown_seconds: number;
+}
+
 export interface EngineStatus {
   running: boolean;
   exchanges: string[];
@@ -42,12 +57,18 @@ export interface EngineStatus {
     }>;
   };
   timestamp: string;
+  /** Optional BotStatus field — present whenever the API has applied the
+   *  v0.4+ augmentation. Older servers omit it; consumers should treat
+   *  absence as "no bot configured". */
+  bot?: BotStatus;
 }
 
 // ── Methods ──────────────────────────────────────────────────────
 
 export const engineApi = {
   engineStatus: () => request<EngineStatus>("/api/v1/engine/status"),
+
+  botStatus: () => request<BotStatus>("/api/v1/bot"),
 
   runnerStatus: () => request<SignalRunnerStatus>("/api/v1/runner/status"),
 

@@ -3831,6 +3831,7 @@ input, select, button, textarea {
 /* BotMonitorPage atomic classes — extracted from inline style props. */
 .bot-toggle { width: 100%; }
 .bot-hint { color: var(--text-muted); font-size: 12px; margin: var(--space-2) 0 0; }
+.bot-hint--err { color: var(--negative); }
 .bot-cmd-category { color: var(--text-muted); }
 .kv-row--spaced { margin-top: var(--space-4); }
 .kv-row__value--tone-positive { color: var(--positive); }

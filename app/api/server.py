@@ -62,6 +62,26 @@ from config import Settings, load_settings
 T = TypeVar("T")
 
 
+def _bot_status_payload(settings: Settings) -> dict[str, Any]:
+    """Serialize the bot config to a frontend-safe dict.
+
+    Only the *last 4* characters of the Telegram token are exposed; this is
+    useful for the user to confirm "is my bot online" without leaking the
+    bearer secret that the bot uses to talk to the engine. Quiet hours
+    round-trip as a 2-tuple or `None` to keep JSON simple.
+    """
+    bot = settings.bot
+    token = bot.telegram_token or ""
+    return {
+        "enabled": bool(bot.enabled),
+        "allowed_chat_ids": list(bot.allowed_chat_ids),
+        "token_tail": (token[-4:] if token and len(token) >= 4 else None),
+        "quiet_hours": list(bot.quiet_hours) if bot.quiet_hours is not None else None,
+        "min_alert_level": bot.min_alert_level,
+        "alert_fingerprint_cooldown_seconds": bot.alert_fingerprint_cooldown_seconds,
+    }
+
+
 class AppState:
     """一个 API worker 内共享的运行时对象。
 
@@ -1009,7 +1029,19 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @app.get("/api/v1/engine/status")
     async def engine_status(state: AppState = Depends(get_state)):
-        return await state.engine.get_status()
+        status = await state.engine.get_status()
+        # Augment with bot config so the frontend (Spine + BotMonitorPage)
+        # has a single round-trip to learn whether the bot is enabled, which
+        # chats are whitelisted, and what quiet hours / min alert level apply.
+        # Never expose the raw token — only its tail — to keep the bearer
+        # secret fully off-wire.
+        status["bot"] = _bot_status_payload(state.settings)
+        return status
+
+    @app.get("/api/v1/bot")
+    async def bot_status(state: AppState = Depends(get_state)):
+        """Standalone bot endpoint — same payload as engine_status['bot']."""
+        return _bot_status_payload(state.settings)
 
     @app.get("/api/v1/runner/status")
     async def signal_runner_status(state: AppState = Depends(get_state)):

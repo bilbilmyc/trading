@@ -40,7 +40,7 @@ export type {
   Ticker, ContractMarket, RecentTrade, Candle, OpenOrder, FeeRate, CostEstimate,
 } from "./api/market";
 export type { ContractOrderPayload, ContractOrderPreview } from "./api/orders";
-export type { EngineStatus } from "./api/engine";
+export type { EngineStatus, BotStatus } from "./api/engine";
 export type {
   StrategyInfo, PaperSummary, PaperPosition, PaperOrder, StrategySignal,
   AuditEvent, CreateSMAStrategyPayload, SignalRunnerStatus,

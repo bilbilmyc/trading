@@ -11,10 +11,10 @@
  * Each segment reveals a one-line tooltip on hover so the Spine never
  * needs to take screen real-estate to explain itself.
  *
- * Bot segment is currently driven by the monitor's last_error — it pulses
- * when there's a critical alert, lights cyan when no alerts, dark when the
- * backend hasn't loaded yet. A future /api/v1/bot endpoint will replace
- * this heuristic with a real liveness signal.
+ * Segment 4 reflects `engine.bot.enabled` directly. When the bot is
+ * unconfigured it stays dark/gray; while the bot is configured but the
+ * monitor reports at least one error-level event, the segment pulses
+ * amber to attract attention.
  */
 
 import { useEngine } from "../contexts/EngineContext";
@@ -35,15 +35,21 @@ export function Spine() {
   const { engine, events } = useEngine();
 
   const drawdown = engine?.risk?.current_drawdown ?? 0;
+  const botEnabled = engine?.bot?.enabled ?? false;
   const botAlerting = events.some(
     (e) => e.level === "critical" || e.level === "error",
   );
-  const hasEvents = events.length > 0;
-  const botClass = botAlerting
-    ? "spine__seg--bot-alerting"
-    : hasEvents
-      ? "spine__seg--bot-enabled"
-      : "spine__seg--bot-disabled";
+  const botClass = !botEnabled
+    ? "spine__seg--bot-disabled"
+    : botAlerting
+      ? "spine__seg--bot-alerting"
+      : "spine__seg--bot-enabled";
+
+  const botTip = !botEnabled
+    ? "Bot: disabled"
+    : botAlerting
+      ? "Bot: alerting"
+      : "Bot: online";
 
   return (
     <aside className="spine" aria-label="system status">
@@ -61,7 +67,7 @@ export function Spine() {
       />
       <div
         className={`spine__seg ${botClass}`}
-        data-tip={`Alert feed: ${botAlerting ? "active alerts" : hasEvents ? "live" : "no data"}`}
+        data-tip={botTip}
       />
       <div
         className={`spine__seg ${drawdownClass(drawdown)}`}

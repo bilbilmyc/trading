@@ -1,26 +1,17 @@
-/** Bot monitor page — settings + command catalog + quiet hours visualization.
+/**
+ * Bot monitor page — settings + command catalog + quiet hours visualization.
+ *
+ * Data sources:
+ *   - engine.bot (BotStatus, populated by /api/v1/engine/status.bot)
+ *   - killSwitch (from StatusContext)
+ *   - /api/v1/risk/kill-switch POST for the quick-toggle.
+ */
 
-Layout (3 columns on wide screens):
-  ┌──────────────┬──────────────────────────┬──────────────┐
-  │ Bot status   │ Command catalog table    │ Quiet hours  │
-  │ + quick kill │ (with HTML preview)      │ bar + form   │
-  └──────────────┴──────────────────────────┴──────────────┘
-
-Data sources:
-- /api/v1/engine/status — to derive bot state from monitor
-- /api/v1/risk/kill-switch — to allow kill from this page
-- (chat whitelist + token tail + state) — currently read from /api/v1/engine/status
-  or stubbed if the backend hasn't yet exposed /api/v1/bot.
-
-The page exists as a placeholder so the frontend has a place to land; wiring
-more endpoints is a follow-up.
-*/
-
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useEngine } from "../contexts/EngineContext";
 import { useStatus } from "../contexts/StatusContext";
+import { api } from "../api";
 import { PageHeader } from "../components/PageHeader";
-import { ProgressBar } from "../components/ProgressBar";
 import { EmptyState } from "../components/atoms";
 
 const COMMAND_CATALOG: Array<{
@@ -48,28 +39,25 @@ function fmtHour(h: number): string {
   return `${h.toString().padStart(2, "0")}:00`;
 }
 
-/** Local extension of EngineStatus carrying bot fields that
- *  haven't yet been wired into /api/v1/engine/status. */
-interface BotAugment {
-  bot_enabled?: boolean;
-  bot_allowed_chat_ids?: number[];
-  bot_token_tail?: string;
-  bot_quiet_hours?: [number, number] | null;
-  bot_min_alert_level?: string;
-}
-
 export function BotMonitorPage() {
-  const { engine } = useEngine();
+  const { engine, refresh } = useEngine();
   const { killSwitch } = useStatus();
   const [flipPending, setFlipPending] = useState(false);
+  const [flipError, setFlipError] = useState<string | null>(null);
 
-  // Bot state is currently a frontend placeholder — the backend
-  // endpoint /api/v1/bot will replace these with real fields.
-  const bot = engine as unknown as BotAugment | null;
-  const botEnabled = bot?.bot_enabled ?? false;
-  const botChats: number[] = bot?.bot_allowed_chat_ids ?? [];
-  const tokenTail = bot?.bot_token_tail ?? "—";
-  const quietHours = bot?.bot_quiet_hours ?? null;
+  // Pull the bot status eagerly if the engine bootstrap hasn't surfaced
+  // it (older servers don't include the augmentation, so we always try).
+  useEffect(() => {
+    if (engine?.bot === undefined) {
+      void api.botStatus().catch(() => null);
+    }
+  }, [engine?.bot]);
+
+  const bot = engine?.bot;
+  const botEnabled = bot?.enabled ?? false;
+  const botChats: number[] = bot?.allowed_chat_ids ?? [];
+  const tokenTail = bot?.token_tail ?? "—";
+  const quietHours: [number, number] | null = bot?.quiet_hours ?? null;
   const quietPercent = useMemo(() => {
     if (!quietHours) return 0;
     const [start, end] = quietHours;
@@ -87,13 +75,13 @@ export function BotMonitorPage() {
 
   async function toggleKill() {
     setFlipPending(true);
+    setFlipError(null);
     try {
       const enabled = !killSwitch?.enabled;
-      await fetch("/api/v1/risk/kill-switch", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ enabled, reason: "bot_monitor_page" }),
-      });
+      await api.setKillSwitch(enabled, "bot_monitor_page");
+      await refresh();
+    } catch (err) {
+      setFlipError((err as Error).message);
     } finally {
       setFlipPending(false);
     }
@@ -114,13 +102,15 @@ export function BotMonitorPage() {
           <h3 className="section-title-row">Bot 状态</h3>
           <div className="kv-row">
             <span className="kv-row__label">运行</span>
-            <span className="kv-row__value num">
+            <span
+              className={`kv-row__value num kv-row__value--tone-${botEnabled ? "positive" : "muted"}`}
+            >
               {botEnabled ? "已启用" : "未启用"}
             </span>
           </div>
           <div className="kv-row">
             <span className="kv-row__label">Token 后 4 位</span>
-            <span className="kv-row__value num">{tokenTail}</span>
+            <span className="kv-row__value num">{tokenTail || "—"}</span>
           </div>
           <div className="kv-row">
             <span className="kv-row__label">允许 chat</span>
@@ -131,7 +121,7 @@ export function BotMonitorPage() {
           <div className="kv-row">
             <span className="kv-row__label">最小告警级别</span>
             <span className="kv-row__value num">
-              {bot?.bot_min_alert_level ?? "warning"}
+              {bot?.min_alert_level ?? "warning"}
             </span>
           </div>
 
@@ -146,10 +136,15 @@ export function BotMonitorPage() {
               ? "✅ 关闭 Kill Switch"
               : "🚨 启用 Kill Switch"}
           </button>
-          <p className="bot-hint">
-            此按钮通过 <code>X-Bot-Scope: monitor</code> 头调用 API，
-            与 bot 端发送 <code>/kill on</code> 等价。
-          </p>
+          {flipError ? (
+            <p className="bot-hint bot-hint--err">{flipError}</p>
+          ) : (
+            <p className="bot-hint">
+              此按钮等价于 bot 端发送
+              <code> /kill {killSwitch?.enabled ? "off" : "on"}</code>——
+              二者都调用 <code>/api/v1/risk/kill-switch</code>。
+            </p>
+          )}
         </section>
 
         {/* Column 2: Command catalog */}
