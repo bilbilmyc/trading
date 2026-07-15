@@ -20,3 +20,10 @@ dist
 build
 *.log
 .DS_Store
+
+# Local runtime state and large developer artifacts are never part of an image.
+data/
+*.db
+*.sqlite*
+backend-api*.log
+btc-tracker.html

@@ -235,7 +235,7 @@ class LLMAnalyzer:
         config: LLMAnalyzerConfig | None = None,
         provider: OpenAIProvider | None = None,
         cache: LLMFingerprintCache | None = None,
-        on_decision: "Callable[[dict[str, Any]], Awaitable[None]] | None" = None,
+        on_decision: Callable[[dict[str, Any]], Awaitable[None]] | None = None,
     ) -> None:
         self.config = config or LLMAnalyzerConfig()
         if not self.config.api_key:

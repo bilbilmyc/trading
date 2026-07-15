@@ -9,7 +9,7 @@
 
 function resolveApiBase(): string {
   if (import.meta.env.VITE_API_BASE_URL) return import.meta.env.VITE_API_BASE_URL;
-  if (window.location.port === "5173") return "http://127.0.0.1:8000";
+  if (window.location.port === "5180") return "http://127.0.0.1:8000";
   return window.location.origin;
 }
 

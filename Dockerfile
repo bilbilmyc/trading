@@ -16,6 +16,9 @@ ENV PYTHONUNBUFFERED=1 \
 
 WORKDIR /app
 
+# Dependency metadata is copied before application source so BuildKit can
+# reuse this layer when only application code changes. `package = false` in
+# pyproject.toml means the application itself is not installed as a wheel.
 COPY pyproject.toml uv.lock .python-version ./
 RUN uv sync --frozen --no-dev --no-install-project
 
@@ -24,13 +27,9 @@ COPY config ./config
 COPY main.py README.md ./
 COPY --from=frontend-builder /app/frontend/dist ./static
 
-RUN uv sync --frozen --no-dev
-
-# Put the synced venv on PATH so the CMD can just say `python …` without
-# going through `uv run`. Going through `uv run` at container start would
-# trigger a fresh `uv sync` against the lockfile, which (without --no-dev)
-# pulls the dev group back in and produces the "Downloading ruff/mypy/…"
-# lines the user saw in the runtime logs.
+# The virtual environment is already populated in the cacheable dependency
+# layer above. Do not run `uv sync` at container startup: it can re-resolve
+# optional groups and makes the runtime depend on package-index availability.
 ENV PATH="/app/.venv/bin:$PATH"
 
 EXPOSE 8000

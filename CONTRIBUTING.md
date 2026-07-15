@@ -8,7 +8,7 @@
 git clone <repo>
 cd trading
 uv sync --all-extras --dev
-cd frontend && npm install && cd ..
+cd frontend && npm ci && cd ..
 
 # 装 pre-commit hooks（可选）
 uv run pip install pre-commit
@@ -22,7 +22,7 @@ uv run pre-commit install
 3. **commit message 用中文**（项目惯例），格式 `type(scope): 中文标题`
 4. **跑门禁**：`make ci`（一键跑 ruff + pytest with coverage + 前端 typecheck + vitest + build）
    或按需：`make lint` / `make test` / `make test-frontend` / `make typecheck`
-5. **本地双进程 dev**：`make dev`（API :8000 + Vite :5173 并行）
+5. **本地双进程 dev**：`make dev`（API :8000 + Vite :5180 并行）
 6. **TypeCheck**（可选）：`uv run mypy app/`
 7. **push 后开 PR**
 

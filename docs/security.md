@@ -6,7 +6,7 @@
 
 - 监听 `0.0.0.0:8000`（如需仅本地，改为 `127.0.0.1`）
 - 无 API 鉴权（任何能访问 8000 端口的人都能调所有端点）
-- CORS 允许 `http://localhost:5173` 和 `http://127.0.0.1:5173`
+- CORS 允许 `http://localhost:5180` 和 `http://127.0.0.1:5180`
 - API key 明文存于 `.env`（无 KMS / 加密）
 - SQLite 无备份（依赖磁盘）
 
@@ -57,17 +57,16 @@ echo "AUTH_API_KEY=$AUTH_API_KEY" >> .env
 
 ## CORS
 
-`server.py` 硬编码：
+`server.py` 仅允许本地 Vite 开发服务器：
 
 ```python
 allow_origins=[
-    "http://127.0.0.1:5173",
-    "http://localhost:5173",
+    "http://127.0.0.1:5180",
+    "http://localhost:5180",
 ]
 ```
 
-仅放本地前端域名。生产部署若用 nginx 反代，CORS 配置可保持默认（nginx 在外层去掉 CORS 头）。
-
+生产镜像以同源方式在 :8000 提供前端和 API，不需要浏览器跨域。若部署到额外的 Web 域名，请在上线前显式将该 HTTPS 来源加入 allowlist；不要使用 `*`。
 ## 数据库安全
 
 SQLite 文件位置 `data/trading.sqlite3`：

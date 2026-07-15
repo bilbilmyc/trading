@@ -5,26 +5,40 @@ services:
       dockerfile: Dockerfile
     image: quant-trader:dev
     container_name: quant-trader-api
-    command: uv run uvicorn app.api.server:create_app --factory --host 0.0.0.0 --port 8000 --reload
+    command: python -m uvicorn app.api.server:create_app --factory --host 0.0.0.0 --port 8000 --reload
     volumes:
       - ./app:/app/app
       - ./config:/app/config
       - ./main.py:/app/main.py
+      - trading_data_dev:/app/data
     environment:
+      APP_ENV: development
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
       SQLITE_PATH: /app/data/trading.sqlite3
     ports:
       - "8000:8000"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 10s
 
   web:
     image: node:22-slim
     container_name: quant-trader-web
     working_dir: /app
-    command: sh -c "npm install && npm run dev -- --host 0.0.0.0"
+    command: sh -c "npm ci && npm run dev"
     volumes:
       - ./frontend:/app
     environment:
-      VITE_API_URL: http://localhost:8000
+      VITE_API_BASE_URL: http://localhost:8000
     ports:
-      - "5173:5173"
+      - "5180:5180"
     depends_on:
-      - api
+      api:
+        condition: service_healthy
+
+volumes:
+  trading_data_dev:
+    name: quant-trader-dev-data

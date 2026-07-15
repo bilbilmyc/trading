@@ -192,7 +192,7 @@
 | 维度 | 状态 | 详情 |
 |---|---|---|
 | API 鉴权 | ❌ | 无 JWT / API key / OAuth |
-| CORS | ⚠️ | 仅放 `127.0.0.1:5173`，生产无联动 |
+| CORS | ✅ | 仅放本地 Vite `127.0.0.1:5180` / `localhost:5180`；生产同源 |
 | SQL 注入 | ✅ | 全部参数化占位符 |
 | API key 加密 | ❌ | `.env` 明文 |
 | HTTPS | ❌ | 无 nginx / traefik |

@@ -31,6 +31,23 @@ def test_root_health(tmp_path) -> None:
         assert r.json()["status"] == "ok"
 
 
+def test_cors_allows_current_vite_development_origin(tmp_path) -> None:
+    """The configured Vite port must remain usable for local browser requests."""
+    with TestClient(create_app(_settings(sqlite_path=str(tmp_path / "h.sqlite3")))) as c:
+        response = c.get("/health", headers={"Origin": "http://localhost:5180"})
+
+    assert response.status_code == 200
+    assert response.headers["access-control-allow-origin"] == "http://localhost:5180"
+
+
+def test_cors_does_not_allow_the_retired_vite_port(tmp_path) -> None:
+    with TestClient(create_app(_settings(sqlite_path=str(tmp_path / "h.sqlite3")))) as c:
+        response = c.get("/health", headers={"Origin": "http://localhost:5173"})
+
+    assert response.status_code == 200
+    assert "access-control-allow-origin" not in response.headers
+
+
 def test_get_venues(tmp_path) -> None:
     with TestClient(create_app(_settings(sqlite_path=str(tmp_path / "h.sqlite3")))) as c:
         r = c.get("/api/v1/health/venues")

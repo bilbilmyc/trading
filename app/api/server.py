@@ -305,13 +305,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     # bot calls from web-ui calls.
     app.add_middleware(ScopeContextMiddleware)
 
-    # 前端开发时 Vite 跑在 5173，浏览器会跨端口调用 8000 的 API。
+    # 前端开发时 Vite 跑在 5180，浏览器会跨端口调用 8000 的 API。
     # CORS 只放开本地前端地址，不把 API 暴露给任意网站。
     app.add_middleware(
         CORSMiddleware,
         allow_origins=[
-            "http://127.0.0.1:5173",
-            "http://localhost:5173",
+            "http://127.0.0.1:5180",
+            "http://localhost:5180",
         ],
         allow_credentials=True,
         allow_methods=["*"],
@@ -1517,8 +1517,6 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         (Binance `/fapi/v1/ticker/24hr`, OKX `/api/v5/market/ticker`), so
         adapters that don't surface the field will return 0.0 there.
         """
-        from app.exchanges.factory import ExchangeFactory
-
         watchlist = [
             "BTCUSDT", "ETHUSDT", "SOLUSDT", "BNBUSDT", "XRPUSDT",
             "ADAUSDT", "DOGEUSDT", "AVAXUSDT", "LINKUSDT", "DOTUSDT",

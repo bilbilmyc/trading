@@ -1,107 +1,106 @@
-# 部署指南
+# 部署与运行指南
+
+## 运行模式与端口
+
+| 场景 | 命令 | Web UI | API |
+|---|---|---:|---:|
+| 生产 / 演示（Docker） | `docker compose up --build -d` | `:8000` | `:8000` |
+| 本地开发 | `uv run python main.py api` + `cd frontend && npm run dev` | `:5180` | `:8000` |
+| Docker 开发 | `docker compose -f docker-compose.dev.yml up --build` | `:5180` | `:8000` |
+
+生产模式由 FastAPI 提供编译后的静态前端，因此只暴露一个端口。开发模式运行 Vite；浏览器端 API 地址默认按 `:5180 → http://127.0.0.1:8000` 解析，可使用 `VITE_API_BASE_URL` 覆盖。
 
 ## 前置要求
 
-- Python 3.13（CI 锁 3.13；项目支持 3.13–3.14）
-- Node 22（前端）
-- uv（包管理）
-- Docker 24+（可选，容器化部署）
-- 可选：交易所 testnet API key + LLM API key
+- **Docker 模式**：Docker Desktop / Docker Engine（含 Compose v2）
+- **本地模式**：Python 3.13、uv、Node.js 22
+- 可选：交易所 testnet API key、LLM API key
 
-## 开发模式（前后端分离）
-
-适合日常开发，热重载：
+## 生产部署（推荐）
 
 ```bash
-# 一次性
-git clone <repo>
-cd trading
-uv sync --all-extras --dev
-cd frontend && npm install && cd ..
-
-# 启动后端（:8000）
-uv run main.py api
-
-# 启动前端（:5173，vite proxy → :8000）
-cd frontend && npm run dev
+cp .env.example .env
+# 检查 ENABLE_LIVE_TRADING=false，除非已完成 testnet 验证
+docker compose up --build -d
+curl http://127.0.0.1:8000/health
+docker compose logs -f api
 ```
 
-访问 <http://localhost:5173>。
+浏览器访问 <http://127.0.0.1:8000>，API 文档为 <http://127.0.0.1:8000/docs>。
 
-## 生产模式（单体 Docker）
+服务生命周期：
 
-镜像推送到 GHCR：
+```bash
+docker compose down       # 停止容器，保留 quant-trader-data 卷
+docker compose up -d      # 使用已有镜像重新启动
+docker compose up --build -d  # 代码或依赖更新后重建并启动
+docker compose down -v    # 同时删除 SQLite 数据卷（不可恢复）
+```
+
+也可以使用已发布镜像：
 
 ```bash
 docker pull ghcr.io/bilbilmyc/trading:latest
-docker compose up -d
+docker run --rm --name quant-trader -p 8000:8000 --env-file .env ghcr.io/bilbilmyc/trading:latest
 ```
 
-`docker-compose.yaml` 启动一个服务：FastAPI 在 :8000 提供 API + 静态前端。
-
-## 纯本地模式（不用 Docker）
+## 本地开发（前后端分离）
 
 ```bash
-cd frontend && npm run build && cd ..
-uv run main.py api
-# 访问 http://localhost:8000（前端由 FastAPI 静态文件服务）
+uv sync --all-extras --dev
+cd frontend && npm ci && cd ..
+cp .env.example .env
+
+# 终端 1
+uv run python main.py api --host 127.0.0.1 --port 8000
+
+# 终端 2
+cd frontend && npm run dev
 ```
 
-## 环境变量（关键项）
+访问 <http://127.0.0.1:5180>。FastAPI 的 CORS 仅允许本地 Vite 的 `localhost:5180` / `127.0.0.1:5180` 来源。
 
-完整列表见 `.env.example`。最重要的：
+## Docker 开发（热更新）
 
 ```bash
-# 至少启用一个交易所（即使只是数据源）
-BINANCE_ENABLED=true
-BINANCE_USDM_ENABLED=true
-BINANCE_API_KEY=<your-testnet-key>
-BINANCE_SECRET_KEY=<your-testnet-secret>
-
-# LLM 必填（至少一个 provider）
-LLM_API_KEY=sk-...
-LLM_BASE_URL=https://api.openai.com/v1
-LLM_MODEL=gpt-4o-mini
-
-# 实盘开关（默认 false；testnet 验证后再开）
-ENABLE_LIVE_TRADING=false
-
-# 可选：API 鉴权
-AUTH_API_KEY=<generated-secret>
+cp .env.example .env
+docker compose -f docker-compose.dev.yml up --build
 ```
 
-## 数据持久化
+API 容器以 Uvicorn reload 运行，前端容器以 Vite HMR 运行。浏览器访问 <http://127.0.0.1:5180>；停止命令为：
 
-SQLite 文件路径：`data/trading.sqlite3`（Docker 中通过 named volume 持久化）。
+```bash
+docker compose -f docker-compose.dev.yml down
+```
 
-Schema 演进：当前无 Alembic，使用 `CREATE TABLE IF NOT EXISTS` 一次性初始化。破坏性 schema 变更需要手动迁移。
+## 配置与数据
 
-## 监控与告警
+完整配置清单在 `.env.example`。实践要求：
 
-内置：
+- 永远不要提交 `.env` 或交易所 / LLM 密钥。
+- 默认保持 `ENABLE_LIVE_TRADING=false`；先在 testnet 完整验证。
+- Docker 的 SQLite 数据位于 `quant-trader-data` named volume；本地默认位于 `data/trading.sqlite3`。
+- 调整 `.env` 后请重启对应服务；不需要重建镜像，除非代码或依赖变化。
 
-- `GET /api/v1/monitor/status` — 监控器状态
-- `GET /api/v1/monitor/alerts` — 告警列表
-- `GET /api/v1/monitor/last-error` — 最近错误
-- `GET /api/v1/stream/events` — SSE 实时事件流
+## 健康检查与排障
 
-外发告警需在 `Settings.webhook_url` 配置 webhook（详见 [security.md](security.md)）。
+```bash
+curl http://127.0.0.1:8000/health
+curl http://127.0.0.1:8000/api/v1/health/venues
+docker compose ps
+docker compose logs --tail=200 api
+```
 
-## 健康检查
-
-Docker 自动跑 `python -c "urlopen('/health')"` 检查。K8s 用户需自己写 readiness/liveness probe YAML（项目当前无）。
+如果 :8000 或 :5180 已被占用，请停止占用端口的进程，或在 Compose 文件和前端 API 配置中成对调整端口。不要只改 Vite 端口：API 客户端回退逻辑与 CORS allowlist 必须同步更新。
 
 ## 升级流程
 
 ```bash
 git pull
-uv sync --all-extras --dev  # 拉新依赖
-cd frontend && npm install && cd ..
-uv run main.py api  # 自动跑 CREATE TABLE IF NOT EXISTS
+uv sync --all-extras --dev --frozen
+cd frontend && npm ci && cd ..
+make ci
+# 或重新发布：docker compose up --build -d
 ```
 
-升级前建议：
-
-1. 备份 `data/trading.sqlite3`
-2. 关闭实盘（`ENABLE_LIVE_TRADING=false`）
-3. 等所有 in-flight 订单完成
+发布与 CI/CD 行为见 [ci-cd.md](ci-cd.md)。

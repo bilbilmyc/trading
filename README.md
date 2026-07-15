@@ -39,6 +39,7 @@
 - [LLM 策略：D→B→A 三层架构](#llm-策略db-a-三层架构)
 - [前端工作台](#前端工作台)
 - [Docker](#docker)
+- [开发、构建与发布](#开发构建与发布)
 - [API 参考](#api-参考)
 - [项目结构](#项目结构)
 - [后续开发](#后续开发) · [文档索引](#文档索引)
@@ -48,50 +49,62 @@
 
 ## 快速开始
 
-### 方式一：Docker（推荐，无需安装 Python）
+> ⚠️ **不要提交 `.env`。** 默认 `ENABLE_LIVE_TRADING=false`；请先使用 testnet 和模拟盘完成验证。
+
+### 方式一：Docker Compose（推荐）
+
+前置条件：已安装并启动 Docker Desktop / Docker Engine。
 
 ```bash
-# 1. 配置
+# 1. 创建本地配置（交易所/LLM key 均可先留空）
 cp .env.example .env
-# 编辑 .env：填入你的配置（API Key 可选，查行情不需要）
 
-# 2. 拉取并启动（--env-file .env 加载你的配置）
-docker run --rm \
-  --name web3-trading \
-  -p 8000:8000 \
-  --env-file .env \
-  ghcr.io/bilbilmyc/trading:latest
+# 2. 构建并在后台启动：FastAPI API + 已打包的前端都在 :8000
+# Windows PowerShell 可将 cp 替换为 Copy-Item
+make docker-up
+# 或：docker compose up --build -d
 
-# 3. 验证
+# 3. 验证与访问
 curl http://127.0.0.1:8000/health
+# 浏览器打开：http://127.0.0.1:8000
+
+# 4. 查看日志 / 停止（SQLite named volume 会保留）
+docker compose logs -f api
+docker compose down
 ```
 
-> **修改 .env 后**：先 `docker stop web3-trading`，再重新执行上面的 `docker run` 命令即可生效。
+### 方式二：本地开发（前后端热更新）
 
-### 方式二：本地 Python 运行
+前置条件：Python 3.13、[uv](https://docs.astral.sh/uv/)、Node.js 22。
 
 ```bash
-# 1. 安装 uv（Python 项目管理）
-curl -LsSf https://astral.sh/uv/install.sh | sh
-
-# 2. 创建环境 + 安装依赖
-cd trading
-uv venv --managed-python
-source .venv/bin/activate
-uv sync
-
-# 3. 配置
+# 一次性安装锁定版本的依赖
+uv sync --all-extras --dev
+cd frontend && npm ci && cd ..
 cp .env.example .env
-# 编辑 .env：填入你的配置
 
-# 4. 启动 API
-uv run python main.py api
+# 终端 1：API
+uv run python main.py api --host 127.0.0.1 --port 8000
 
-# 5. 验证
-curl http://127.0.0.1:8000/health
+# 终端 2：Vite 前端（固定端口 :5180）
+cd frontend && npm run dev
 ```
 
-> **修改 .env 后**：`Ctrl+C` 停掉进程，重新 `uv run python main.py api` 即可。
+访问前端：<http://127.0.0.1:5180>；API 文档：<http://127.0.0.1:8000/docs>。
+前端会自动将开发期请求发往 `http://127.0.0.1:8000`。需要远程 API 时，在 `frontend/.env.local` 设置 `VITE_API_BASE_URL`。
+
+### 常用一键命令（macOS / Linux / WSL / Git Bash）
+
+```bash
+make install       # 安装 uv + npm 锁定依赖
+make dev           # API :8000 + Vite :5180
+make ci            # 与 CI 对齐的本地质量门禁
+make docker-build  # 构建生产镜像
+make docker-up     # 后台启动生产 Compose 栈
+make docker-down   # 停止生产 Compose 栈，保留数据卷
+```
+
+Windows PowerShell 用户可直接使用上方的 `uv`、`npm`、`docker compose` 命令；`make` 目标需在 WSL 或 Git Bash 中运行。
 
 ---
 
@@ -353,11 +366,11 @@ uv run python main.py api --host 0.0.0.0 --port 8000
 
 # 再启动前端
 cd frontend
-npm install
+npm ci
 npm run dev
 ```
 
-访问 `http://127.0.0.1:5173`
+访问 `http://127.0.0.1:5180`
 
 功能：
 
@@ -374,103 +387,66 @@ npm run dev
 
 ## Docker
 
-所有配置通过 `--env-file .env` 注入容器。**修改 `.env` 后只需 `docker stop` + 重新 `docker run`，不需要重新构建镜像。**
+生产镜像是一个单体服务：Docker 多阶段构建会生成 React 静态文件，并由 FastAPI 在 **:8000** 同时提供 Web UI 和 API。SQLite 保存于 `quant-trader-data` named volume，`docker compose down` 不会删除它。
 
-### 从 GHCR 拉取并运行（推荐）
+### 生产 / 演示
 
 ```bash
-# 从 GitHub Container Registry 拉取并运行
-docker run --rm \
-  --name web3-trading \
-  -p 8000:8000 \
-  --env-file .env \
-  ghcr.io/bilbilmyc/trading:latest
-
-# 访问
-open http://127.0.0.1:8000
+cp .env.example .env
+docker compose up --build -d
+curl http://127.0.0.1:8000/health
+docker compose logs -f api
 ```
 
-### 本地构建镜像
+访问 <http://127.0.0.1:8000>。停止服务但保留数据：`docker compose down`；如需同时清除 SQLite 数据卷：`docker compose down -v`（不可恢复）。
 
-当修改了代码或依赖时才需要本地构建：
+也可直接运行 CI 发布的镜像：
 
 ```bash
-# 构建
-docker build -t web3-trading:local .
-
-# 运行（同样通过 --env-file .env 加载配置）
-docker run --rm \
-  --name web3-trading \
-  -p 8000:8000 \
-  --env-file .env \
-  web3-trading:local
+docker run --rm --name quant-trader -p 8000:8000 --env-file .env ghcr.io/bilbilmyc/trading:latest
 ```
 
-### 修改配置后重启
+### 开发 Compose（热更新）
 
 ```bash
-# 1. 编辑 .env
-vim .env
-
-# 2. 停掉旧容器
-docker stop web3-trading
-
-# 3. 重新启动（--env-file .env 会重新读取 .env 文件）
-docker run --rm \
-  --name web3-trading \
-  -p 8000:8000 \
-  --env-file .env \
-  ghcr.io/bilbilmyc/trading:latest
+cp .env.example .env
+docker compose -f docker-compose.dev.yml up --build
 ```
 
-### 生产 vs 开发模式（业界最佳实践：单体部署 + 开发期分离）
+该模式启动 API reload（<http://127.0.0.1:8000>）和 Vite HMR（<http://127.0.0.1:5180>）。浏览器中的 Vite 前端通过 `VITE_API_BASE_URL=http://localhost:8000` 访问 API；不要把这个开发 Compose 用于生产。
 
-| 场景 | 模式 | 命令 | 端口 |
-|------|------|------|------|
-| **生产 / 演示 / 单机部署** | 单体（FastAPI + 静态前端） | `docker compose up -d` | `:8000` |
-| **二次开发 / 改前端** | vite dev + uvicorn reload | `docker compose -f docker-compose.dev.yml up` | `:5173` (前端) + `:8000` (后端) |
+停止开发栈：
 
-**生产单体** — 1 个容器，1 个端口，1 个 .env。前端在 Docker 构建时打包到 `/app/static`，FastAPI 用 `StaticFiles` mount 出来。简单、可靠、易运维。
-
-**开发分离** — `docker-compose.dev.yml` 启动两个服务：vite dev server (5173) 带热重载 + uvicorn (8000) 带 `--reload`。Vite proxy 自动把 `/api` 和 `/health` 转发到后端，**不需要 CORS 配置**。访问 http://localhost:5173 开发。
-
-切换方式：
 ```bash
-# 生产
-docker compose up -d
-
-# 开发
-docker compose -f docker-compose.dev.yml up
-
-# 停止
-docker compose down
-# 或
 docker compose -f docker-compose.dev.yml down
 ```
 
-> 不需要重新 `docker build`，因为配置文件 `.env` 是在容器启动时读入的，不是打在镜像里的。
+### 构建约定
 
-### 临时覆盖单个变量
+- `Dockerfile` 先按 `uv.lock` 和 `frontend/package-lock.json` 安装锁定依赖，再复制源代码，便于复用构建缓存。
+- `.dockerignore` 排除本地数据库、日志、虚拟环境和前端构建产物，避免把运行状态带进镜像。
+- CI 会在每个面向 `main` 的 PR 构建镜像；仅 `main` 的 push（或 main 上手动触发）会登录 GHCR 并发布 `latest` 与 `sha-<commit>` 标签。
 
-```bash
-# 指定 .env 文件，同时用 -e 覆盖其中某个变量
-# -e 的优先级高于 --env-file
-docker run --rm \
-  --name web3-trading \
-  -p 8000:8000 \
-  --env-file .env \
-  -e ENABLE_LIVE_TRADING=true \
-  -e LLM_API_KEY=sk-your-override-key \
-  ghcr.io/bilbilmyc/trading:latest
-```
+---
 
-### GitHub Actions 自动构建
+## 开发、构建与发布
 
-推送到 `main` 后自动构建镜像到 GHCR：
+本地质量门禁与 GitHub Actions 使用同一套锁定依赖和命令：
 
 ```bash
-docker pull ghcr.io/bilbilmyc/trading:latest
+# 后端：ruff、pytest 覆盖率、API import smoke test
+# 前端：TypeScript、Vitest、Vite production build
+make ci
 ```
+
+GitHub Actions 分为两条工作流：
+
+| 工作流 | 触发 | 行为 |
+|---|---|---|
+| `CI` | `main` push、面向 `main` 的 PR、手动触发 | 后端 lint / 测试 / smoke，以及前端 typecheck / 测试 / build |
+| `Build and Publish Docker Image` | 同上 | PR 只构建验证镜像；`main` push 才发布到 GHCR |
+
+完整流程、排障与发布行为见 [docs/ci-cd.md](docs/ci-cd.md)。
 
 ---
 

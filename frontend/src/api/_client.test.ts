@@ -9,7 +9,7 @@
  *
  * The API_BASE resolver is also covered: it should read
  * `import.meta.env.VITE_API_BASE_URL` first, then fall back to
- * `http://127.0.0.1:8000` when the dev server port is 5173, and finally
+ * `http://127.0.0.1:8000` when the dev server port is 5180, and finally
  * to `window.location.origin` in production.
  */
 
@@ -52,12 +52,12 @@ afterEach(() => {
 });
 
 beforeEach(() => {
-  // Force the resolver to take the dev-server fallback path (port 5173)
+  // Force the resolver to take the dev-server fallback path (port 5180)
   // unless a test overrides VITE_API_BASE_URL via stubEnv.
-  if (window.location.port !== "5173") {
+  if (window.location.port !== "5180") {
     Object.defineProperty(window, "location", {
       configurable: true,
-      value: { ...window.location, port: "5173" },
+      value: { ...window.location, port: "5180" },
     });
   }
 });
