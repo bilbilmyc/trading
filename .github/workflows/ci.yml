@@ -53,6 +53,10 @@ jobs:
         working-directory: frontend
         run: npx tsc -b
 
+      - name: Test (vitest)
+        working-directory: frontend
+        run: npm run test:run
+
       - name: Build
         working-directory: frontend
         run: npx vite build

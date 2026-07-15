@@ -4,6 +4,17 @@
 
 ## [Unreleased]
 
+### Added (dev 易用性)
+- 根目录 `Makefile` 单入口：`make help / install / dev / test / test-frontend /
+  test-all / lint / typecheck / format / ci / smoke / build / clean`
+- `.env.example` 补 14 个 `BOT_*` 字段（Telegram bot 完整配置：token、
+  chat id 白名单、daily report、quiet hours、rate limit、scope 头）
+- `frontend/.env.example` 新建：文档化 `VITE_API_BASE_URL`（当前唯一用到）
+  + 几个 reserved 变量（dev banner / SSE heartbeat / feature flags）
+- `.github/workflows/ci.yml` test-frontend job 加 `npm run test:run`（之前
+  只跑 typecheck + build，vitest 跑过但 CI 不知道）
+- `CONTRIBUTING.md` 工作流段改用 `make ci` 一键门禁 + `make dev` 双进程
+
 ### Added (frontend vitest 基础)
 - 装 vitest 4 + @testing-library/react + happy-dom（package.json devDeps）
 - 新增 `frontend/vitest.config.ts`（happy-dom env + setup 文件）
