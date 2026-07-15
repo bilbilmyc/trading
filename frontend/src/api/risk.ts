@@ -26,6 +26,17 @@ export interface KillSwitchStatus {
   };
 }
 
+/** Single point in the risk history time series. */
+export interface RiskSnapshot {
+  timestamp: string;
+  daily_pnl: number;
+  current_drawdown: number;
+  orders_last_minute: number;
+  max_orders_per_minute: number;
+  total_unrealized_pnl: number;
+  kill_switch_enabled: boolean;
+}
+
 // ── Methods ──────────────────────────────────────────────────────
 
 export const riskApi = {
@@ -42,4 +53,19 @@ export const riskApi = {
       "/api/v1/settings/live-trading",
       { method: "POST", body: JSON.stringify({ enabled }) },
     ),
+
+  /**
+   * Risk history time series — last N minutes of snapshots written by
+   * engine's `_risk_snapshot_loop` (every 30s). Used by RiskPage
+   * sparklines on the "5 重保险" card.
+   */
+  riskHistory: (minutes = 30, limit = 200) => {
+    const params = new URLSearchParams({
+      minutes: String(minutes),
+      limit: String(limit),
+    });
+    return request<{ snapshots: RiskSnapshot[]; minutes: number; limit: number; count: number }>(
+      `/risk/history?${params.toString()}`,
+    );
+  },
 };

@@ -1,9 +1,10 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Shield } from "lucide-react";
 
 import { useEngine } from "../contexts/EngineContext";
 import { useStatus } from "../contexts/StatusContext";
 import { api } from "../api";
+import type { RiskSnapshot } from "../api/risk";
 import { Metric } from "../components/atoms";
 import { Card } from "../components/Card";
 import { EmptyState } from "../components/EmptyState";
@@ -28,13 +29,34 @@ function bandPct(current: number, max: number): number {
 
 export function RiskPage() {
   const { engine, paper, refresh } = useEngine();
-  const { config, killSwitch, refresh: refreshStatus } = useStatus();
+  const { config, killSwitch, refresh: refreshStatus, lastRefreshedAt } = useStatus();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [message, setMessage] = useState("");
+  const [history, setHistory] = useState<RiskSnapshot[]>([]);
 
   const risk = engine?.risk;
   const positions = engine?.positions;
+
+  // Pull last 30 minutes of risk snapshots for the 5-bar sparklines.
+  // Refreshed on mount and every 60s; a stale sparkline is harmless.
+  useEffect(() => {
+    let cancelled = false;
+    const tick = async () => {
+      try {
+        const data = await api.riskHistory(30, 200);
+        if (!cancelled) setHistory(data.snapshots);
+      } catch {
+        // Silent — the bars already show the live value.
+      }
+    };
+    void tick();
+    const id = window.setInterval(tick, 60_000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(id);
+    };
+  }, []);
 
   async function toggleKillSwitch() {
     const next = !killSwitch?.enabled;
@@ -78,6 +100,7 @@ export function RiskPage() {
         eyebrow="风控面板"
         title="Risk"
         subtitle="Kill switch · 风险指标 · 模拟盘 · 持仓"
+        freshness={{ at: lastRefreshedAt, label: "风控" }}
       />
 
       {/* KPI strip — risk overview. */}
@@ -127,71 +150,103 @@ export function RiskPage() {
 
       {/* Kill Switch (compact) and 模拟盘 (taller) share a row. */}
       <div className="page__grid page__grid--two-thirds">
-        <Card title="5 重保险" subtitle="实时占用 vs 上限">
+        <Card title="5 重保险" subtitle="实时占用 vs 上限 · 30 分钟趋势">
           <div className="risk-bars">
-            <ProgressBar
-              label="Kill Switch"
-              value={killSwitch?.enabled ? "已熔断" : "正常"}
-              pct={killSwitch?.enabled ? 100 : 0}
-              gradient={
-                killSwitch?.enabled
-                  ? "linear-gradient(90deg, var(--negative) 0%, #B91C1C 100%)"
-                  : "linear-gradient(90deg, var(--positive) 0%, #059669 100%)"
-              }
-            />
-            <ProgressBar
-              label="当日 P&L 损失"
-              value={`$${formatNumber(Math.abs(risk?.daily_pnl ?? 0))} / $${formatNumber(config?.risk?.max_daily_loss ?? 0)}`}
-              pct={bandPct(
-                risk?.daily_pnl ?? 0,
-                config?.risk?.max_daily_loss ?? 0,
-              )}
-              gradient={bandGradient(
-                bandPct(risk?.daily_pnl ?? 0, config?.risk?.max_daily_loss ?? 0),
-              )}
-            />
-            <ProgressBar
-              label="当前回撤"
-              value={`${formatNumber((risk?.current_drawdown ?? 0) * 100, 2)}% / ${formatNumber((config?.risk?.max_drawdown_pct ?? 0) * 100, 0)}%`}
-              pct={bandPct(
-                risk?.current_drawdown ?? 0,
-                config?.risk?.max_drawdown_pct ?? 0,
-              )}
-              gradient={bandGradient(
-                bandPct(
+            <div className="risk-bar">
+              <ProgressBar
+                label="Kill Switch"
+                value={killSwitch?.enabled ? "已熔断" : "正常"}
+                pct={killSwitch?.enabled ? 100 : 0}
+                gradient={
+                  killSwitch?.enabled
+                    ? "linear-gradient(90deg, var(--negative) 0%, #B91C1C 100%)"
+                    : "linear-gradient(90deg, var(--positive) 0%, #059669 100%)"
+                }
+              />
+              <Sparkline
+                width={64}
+                height={20}
+                values={history.map((s) => (s.kill_switch_enabled ? 1 : 0))}
+                tone="muted"
+                fill={false}
+              />
+            </div>
+            <div className="risk-bar">
+              <ProgressBar
+                label="当日 P&L 损失"
+                value={`$${formatNumber(Math.abs(risk?.daily_pnl ?? 0))} / $${formatNumber(config?.risk?.max_daily_loss ?? 0)}`}
+                pct={bandPct(risk?.daily_pnl ?? 0, config?.risk?.max_daily_loss ?? 0)}
+                gradient={bandGradient(
+                  bandPct(risk?.daily_pnl ?? 0, config?.risk?.max_daily_loss ?? 0),
+                )}
+              />
+              <Sparkline
+                width={64}
+                height={20}
+                values={history.map((s) => Math.abs(s.daily_pnl))}
+                tone="down"
+              />
+            </div>
+            <div className="risk-bar">
+              <ProgressBar
+                label="当前回撤"
+                value={`${formatNumber((risk?.current_drawdown ?? 0) * 100, 2)}% / ${formatNumber((config?.risk?.max_drawdown_pct ?? 0) * 100, 0)}%`}
+                pct={bandPct(
                   risk?.current_drawdown ?? 0,
                   config?.risk?.max_drawdown_pct ?? 0,
-                ),
-              )}
-            />
-            <ProgressBar
-              label="活跃仓位名义价值"
-              value={`$${formatNumber(positions?.total_unrealized_pnl ?? 0)} / $${formatNumber(config?.risk?.max_position_value ?? 0)}`}
-              pct={bandPct(
-                Math.abs(positions?.total_unrealized_pnl ?? 0),
-                config?.risk?.max_position_value ?? 0,
-              )}
-              gradient={bandGradient(
-                bandPct(
+                )}
+                gradient={bandGradient(
+                  bandPct(
+                    risk?.current_drawdown ?? 0,
+                    config?.risk?.max_drawdown_pct ?? 0,
+                  ),
+                )}
+              />
+              <Sparkline
+                width={64}
+                height={20}
+                values={history.map((s) => s.current_drawdown)}
+                tone="down"
+              />
+            </div>
+            <div className="risk-bar">
+              <ProgressBar
+                label="活跃仓位名义价值"
+                value={`$${formatNumber(positions?.total_unrealized_pnl ?? 0)} / $${formatNumber(config?.risk?.max_position_value ?? 0)}`}
+                pct={bandPct(
                   Math.abs(positions?.total_unrealized_pnl ?? 0),
                   config?.risk?.max_position_value ?? 0,
-                ),
-              )}
-            />
-            <ProgressBar
-              label="每分钟订单"
-              value={`${risk?.orders_last_minute ?? 0} / ${risk?.max_orders_per_minute ?? 0}`}
-              pct={bandPct(
-                risk?.orders_last_minute ?? 0,
-                risk?.max_orders_per_minute ?? 0,
-              )}
-              gradient={bandGradient(
-                bandPct(
-                  risk?.orders_last_minute ?? 0,
-                  risk?.max_orders_per_minute ?? 0,
-                ),
-              )}
-            />
+                )}
+                gradient={bandGradient(
+                  bandPct(
+                    Math.abs(positions?.total_unrealized_pnl ?? 0),
+                    config?.risk?.max_position_value ?? 0,
+                  ),
+                )}
+              />
+              <Sparkline
+                width={64}
+                height={20}
+                values={history.map((s) => Math.abs(s.total_unrealized_pnl))}
+                tone="auto"
+              />
+            </div>
+            <div className="risk-bar">
+              <ProgressBar
+                label="每分钟订单"
+                value={`${risk?.orders_last_minute ?? 0} / ${risk?.max_orders_per_minute ?? 0}`}
+                pct={bandPct(risk?.orders_last_minute ?? 0, risk?.max_orders_per_minute ?? 0)}
+                gradient={bandGradient(
+                  bandPct(risk?.orders_last_minute ?? 0, risk?.max_orders_per_minute ?? 0),
+                )}
+              />
+              <Sparkline
+                width={64}
+                height={20}
+                values={history.map((s) => s.orders_last_minute)}
+                tone="up"
+              />
+            </div>
           </div>
         </Card>
 

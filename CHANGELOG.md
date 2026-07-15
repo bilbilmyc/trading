@@ -4,6 +4,28 @@
 
 ## [Unreleased]
 
+### Added (frontend freshness 全员接入)
+- 5 个页面 PageHeader 接 `freshness` prop 显示"数据 / 风控 / Bot / 状态 / 配置 · Ns 前"
+  pill（30s 内 fresh 绿 / 120s 内 stale 黄 / 之后 old 灰，1s tick）
+
+### Added (TopTicker 24h 变化)
+- 后端 `/api/v1/market/top-movers` 端点：默认 exchange + 10 个 USDT 永续
+  热门币，server 端 20s TTL 缓存（独立 `ticker24h` cache 名字）
+- 前端 `marketApi.topMovers()` 方法 + `TopTicker` 渲染 `is-up` / `is-down`
+  / `is-flat` 三色 pill（30s 轮询，避免热点请求堆到 5s 价格 tick）
+- 新增 `tests/test_top_movers_endpoint.py`（3 用例：默认 watchlist / symbols
+  过滤 / TTL 缓存命中）+ `TopTicker.test.tsx`（2 用例：正负变化 pill 渲染）
+
+### Added (RiskPage 5 重保险 sparkline)
+- 后端 `engine._risk_snapshot_loop`：每 30s 把 5 重风控 + kill switch
+  状态写一条 events row（category='risk', event_type='snapshot'）
+- 后端 `/api/v1/risk/history?minutes=30&limit=200` 端点：从 events 拉
+  最近 N 分钟 snapshot，0 行时返回空数组不抛错
+- 前端 `api/risk.ts` 加 `RiskSnapshot` 类型 + `riskHistory()` 方法
+- `RiskPage` 5 重保险每行 ProgressBar 右侧加 64×20 Sparkline（30 分钟
+  趋势），60s 拉一次
+- 新增 `tests/test_risk_history_endpoint.py`（3 用例：空 / 多行 / 时间窗过滤）
+
 ### Fixed (frontend fetch wrapper)
 - `_client.ts` headers 合并：caller 传 init 不再覆盖默认 Content-Type
 - `_client.ts` JSON.parse 失败兜底：HTML 502 / 非 JSON body 错误信息

@@ -538,6 +538,13 @@ class TradingEngine:
         self._observer.start()
         self.monitor.start()
 
+        # ── 风险快照循环 ──
+        # 每 30s 把 risk 状态 + 关键计数写成一条 events row，供前端
+        # sparkline 拉历史。失败只记日志，不影响交易。
+        self._sync_tasks.append(
+            asyncio.create_task(self._risk_snapshot_loop())
+        )
+
         self.monitor.push(
             Alert(
                 level=AlertLevel.INFO,
@@ -828,6 +835,41 @@ class TradingEngine:
                 time.monotonic() - _loop_start,
                 loop="order_sync",
             )
+
+    async def _risk_snapshot_loop(self) -> None:
+        """每 30s 把 5 重风控状态写到 events 表。
+
+        给前端 `/api/v1/risk/history` 端点喂数据，画 sparkline 用。
+        失败只记日志；高频快照不重要，丢一两条用户感知不到。
+        """
+
+        from app.engine.metrics import ENGINE_LOOP_DURATION, safe_observe
+
+        SNAPSHOT_INTERVAL = 30.0
+        while self._running:
+            await asyncio.sleep(SNAPSHOT_INTERVAL)
+            if not self._running:
+                break
+            _loop_start = time.monotonic()
+            try:
+                positions_summary = self.position_manager.summary()
+                self._record_event(
+                    category="risk",
+                    event_type="snapshot",
+                    level="info",
+                    message="risk snapshot",
+                    details={
+                        "daily_pnl": self.risk_manager.daily_pnl,
+                        "current_drawdown": self.risk_manager.current_drawdown,
+                        "orders_last_minute": self.risk_manager.orders_last_minute,
+                        "max_orders_per_minute": self.risk_manager.config.max_orders_per_minute,
+                        "total_unrealized_pnl": positions_summary.get("total_unrealized_pnl", 0),
+                        "kill_switch_enabled": self._trading_guard.kill_switch_enabled,
+                    },
+                )
+            except Exception as exc:
+                logger.warning(f"风险快照写入失败：{exc}")
+            safe_observe(ENGINE_LOOP_DURATION, time.monotonic() - _loop_start, loop="risk_snapshot")
 
     async def _position_sync_loop(self) -> None:
         """后台持仓同步循环，从所有交易所拉取持仓状态。"""

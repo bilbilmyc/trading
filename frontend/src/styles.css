@@ -3998,6 +3998,12 @@ input, select, button, textarea {
   flex-direction: column;
   gap: var(--space-4);
 }
+.risk-bar {
+  display: grid;
+  grid-template-columns: 1fr 64px;
+  align-items: center;
+  gap: var(--space-3);
+}
 
 /* StatusDrawer severity tokens — replaces inline color spans. */
 .status-drawer__bar-badge {
