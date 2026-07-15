@@ -180,8 +180,13 @@ class Monitor:
     async def _check_loop(self) -> None:
         """后台监控循环。"""
 
+        import time
+
+        from app.engine.metrics import ENGINE_LOOP_DURATION, safe_observe
+
         while self._running:
             await asyncio.sleep(self.check_interval_seconds)
+            _loop_start = time.monotonic()
             for checker in self._checkers:
                 try:
                     result = await checker()
@@ -195,6 +200,8 @@ class Monitor:
                         f"Monitor checker raised: {exc}",
                         details={"checker": str(checker)},
                     )
+            # Observe checker round-trip time (excludes the sleep).
+            safe_observe(ENGINE_LOOP_DURATION, time.monotonic() - _loop_start, loop="monitor_check")
 
     def _push_alert(
         self,
@@ -223,6 +230,11 @@ class Monitor:
         """保存一条告警并通知回调。"""
 
         self._alerts.append(alert)
+        # Increment Prometheus counter — never raises, never blocks.
+        from app.engine.metrics import MONITOR_ALERTS_TOTAL, safe_inc
+
+        safe_inc(MONITOR_ALERTS_TOTAL, level=alert.level.value, category=alert.category.value)
+
         if len(self._alerts) > self.max_alerts:
             self._alerts.pop(0)
 

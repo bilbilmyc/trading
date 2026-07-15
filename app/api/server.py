@@ -30,6 +30,7 @@ from app.api.helpers import (
     extract_order_id,
     infer_liquidity,
 )
+from app.api.middleware import ScopeContextMiddleware
 from app.api.schemas import (
     AIAnalyzeRequest,
     BacktestRequest,
@@ -105,7 +106,8 @@ class AppState:
         # User-registered custom data sources (any HTTP API via GenericHttpDataSource).
         self.custom_sources: dict[str, Any] = {}
         # In-process TTL cache for slow endpoints (config / capabilities / venues).
-        self.cache = TTLCache(default_ttl=30.0)
+        # `name` propagates to qt_cache_events_total{cache="config"}.
+        self.cache = TTLCache(name="config", default_ttl=30.0)
         self._register_data_sources()
         self._register_trading_exchanges()
 
@@ -256,6 +258,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     async def lifespan(app: FastAPI):
         # lifespan 是 FastAPI 的启动/关闭钩子。
         # 启动时把 state 挂到 app.state，便于调试；关闭时统一释放资源。
+        # Stamp APP_INFO gauge so Prometheus picks up version + env labels.
+        from app.engine.metrics import APP_INFO
+        APP_INFO.labels(version=app.version, env=settings.app_env).set(1)
+
         app.state.trading = state
         yield
         await state.close()
@@ -271,6 +277,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     from starlette.middleware.gzip import GZipMiddleware
 
     app.add_middleware(GZipMiddleware, minimum_size=512)
+    # Tag every request with X-Bot-Scope so audit logs can distinguish
+    # bot calls from web-ui calls.
+    app.add_middleware(ScopeContextMiddleware)
 
     # 前端开发时 Vite 跑在 5173，浏览器会跨端口调用 8000 的 API。
     # CORS 只放开本地前端地址，不把 API 暴露给任意网站。

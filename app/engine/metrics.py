@@ -7,26 +7,36 @@ first access so importing this module has no side effects.
 The metrics follow Prometheus naming conventions (snake_case, suffix
 unit):
 
-  qt_orders_total{status, exchange, side}     — order placements
-  qt_risk_rejections_total{reason}             — risk manager vetoes
-  qt_llm_call_duration_seconds{provider, model, status}  — LLM latency
-  qt_llm_tokens_total{provider, model, type}   — token usage
-  qt_monitor_alerts_total{level, category}     — alerts raised
-  qt_paper_orders_total{side}                  — paper-trading fills
-  qt_engine_loop_duration_seconds{loop}        — background loop period
-  qt_positions_active{exchange}                — open positions gauge
-  qt_app_info{version}                          — static label, set at boot
+  qt_orders_total{status, exchange, side}                 — order placements
+  qt_risk_rejections_total{reason}                         — risk manager vetoes
+  qt_llm_call_duration_seconds{provider, model, status}    — LLM latency
+  qt_llm_tokens_total{provider, model, type}               — token usage
+  qt_monitor_alerts_total{level, category}                 — alerts raised
+  qt_paper_orders_total{side}                              — paper-trading fills
+  qt_engine_loop_duration_seconds{loop}                    — background loop period
+  qt_positions_active{exchange}                            — open positions gauge
+  qt_app_info{version, env}                                — static label, set at boot
+  qt_notifier_webhooks_total{outcome}                      — generic webhook deliveries
+  qt_alert_dispatcher_total{provider, outcome}             — Feishu/DingTalk/WeCom bot webhooks
+  qt_cache_events_total{cache, event}                      — TTL cache hits and misses
 
-To instrument a code path, import the relevant counter/histogram
-helper from this module and call it. Example:
+To instrument a code path, import the relevant counter and prefer the
+``safe_*`` helpers so a metrics failure can never break the call site.
 
-    from app.engine.metrics import ORDERS_TOTAL
-    ORDERS_TOTAL.labels(status="filled", exchange="binance_usdm", side="buy").inc()
+    from app.engine.metrics import safe_inc, ORDERS_TOTAL
+    safe_inc(ORDERS_TOTAL, status="filled", exchange="binance_usdm", side="buy")
+
+The ``safe_*`` helpers swallow every exception — metrics observation
+must never crash the trading loop. Use the raw ``.labels(...).inc()``
+form only when you genuinely need the underlying PrometheusError
+to propagate (e.g. inside a test).
 
 The `/metrics` endpoint is mounted in `app/api/server.py`.
 """
 
 from __future__ import annotations
+
+from typing import Any
 
 from prometheus_client import (
     CONTENT_TYPE_LATEST,
@@ -121,6 +131,62 @@ APP_INFO = Gauge(
     labelnames=("version", "env"),
     registry=REGISTRY,
 )
+
+
+NOTIFIER_WEBHOOKS_TOTAL = Counter(
+    "qt_notifier_webhooks_total",
+    "Generic webhook deliveries from WebhookNotifier, by outcome.",
+    labelnames=("outcome",),
+    registry=REGISTRY,
+)
+
+ALERT_DISPATCHER_TOTAL = Counter(
+    "qt_alert_dispatcher_total",
+    "Alert dispatcher deliveries to Feishu/DingTalk/WeCom webhooks, by provider / outcome.",
+    labelnames=("provider", "outcome"),
+    registry=REGISTRY,
+)
+
+
+CACHE_EVENTS_TOTAL = Counter(
+    "qt_cache_events_total",
+    "TTL cache hits and misses, by cache name.",
+    labelnames=("cache", "event"),
+    registry=REGISTRY,
+)
+
+
+# ── Safe instrumentation helpers ─────────────────────────────────
+# Every call site that promotes a metrics observation needs to be
+# best-effort: a counter import error or a misconfigured label must
+# never crash the trading loop or the alert path. These helpers
+# centralize that contract.
+
+def safe_inc(metric: Counter, **labels: Any) -> bool:
+    """Increment a Counter, swallow every exception. Returns whether it actually inc'd."""
+    try:
+        metric.labels(**labels).inc()
+        return True
+    except Exception:
+        return False
+
+
+def safe_observe(metric: Histogram, value: float, **labels: Any) -> bool:
+    """Observe a Histogram, swallow every exception."""
+    try:
+        metric.labels(**labels).observe(value)
+        return True
+    except Exception:
+        return False
+
+
+def safe_set(metric: Gauge, value: float, **labels: Any) -> bool:
+    """Set a Gauge, swallow every exception."""
+    try:
+        metric.labels(**labels).set(value)
+        return True
+    except Exception:
+        return False
 
 
 def render() -> tuple[bytes, str]:

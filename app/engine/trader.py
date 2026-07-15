@@ -6,6 +6,7 @@
 """
 
 import asyncio
+import time
 from collections.abc import Callable
 from datetime import datetime
 from typing import Any, Optional
@@ -766,10 +767,19 @@ class TradingEngine:
     async def _signal_runner_loop(self, poll_seconds: int, candle_limit: int) -> None:
         """后台信号运行循环。"""
 
+        from app.engine.metrics import ENGINE_LOOP_DURATION, safe_observe
+
         try:
             while True:
+                _loop_start = time.monotonic()
                 await self.run_signal_cycle(candle_limit=candle_limit)
                 await asyncio.sleep(poll_seconds)
+                # Observe full cycle (work + sleep) so one metric = loop period.
+                safe_observe(
+                    ENGINE_LOOP_DURATION,
+                    time.monotonic() - _loop_start,
+                    loop="signal_runner",
+                )
         except asyncio.CancelledError:
             raise
         except Exception as exc:
@@ -783,7 +793,10 @@ class TradingEngine:
     async def _order_sync_loop(self) -> None:
         """后台订单同步循环，从所有交易所拉取挂单状态。"""
 
+        from app.engine.metrics import ENGINE_LOOP_DURATION, safe_observe
+
         while self._running:
+            _loop_start = time.monotonic()
             for name, exchange in list(self._exchanges.items()):
                 try:
                     changed = await self.order_sync.sync(exchange)
@@ -810,11 +823,19 @@ class TradingEngine:
                         )
                     )
             await asyncio.sleep(self.order_sync.interval_seconds)
+            safe_observe(
+                ENGINE_LOOP_DURATION,
+                time.monotonic() - _loop_start,
+                loop="order_sync",
+            )
 
     async def _position_sync_loop(self) -> None:
         """后台持仓同步循环，从所有交易所拉取持仓状态。"""
 
+        from app.engine.metrics import ENGINE_LOOP_DURATION, safe_observe
+
         while self._running:
+            _loop_start = time.monotonic()
             for name, exchange in list(self._exchanges.items()):
                 try:
                     changed = await self.position_sync.sync(exchange, name)
@@ -833,6 +854,11 @@ class TradingEngine:
                         )
                     )
             await asyncio.sleep(self.position_sync.interval_seconds)
+            safe_observe(
+                ENGINE_LOOP_DURATION,
+                time.monotonic() - _loop_start,
+                loop="position_sync",
+            )
 
     async def _process_market_data_for_strategy(
         self,

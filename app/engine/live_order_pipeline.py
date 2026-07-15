@@ -53,6 +53,9 @@ class LiveOrderPipeline:
         signal_filters: Sequence[SignalFilter] = (),
     ) -> None:
         self._exchange = exchange
+        # Cache the exchange name once — `self._exchange` is immutable and
+        # `getattr` on every execute() is wasteful at signal-rate.
+        self._exchange_name = getattr(exchange, "name", "unknown")
         self._trading_guard = trading_guard
         self._risk_gate = risk_gate
         self._order_tracker = order_tracker
@@ -62,6 +65,11 @@ class LiveOrderPipeline:
         self._signal_filters: Sequence[SignalFilter] = tuple(signal_filters)
 
     async def execute(self, signal: Signal):
+        # Lazy import — keep the pipeline import-graph clean even if metrics
+        # is unavailable, and let `safe_*` swallow any later PrometheusError.
+        from app.engine.metrics import ORDERS_TOTAL, RISK_REJECTIONS_TOTAL, safe_inc
+        exchange_name = self._exchange_name
+
         # 1. Trading guard
         if not await self._trading_guard.is_open():
             self._observer.record(
@@ -70,6 +78,7 @@ class LiveOrderPipeline:
                     payload={"symbol": signal.symbol, "action": signal.action.value},
                 )
             )
+            safe_inc(RISK_REJECTIONS_TOTAL, reason="trading_disabled")
             return Err(
                 TradeError(stage="guard", reason="trading is disabled")
             )
@@ -85,6 +94,10 @@ class LiveOrderPipeline:
                             kind="signal_filtered",
                             payload={"filter": name, "symbol": signal.symbol},
                         )
+                    )
+                    # Make signal-filter vetoes visible to Prometheus too.
+                    safe_inc(
+                        RISK_REJECTIONS_TOTAL, reason=f"signal_filter:{name}"
                     )
                     return Err(
                         TradeError(stage="filter", reason=f"rejected by {name}")
@@ -119,6 +132,7 @@ class LiveOrderPipeline:
                         payload={"reason": decision.reason, "symbol": signal.symbol},
                     )
                 )
+                safe_inc(RISK_REJECTIONS_TOTAL, reason=decision.reason or "unknown")
                 return Err(
                     TradeError(stage="risk", reason=decision.reason)
                 )
@@ -143,6 +157,12 @@ class LiveOrderPipeline:
                         kind="order_failed",
                         payload={"symbol": signal.symbol, "error": str(exc)},
                     )
+                )
+                safe_inc(
+                    ORDERS_TOTAL,
+                    exchange=exchange_name,
+                    side=signal.action.value,
+                    status="failed",
                 )
                 return Err(
                     TradeError(stage="place", reason=str(exc))
@@ -174,6 +194,12 @@ class LiveOrderPipeline:
                         "price": receipt.price,
                     },
                 )
+            )
+            safe_inc(
+                ORDERS_TOTAL,
+                exchange=exchange_name,
+                side=receipt.side,
+                status="filled",
             )
             return Ok(receipt)
 

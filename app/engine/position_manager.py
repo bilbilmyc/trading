@@ -66,6 +66,8 @@ class PositionManager:
                 qty_change = -quantity
 
             self._positions[key].update_position(qty_change, price)
+        # Outside the lock — gauge sync is cheap and idempotent.
+        self.sync_positions_gauge()
 
     async def update_price(self, exchange: str, symbol: str, price: float):
         """更新持仓价格"""
@@ -79,6 +81,7 @@ class PositionManager:
         async with self._lock:
             if key in self._positions and self._positions[key].is_flat():
                 del self._positions[key]
+        self.sync_positions_gauge()
 
     async def get_total_pnl(self) -> dict[str, float]:
         """获取总盈亏"""
@@ -174,3 +177,32 @@ class PositionManager:
             'active_positions': len(positions),
             'positions': positions,
         }
+
+    def sync_positions_gauge(self) -> None:
+        """Recompute qt_positions_active from in-memory state.
+
+        Called after any mutation that adds / removes / fills positions.
+        Cheap O(N) over self._positions; safe to invoke from sync hot paths.
+        Wrapped defensively so a missing metrics module never breaks trades.
+        """
+        try:
+            from app.engine.metrics import POSITIONS_ACTIVE
+        except Exception:
+            return
+        by_exchange: dict[str, int] = {}
+        for pos in self._positions.values():
+            if not pos.is_flat():
+                by_exchange[pos.exchange] = by_exchange.get(pos.exchange, 0) + 1
+        for exchange_name, count in by_exchange.items():
+            POSITIONS_ACTIVE.labels(exchange=exchange_name).set(count)
+        # Zero out any exchange label that's no longer represented so
+        # dashboards reflect 0 instead of a stale number.
+        try:
+            for metric in POSITIONS_ACTIVE.collect():
+                for sample in metric.samples:
+                    if sample.name.endswith("_active"):
+                        label_exchange = sample.labels.get("exchange", "")
+                        if label_exchange and label_exchange not in by_exchange:
+                            POSITIONS_ACTIVE.labels(exchange=label_exchange).set(0)
+        except Exception:
+            pass

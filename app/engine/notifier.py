@@ -57,6 +57,9 @@ class WebhookNotifier:
 
     async def notify(self, event: NotificationEvent) -> bool:
         if not self.enabled:
+            from app.engine.metrics import NOTIFIER_WEBHOOKS_TOTAL, safe_inc
+
+            safe_inc(NOTIFIER_WEBHOOKS_TOTAL, outcome="disabled")
             return False
         payload = {
             "title": event.title,
@@ -66,11 +69,15 @@ class WebhookNotifier:
             "extra": event.extra,
         }
         try:
+            from app.engine.metrics import NOTIFIER_WEBHOOKS_TOTAL, safe_inc
+
             async with httpx.AsyncClient(timeout=self._timeout) as client:
                 resp = await client.post(
                     self._url,  # type: ignore[arg-type]
                     json=payload,
                 )
+                outcome = "ok" if 200 <= resp.status_code < 300 else "failed"
+                safe_inc(NOTIFIER_WEBHOOKS_TOTAL, outcome=outcome)
                 self._record({
                     "ts": payload["timestamp"],
                     "ok": 200 <= resp.status_code < 300,
@@ -79,6 +86,9 @@ class WebhookNotifier:
                 })
                 return 200 <= resp.status_code < 300
         except Exception as exc:
+            from app.engine.metrics import NOTIFIER_WEBHOOKS_TOTAL, safe_inc
+
+            safe_inc(NOTIFIER_WEBHOOKS_TOTAL, outcome="failed")
             self._record({
                 "ts": payload["timestamp"],
                 "ok": False,

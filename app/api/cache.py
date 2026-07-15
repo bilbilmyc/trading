@@ -13,7 +13,10 @@ from typing import Any
 
 
 class TTLCache:
-    def __init__(self, default_ttl: float = 30.0) -> None:
+    def __init__(self, name: str = "default", default_ttl: float = 30.0) -> None:
+        # `name` propagates to qt_cache_events_total{cache=...} so multiple
+        # cache instances in the same process are distinguishable in /metrics.
+        self._name = name
         self._store: dict[str, tuple[float, Any]] = {}
         self._default_ttl = default_ttl
         self._lock = asyncio.Lock()
@@ -28,7 +31,9 @@ class TTLCache:
         async with self._lock:
             entry = self._store.get(key)
             if entry is not None and entry[0] > now:
+                _record_cache_event(self._name, "hit")
                 return entry[1]
+        _record_cache_event(self._name, "miss")
         # Miss — compute outside the lock to avoid blocking other gets.
         value = await factory()
         async with self._lock:
@@ -44,7 +49,14 @@ class TTLCache:
     def stats(self) -> dict[str, Any]:
         now = time.monotonic()
         alive = sum(1 for ts, _ in self._store.values() if ts > now)
-        return {"size": len(self._store), "alive": alive}
+        return {"size": len(self._store), "alive": alive, "name": self._name}
 
 
 __all__ = ["TTLCache"]
+
+
+def _record_cache_event(cache: str, event: str) -> None:
+    """Best-effort metric inc. Must NEVER raise into caller code."""
+    from app.engine.metrics import CACHE_EVENTS_TOTAL, safe_inc
+
+    safe_inc(CACHE_EVENTS_TOTAL, cache=cache, event=event)

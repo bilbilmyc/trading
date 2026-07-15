@@ -114,6 +114,10 @@ class PositionSync:
             except Exception as exc:
                 logger.warning(f"PositionSync [{exchange_name}] contract positions sync failed: {exc}")
 
+        # Refresh the qt_positions_active gauge after every sync pass.
+        # Cheap, idempotent, can't raise into the caller.
+        self.position_manager.sync_positions_gauge()
+
         # 有更新时通知回调。
         if updated > 0:
             for cb in self._callbacks:

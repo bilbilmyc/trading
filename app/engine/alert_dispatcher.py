@@ -85,7 +85,7 @@ class FeishuProvider:
             text += f"\nContext: {ctx}"
         text += f"\nTime: {payload.timestamp_iso}"
         body = {"msg_type": "text", "content": {"text": text}}
-        await _post_json(self._url, body, self._timeout)
+        await _post_json(self._url, body, self._timeout, provider_name=self.name)
 
 
 class DingTalkProvider:
@@ -112,7 +112,7 @@ class DingTalkProvider:
             ctx = " · ".join(filter(None, [payload.exchange, payload.symbol]))
             content += f" ({ctx})"
         body = {"msgtype": "text", "text": {"content": content}}
-        await _post_json(self._url, body, self._timeout)
+        await _post_json(self._url, body, self._timeout, provider_name=self.name)
 
 
 class WeComProvider:
@@ -140,24 +140,29 @@ class WeComProvider:
             text += f"\nContext: {ctx}"
         text += f"\nTime: {payload.timestamp_iso}"
         body = {"msgtype": "text", "text": {"content": text}}
-        await _post_json(self._url, body, self._timeout)
+        await _post_json(self._url, body, self._timeout, provider_name=self.name)
 
 
 # ── Network helper ──────────────────────────────────────────────
 
 
-async def _post_json(url: str, body: dict[str, Any], timeout: float) -> None:
+async def _post_json(url: str, body: dict[str, Any], timeout: float, provider_name: str = "unknown") -> None:
     """POST JSON, raise on non-2xx. Errors are logged but never bubble
     up to the Monitor callback path — an alerting outage must not
     crash the engine loop."""
+    from app.engine.metrics import ALERT_DISPATCHER_TOTAL, safe_inc
+
     try:
         async with httpx.AsyncClient(timeout=timeout) as client:
             resp = await client.post(url, json=body)
+        outcome = "ok" if resp.status_code < 400 else "failed"
+        safe_inc(ALERT_DISPATCHER_TOTAL, provider=provider_name, outcome=outcome)
         if resp.status_code >= 400:
             logger.warning(
                 f"Alert webhook returned {resp.status_code}: {resp.text[:200]}"
             )
     except Exception as exc:
+        safe_inc(ALERT_DISPATCHER_TOTAL, provider=provider_name, outcome="failed")
         logger.warning(f"Alert webhook send failed ({type(exc).__name__}): {exc}")
 
 
