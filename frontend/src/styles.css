@@ -3828,6 +3828,70 @@ input, select, button, textarea {
 .section-title-row { margin: 0 0 var(--space-3); font-size: 15px; font-weight: 600; }
 .section-title-row--h4 { margin-top: var(--space-5); font-size: 13px; }
 
+/* Market snapshot tile — v0.4 baseline replacement for KPIHero. */
+.market-snap {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: var(--space-3) var(--space-4);
+  border: var(--hairline);
+  border-radius: var(--radius-md);
+  background: var(--bg-card);
+  min-width: 0;
+}
+.market-snap__head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.market-snap__icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border-radius: var(--radius-sm);
+  background: var(--bg-elevated);
+  color: var(--text-muted);
+  font-size: 12px;
+  flex-shrink: 0;
+}
+.market-snap__label {
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+.market-snap__value {
+  font-size: 20px;
+  font-weight: 700;
+  color: var(--text-primary);
+  font-variant-numeric: tabular-nums;
+}
+.market-snap__foot {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-size: 11px;
+}
+.market-snap__delta--up     { color: var(--positive); font-weight: 600; }
+.market-snap__delta--down   { color: var(--negative); font-weight: 600; }
+.market-snap__delta--muted  { color: var(--text-muted); }
+.market-snap__hint { color: var(--text-faint); }
+.market-snap__sparkline {
+  margin-left: auto;
+  display: inline-flex;
+  width: 56px;
+  height: 18px;
+}
+
+/* Strip container — used by TradePage's KPI row. */
+.market-snap-strip {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: var(--space-3);
+}
+
 /* BotMonitorPage atomic classes — extracted from inline style props. */
 .bot-toggle { width: 100%; }
 .bot-hint { color: var(--text-muted); font-size: 12px; margin: var(--space-2) 0 0; }

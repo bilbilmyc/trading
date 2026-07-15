@@ -20,9 +20,8 @@ import type {
 import { ErrorPanel } from "../components/ErrorPanel";
 import { OrderPanel } from "../components/OrderPanel";
 import { MarketPanel } from "../components/MarketPanel";
+import { MarketSnapshot } from "../components/MarketSnapshot";
 import { PageHeader } from "../components/PageHeader";
-import { KPIHero } from "../components/KPIHero";
-import { Sparkline } from "../components/Sparkline";
 
 export function TradePage() {
   const { apiOnline } = useStatus();
@@ -34,7 +33,6 @@ export function TradePage() {
     api
       .exchanges()
       .then((r) => {
-        // Trading ready if any enabled exchange has API key + enable_live_trading.
         const ok = (r.enabled?.length ?? 0) > 0;
         setTradingReady(ok);
       })
@@ -85,11 +83,8 @@ export function TradePage() {
   const numericQuantity = Number(quantity);
   const numericPrice = Number(price);
   const notional = numericQuantity * numericPrice;
-  const blockedReason = !apiOnline
-    ? "后端离线"
-    : "";
+  const blockedReason = !apiOnline ? "后端离线" : "";
 
-  // Engine-driven controls (MarketPanel).
   const [evaluating, setEvaluating] = useState(false);
   const [runnerBusy, setRunnerBusy] = useState("");
   const [toast, setToast] = useState("");
@@ -245,6 +240,11 @@ export function TradePage() {
     }
   }
 
+  // Numeric values for the v0.4 baseline strip — same data the old KPIHero
+  // had, but in <MarketSnapshot> shape (hairline card, tabular nums).
+  const priceChangePct = ticker?.price_change_pct_24h ?? 0;
+  const volumeUsdtM = ticker ? Number(ticker.quote_volume_24h ?? 0) / 1e6 : 0;
+
   return (
     <div className="page page--trade stack">
       <PageHeader
@@ -254,48 +254,48 @@ export function TradePage() {
         subtitle="合约预览 · 一键提交 · 预览后才下单"
       />
 
-      {/* KPI strip — top-of-page trading desk summary. */}
-      <div className="kpi-strip kpi-strip--four">
-        <KPIHero
+      {/* v0.4 stats strip — hairline cards, tabular figures. */}
+      <div className="market-snap-strip">
+        <MarketSnapshot
           label={`${symbol} 最新价`}
-          value={ticker ? `$${Number(ticker.last_price).toLocaleString("en-US", { maximumFractionDigits: 2 })}` : "$--"}
+          value={
+            ticker
+              ? `$${Number(ticker.last_price).toLocaleString("en-US", { maximumFractionDigits: 2 })}`
+              : "$—"
+          }
           icon={<ArrowLeftRight size={12} />}
-          iconGradient="indigo"
           delta={
             ticker
               ? {
-                  value: `${(ticker.price_change_pct_24h ?? 0) >= 0 ? "+" : ""}${((ticker.price_change_pct_24h ?? 0) * 100).toFixed(2)}%`,
-                  tone: (ticker.price_change_pct_24h ?? 0) >= 0 ? "positive" : "negative",
+                  value: `${priceChangePct >= 0 ? "+" : ""}${(priceChangePct * 100).toFixed(2)}%`,
+                  tone: priceChangePct >= 0 ? "positive" : "negative",
                 }
               : undefined
           }
           sparkline={[10, 11, 10, 12, 13, 12, 14, 15, 14, 16, 17, 16]}
           hint="24h"
         />
-        <KPIHero
+        <MarketSnapshot
           label="24h 成交额"
-          value={ticker ? `$${(Number(ticker.quote_volume_24h) / 1e6).toFixed(1)}M` : "--"}
+          value={ticker ? `$${volumeUsdtM.toFixed(1)}M` : "—"}
           icon={<ArrowLeftRight size={12} />}
-          iconGradient="cyan"
           sparkline={[8, 9, 8, 10, 11, 12, 11, 13, 12, 14, 13, 15]}
           hint="USDT"
         />
-        <KPIHero
+        <MarketSnapshot
           label="Maker / Taker"
           value={
             feeRate
               ? `${(feeRate.maker * 100).toFixed(3)}% / ${(feeRate.taker * 100).toFixed(3)}%`
-              : "-- / --"
+              : "— / —"
           }
           icon={<ArrowLeftRight size={12} />}
-          iconGradient="yellow"
           hint="费率"
         />
-        <KPIHero
+        <MarketSnapshot
           label="名义价值"
           value={`$${notional.toLocaleString("en-US", { maximumFractionDigits: 2 })}`}
           icon={<ArrowLeftRight size={12} />}
-          iconGradient={notional >= 0 ? "green" : "red"}
           sparkline={Array.from({ length: 12 }, (_, i) => notional / 1000 + Math.sin(i) * 2)}
           hint={`数量 ${quantity}`}
         />
@@ -309,7 +309,7 @@ export function TradePage() {
         </span>
         <span className="symbol-bar__field">
           <span className="symbol-bar__field-label">SYMBOL</span>
-          <span className="symbol-bar__field-value">{symbol}</span>
+          <span className="symbol-bar__field-value num">{symbol}</span>
         </span>
         <span className="symbol-bar__field">
           <span className="symbol-bar__field-label">SIDE</span>
@@ -317,27 +317,27 @@ export function TradePage() {
         </span>
         <span className="symbol-bar__field">
           <span className="symbol-bar__field-label">LEV</span>
-          <span className="symbol-bar__field-value">{leverage}x</span>
+          <span className="symbol-bar__field-value num">{leverage}x</span>
         </span>
         <span className="symbol-bar__price">
           {ticker ? (
             <>
-              <span className="symbol-bar__price-now">
+              <span className="symbol-bar__price-now num">
                 ${Number(ticker.last_price).toLocaleString("en-US", { maximumFractionDigits: 2 })}
               </span>
               <span
                 className={`symbol-bar__price-delta ${
-                  (ticker.price_change_pct_24h ?? 0) >= 0
+                  priceChangePct >= 0
                     ? "symbol-bar__price-delta--up"
                     : "symbol-bar__price-delta--down"
                 }`}
               >
-                {(ticker.price_change_pct_24h ?? 0) >= 0 ? "▲" : "▼"}{" "}
-                {((ticker.price_change_pct_24h ?? 0) * 100).toFixed(2)}%
+                {priceChangePct >= 0 ? "▲" : "▼"}{" "}
+                {(priceChangePct * 100).toFixed(2)}%
               </span>
             </>
           ) : (
-            <span className="text-muted" style={{ fontFamily: "var(--font-mono)" }}>--</span>
+            <span className="text-muted num">—</span>
           )}
         </span>
       </div>
