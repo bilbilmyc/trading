@@ -4,6 +4,16 @@
 
 ## [Unreleased]
 
+### Added (frontend vitest 基础)
+- 装 vitest 4 + @testing-library/react + happy-dom（package.json devDeps）
+- 新增 `frontend/vitest.config.ts`（happy-dom env + setup 文件）
+- 新增 `frontend/src/test/setup.ts`（jest-dom matchers + afterEach cleanup）
+- 新增 `frontend/src/utils/format.test.ts`（13 用例：formatNumber /
+  formatPercent / formatSignedPercent / formatUsd 全覆盖边界）
+- 新增 `frontend/src/hooks/useLiveEvents.test.ts`（10 用例：URL 构造 /
+  payload 过滤 / buffer 截断到 50 / 重连重置 / 解析失败安全忽略 / 卸载关闭）
+- `package.json` 加 `test` / `test:run` / `typecheck` scripts
+
 ### Added (SSE alerts stream → StatusDrawer)
 - `/api/v1/stream/events` 升级：除 snapshot + heartbeat 外，轮询
   `engine.monitor.recent_alerts(50)` 与 `store.recent_events(50)`，
