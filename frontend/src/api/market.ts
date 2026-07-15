@@ -139,4 +139,29 @@ export const marketApi = {
   },
 
   prices: () => request<Record<string, number>>("/prices"),
+
+  /**
+   * 24h change snapshot for a small watchlist. Cached server-side for
+   * 20s; missing data renders as `null` so the UI can show "—".
+   */
+  topMovers: (opts?: { exchange?: string; symbols?: string[] }) => {
+    const params = new URLSearchParams();
+    if (opts?.exchange) params.set("exchange", opts.exchange);
+    if (opts?.symbols?.length) params.set("symbols", opts.symbols.join(","));
+    const qs = params.toString();
+    return request<{
+      exchange: string;
+      items: Array<{
+        symbol: string;
+        price: number | null;
+        change_pct_24h: number | null;
+        change_24h?: number | null;
+        high_24h?: number | null;
+        low_24h?: number | null;
+        error?: string;
+      }>;
+      error?: string;
+      timestamp: string;
+    }>(`/market/top-movers${qs ? `?${qs}` : ""}`);
+  },
 };

@@ -13,6 +13,11 @@
  *   - yellow: public OK, private probe failed (or vice versa)
  *   - grey : disabled or unconfigured
  * Hover for the venue's full status (testnet, clock skew, error).
+ *
+ * v0.4.2 augments each marquee item with a 24h change pill sourced from
+ * `/api/v1/market/top-movers` (server-side cached 20s). The pill
+ * renders nothing when the field is null (so adapters that don't
+ * surface `priceChangePercent` stay quiet).
  */
 
 import { memo, useEffect, useState } from "react";
@@ -43,6 +48,7 @@ const DISPLAY_SYMBOLS: string[] = [
 
 const POLL_INTERVAL_MS = 5_000;
 const VENUE_POLL_INTERVAL_MS = 15_000;
+const MOVERS_POLL_INTERVAL_MS = 30_000;
 
 /** Short label for the venue strip. Keeps the strip narrow. */
 const VENUE_SHORT: Record<string, string> = {
@@ -81,10 +87,21 @@ function dotTitle(v: VenueHealth | undefined, name: string): string {
   return `${name} — 正常${net}${skew}`;
 }
 
+function formatChange(pct: number | null): {
+  text: string;
+  cls: "is-up" | "is-down" | "is-flat" | "";
+} {
+  if (pct === null || pct === undefined) return { text: "", cls: "" };
+  if (pct > 0.005) return { text: `+${pct.toFixed(2)}%`, cls: "is-up" };
+  if (pct < -0.005) return { text: `${pct.toFixed(2)}%`, cls: "is-down" };
+  return { text: `${pct.toFixed(2)}%`, cls: "is-flat" };
+}
+
 export const TopTicker = memo(function TopTicker() {
   const [prices, setPrices] = useState<Record<string, number>>({});
   const [online, setOnline] = useState<boolean>(false);
   const [venues, setVenues] = useState<Record<string, VenueHealth>>({});
+  const [changes, setChanges] = useState<Record<string, number>>({});
 
   useEffect(() => {
     let cancelled = false;
@@ -135,14 +152,37 @@ export const TopTicker = memo(function TopTicker() {
     };
   }, []);
 
+  useEffect(() => {
+    let cancelled = false;
+    const tick = async () => {
+      try {
+        const data = await marketApi.topMovers({ symbols: DISPLAY_SYMBOLS });
+        if (cancelled) return;
+        const next: Record<string, number> = {};
+        for (const it of data.items) {
+          if (it.change_pct_24h !== null && it.change_pct_24h !== undefined) {
+            next[it.symbol] = it.change_pct_24h;
+          }
+        }
+        setChanges(next);
+      } catch {
+        // Silent: no change pill is fine.
+      }
+    };
+    void tick();
+    const id = window.setInterval(tick, MOVERS_POLL_INTERVAL_MS);
+    return () => {
+      cancelled = true;
+      window.clearInterval(id);
+    };
+  }, []);
+
   // Build the display list; missing prices render as "—" so the
   // marquee tells the user something, rather than echoing fake numbers.
   const items: TickerItem[] = DISPLAY_SYMBOLS.map((symbol) => ({
     symbol,
     price: prices[symbol] ?? null,
-    // 24h change isn't in /prices; a future ticker-per-symbol call
-    // can fill this in. For now we leave it null so the UI strips it.
-    change: null,
+    change: changes[symbol] ?? null,
   }));
 
   // Duplicate for the seamless marquee loop.
@@ -170,21 +210,27 @@ export const TopTicker = memo(function TopTicker() {
         </div>
       ) : null}
       <div className="top-ticker__track">
-        {loop.map((item, i) => (
-          <span className="top-ticker__item" key={`${item.symbol}-${i}`}>
-            {online && i === 0 ? (
-              <span className="pulse-dot--live" aria-hidden="true" />
-            ) : null}
-            <strong className="top-ticker__symbol">{item.symbol}</strong>
-            <span className="top-ticker__price num">
-              {item.price === null
-                ? "—"
-                : item.price >= 1000
-                  ? item.price.toLocaleString("en-US", { maximumFractionDigits: 2 })
-                  : item.price.toFixed(4)}
+        {loop.map((item, i) => {
+          const chg = formatChange(item.change);
+          return (
+            <span className="top-ticker__item" key={`${item.symbol}-${i}`}>
+              {online && i === 0 ? (
+                <span className="pulse-dot--live" aria-hidden="true" />
+              ) : null}
+              <strong className="top-ticker__symbol">{item.symbol}</strong>
+              <span className="top-ticker__price num">
+                {item.price === null
+                  ? "—"
+                  : item.price >= 1000
+                    ? item.price.toLocaleString("en-US", { maximumFractionDigits: 2 })
+                    : item.price.toFixed(4)}
+              </span>
+              {chg.text ? (
+                <span className={`top-ticker__change ${chg.cls}`}>{chg.text}</span>
+              ) : null}
             </span>
-          </span>
-        ))}
+          );
+        })}
       </div>
     </div>
   );

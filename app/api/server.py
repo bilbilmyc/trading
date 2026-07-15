@@ -126,8 +126,12 @@ class AppState:
         # User-registered custom data sources (any HTTP API via GenericHttpDataSource).
         self.custom_sources: dict[str, Any] = {}
         # In-process TTL cache for slow endpoints (config / capabilities / venues).
-        # `name` propagates to qt_cache_events_total{cache="config"}.
+        # `name` propagates to qt_cache_events_total{cache="config"`.
         self.cache = TTLCache(name="config", default_ttl=30.0)
+        # Separate cache for ticker snapshots so the heavy `get_ticker`
+        # calls on the default exchange don't pile up at the same TTL
+        # boundary as /config. Counter shows up as cache="ticker24h".
+        self.ticker_cache = TTLCache(name="ticker24h", default_ttl=20.0)
         self._register_data_sources()
         self._register_trading_exchanges()
 
@@ -708,6 +712,47 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             "enabled": not trading_enabled,
             "trading_enabled": trading_enabled,
             "risk": risk,
+        }
+
+    @app.get("/api/v1/risk/history")
+    async def risk_history(
+        state: AppState = Depends(get_state),
+        minutes: int = 30,
+        limit: int = 200,
+    ) -> dict[str, Any]:
+        """最近 N 分钟的 risk snapshot 序列（5 重风控 sparkline 数据源）。
+
+        由 engine 的 _risk_snapshot_loop 每 30s 写一行到 events 表
+        (category='risk', event_type='snapshot')。空数据返回空列表，
+        不抛错。
+        """
+        from datetime import datetime, timedelta
+
+        if state.store is None:
+            return {"snapshots": [], "minutes": minutes, "limit": limit}
+
+        cutoff = (datetime.utcnow() - timedelta(minutes=minutes)).isoformat()
+        rows = state.store.recent_events(category="risk", event_type="snapshot", limit=limit)
+        snapshots: list[dict[str, Any]] = []
+        for row in rows:
+            ts = row.get("timestamp", "")
+            if ts < cutoff:
+                continue
+            details = row.get("details") or {}
+            snapshots.append({
+                "timestamp": ts,
+                "daily_pnl": details.get("daily_pnl", 0.0),
+                "current_drawdown": details.get("current_drawdown", 0.0),
+                "orders_last_minute": details.get("orders_last_minute", 0),
+                "max_orders_per_minute": details.get("max_orders_per_minute", 0),
+                "total_unrealized_pnl": details.get("total_unrealized_pnl", 0.0),
+                "kill_switch_enabled": details.get("kill_switch_enabled", False),
+            })
+        return {
+            "snapshots": snapshots,
+            "minutes": minutes,
+            "limit": limit,
+            "count": len(snapshots),
         }
 
     @app.get("/api/v1/ticker/{exchange}/{symbol}")
@@ -1408,6 +1453,72 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         # Singleton: attached to app.state for shared access.
         feed: PriceFeed = getattr(app.state, "price_feed", None) or PriceFeed()
         return feed.latest_dict()
+
+
+    @app.get("/api/v1/market/top-movers")
+    async def top_movers(
+        state: AppState = Depends(get_state),
+        exchange: str | None = None,
+        symbols: str | None = None,
+    ) -> dict[str, Any]:
+        """24h price change for a small watchlist (used by the TopTicker).
+
+        Default behaviour: pull the TopTicker watchlist (10 popular USDT
+        perpetuals) from the default exchange. Override either via query
+        params — `exchange` chooses the venue, `symbols` is a CSV.
+
+        The result is cached for 20s per (exchange, symbols) key. The
+        upstream `get_ticker` call is what carries `price_change_pct_24h`
+        (Binance `/fapi/v1/ticker/24hr`, OKX `/api/v5/market/ticker`), so
+        adapters that don't surface the field will return 0.0 there.
+        """
+        from app.exchanges.factory import ExchangeFactory
+
+        watchlist = [
+            "BTCUSDT", "ETHUSDT", "SOLUSDT", "BNBUSDT", "XRPUSDT",
+            "ADAUSDT", "DOGEUSDT", "AVAXUSDT", "LINKUSDT", "DOTUSDT",
+        ]
+        ex_name = (exchange or settings.default_exchange).lower()
+        sym_list = [s.strip() for s in (symbols or ",".join(watchlist)).split(",") if s.strip()]
+        cache_key = f"{ex_name}:{','.join(sym_list)}"
+
+        async def _fetch() -> dict[str, Any]:
+            items: list[dict[str, Any]] = []
+            try:
+                client = state.get_exchange(ex_name)
+            except HTTPException as exc:
+                return {
+                    "exchange": ex_name,
+                    "items": items,
+                    "error": exc.detail,
+                    "timestamp": datetime.utcnow().isoformat(),
+                }
+            for sym in sym_list:
+                try:
+                    t = await call_exchange(lambda: client.get_ticker(sym))
+                except HTTPException as exc:
+                    items.append({
+                        "symbol": sym,
+                        "price": None,
+                        "change_pct_24h": None,
+                        "error": exc.detail,
+                    })
+                    continue
+                items.append({
+                    "symbol": sym,
+                    "price": float(t.get("last_price", 0)) or None,
+                    "change_pct_24h": t.get("price_change_pct_24h"),
+                    "change_24h": t.get("price_change_24h"),
+                    "high_24h": t.get("high_24h"),
+                    "low_24h": t.get("low_24h"),
+                })
+            return {
+                "exchange": ex_name,
+                "items": items,
+                "timestamp": datetime.utcnow().isoformat(),
+            }
+
+        return await state.ticker_cache.get_or_set(cache_key, _fetch)
 
 
     @app.post("/api/v1/ai/analyze", dependencies=[Depends(require_api_key)])
