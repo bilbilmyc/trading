@@ -3,7 +3,7 @@
 Single source of truth for everything LLM-shaped. Used by:
 - LLMProvider Protocol + concrete adapters (OpenAI / Anthropic / Ollama)
 - LLMAnalyzer (prompt builder + three-state classifier)
-- LLMSignalFilter (Failed → pass-through)
+- LLMSignalFilter (Failed → reject / fail-closed)
 - CompositeObserver (Failed → error_event, not risk_rejected)
 """
 

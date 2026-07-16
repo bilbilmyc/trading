@@ -14,23 +14,23 @@
 help: ## Show this help
 	@awk 'BEGIN {FS = ":.*?## "} /^[a-zA-Z_-]+:.*?## / {printf "  \033[36m%-18s\033[0m %s\n", $$1, $$2}' $(MAKEFILE_LIST)
 
-install: ## Install locked backend (uv) + frontend (npm) dependencies
+install: ## Install locked backend (uv) + frontend (pnpm) dependencies
 	uv sync --all-extras --dev --frozen
-	cd frontend && npm ci
+	cd frontend && pnpm install --frozen-lockfile
 	@echo "✓ install complete. next: cp .env.example .env (then edit values)"
 
 dev: ## Run FastAPI on :8000 + Vite dev server on :5180 in parallel
 	@echo "→ starting API on :8000 + Vite on :5180 (Ctrl-C to stop)"
 	@trap 'kill 0' SIGINT; \
 	  uv run python main.py api --host 127.0.0.1 --port 8000 & \
-	  cd frontend && npm run dev & \
+	  cd frontend && pnpm dev & \
 	  wait
 
 test: ## Backend pytest (no coverage, fast)
 	uv run pytest tests/ -q --no-cov
 
 test-frontend: ## Frontend vitest (single run)
-	cd frontend && npm run test:run
+	cd frontend && pnpm test:run
 
 test-all: ## Backend + frontend tests
 	$(MAKE) test
@@ -38,10 +38,10 @@ test-all: ## Backend + frontend tests
 
 lint: ## ruff (backend) + tsc --noEmit (frontend)
 	uv run ruff check app/ config/
-	cd frontend && npm run typecheck
+	cd frontend && pnpm typecheck
 
 typecheck: ## tsc strict (frontend only)
-	cd frontend && npm run typecheck
+	cd frontend && pnpm typecheck
 
 format: ## ruff --fix (backend) + prettier-style autofix is a no-op (we hand-write CSS)
 	uv run ruff check --fix app/ config/
@@ -50,14 +50,14 @@ ci: ## Full local gate: lint + backend tests (coverage) + frontend checks + buil
 	$(MAKE) lint
 	uv run pytest tests/ --cov=app --cov-report=term --cov-fail-under=60
 	$(MAKE) test-frontend
-	cd frontend && npm run build
+	cd frontend && pnpm build
 	$(MAKE) smoke
 
 smoke: ## Verify backend imports used by the API image entrypoint
 	uv run python -c "import app.api.server; import app.engine.live_order_pipeline; print('imports OK')"
 
 build: ## Production frontend build (frontend → dist/)
-	cd frontend && npm run build
+	cd frontend && pnpm build
 
 docker-build: ## Build the production image locally
 	docker compose build api

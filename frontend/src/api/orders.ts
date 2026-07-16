@@ -64,9 +64,15 @@ export const ordersApi = {
       body: JSON.stringify(payload),
     }),
 
-  closePosition: (payload: { exchange: string; symbol: string; exit_quantity?: number }) =>
+  closePosition: (payload: { exchange: string; symbol: string; exit_quantity?: number; position_size_pct?: number }) =>
     request<{ closed_quantity: number; order: Record<string, unknown> }>(
       "/api/v1/positions/close",
+      { method: "POST", body: JSON.stringify(payload) },
+    ),
+
+  closePaperPosition: (payload: { exchange: string; symbol: string; exit_quantity?: number; position_size_pct?: number }) =>
+    request<{ closed_quantity: number; order: Record<string, unknown> }>(
+      "/api/v1/paper/positions/close",
       { method: "POST", body: JSON.stringify(payload) },
     ),
 };

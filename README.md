@@ -1,692 +1,468 @@
 # Web3 量化交易系统
 
-一个基于 Python/asyncio 的 Web3 量化交易系统，以 Binance 为主、Bitget 为辅、OKX 备用，支持统一 **现货 + 永续合约**接口，
-内置 SMA 策略、**大模型 AI 分析**、风控、订单/持仓同步和监控告警。
+<p align="center">
+  <strong>一个面向个人研究与本地部署的 Web3 量化交易工作台</strong><br />
+  <sub>行情 · 策略 · AI 分析 · 风控 · 模拟盘 · 订单同步 · 可观测性</sub>
+</p>
 
-![架构图](docs/architecture.svg)
+<p align="center">
+  <a href="https://github.com/bilbilmyc/trading/actions/workflows/ci.yml"><img src="https://github.com/bilbilmyc/trading/actions/workflows/ci.yml/badge.svg" alt="CI" /></a>
+  <img src="https://img.shields.io/badge/Python-3.13%2B-3776AB?logo=python&logoColor=white" alt="Python 3.13+" />
+  <img src="https://img.shields.io/badge/FastAPI-async-009688?logo=fastapi&logoColor=white" alt="FastAPI" />
+  <img src="https://img.shields.io/badge/React-19-61DAFB?logo=react&logoColor=111827" alt="React 19" />
+  <img src="https://img.shields.io/badge/pnpm-11-F69220?logo=pnpm&logoColor=white" alt="pnpm 11" />
+  <a href="LICENSE"><img src="https://img.shields.io/github/license/bilbilmyc/trading" alt="License" /></a>
+</p>
 
-> ⚠️ **风险提示**：默认关闭真实下单。只有显式设置 `ENABLE_LIVE_TRADING=true` 后 API 才允许下单和撤单。
-> 实盘前务必在 **testnet** 验证完整流程。
+<p align="center">
+  <a href="#快速开始">快速开始</a> ·
+  <a href="#核心能力">核心能力</a> ·
+  <a href="#安全边界">安全边界</a> ·
+  <a href="#文档地图">文档地图</a>
+</p>
 
----
+> **项目定位**：这是一个用于个人研究、策略验证和本地运行的交易系统，不是面向公众的托管交易平台。默认不允许真实下单，所有实盘相关能力都需要显式开启并经过 testnet 验证。
 
-## 功能一览
-
-| 模块 | 功能 |
-|------|------|
-| **交易所接入** | Binance 现货/USD-M Futures + Bitget USDT Futures + OKX 现货/永续，统一抽象接口 |
-| **交易引擎** | 多交易所、多策略并行、并发控制、生命周期管理 |
-| **策略** | SMA 双均线 (内置) + **LLMAnalyzer 大模型分析 (新增)** |
-| **风控** | 仓位/金额/频率/每日亏损/回撤限制 |
-| **订单同步** | 定时从交易所拉取订单状态，更新本地记录 |
-| **持仓同步** | 定时同步余额和合约持仓到 PositionManager |
-| **监控告警** | 引擎健康、网络断开、风控触发 → 结构化 Alert |
-| **模拟盘** | 内存 USDT 模拟账户，支持信号模拟执行 |
-| **审计持久化** | SQLite 保存策略、信号、模拟盘状态、订单/风控事件 |
-| **AI 分析** | 接入 OpenAI/Claude/DeepSeek/Ollama 分析市场，辅助决策 |
-| **WebSocket** | Ticker 订阅/取消订阅/断线重连 |
-| **REST API** | FastAPI 服务，查询行情/K 线/余额/挂单/下单/撤单/合约操作/引擎状态 |
-| **前端** | React + Vite + TypeScript 合约交易工作台 |
-
----
+![系统架构图](docs/architecture.svg)
 
 ## 目录
 
+- [为什么做这个项目](#为什么做这个项目)
+- [核心能力](#核心能力)
 - [快速开始](#快速开始)
-- [运行](#运行)
-- [阶段 5：实盘自动交易](#阶段-5实盘自动交易)
-- [AI 大模型分析](#ai-大模型分析)
-- [LLM 策略：D→B→A 三层架构](#llm-策略db-a-三层架构)
+- [开发工作流](#开发工作流)
+- [安全边界](#安全边界)
 - [前端工作台](#前端工作台)
-- [Docker](#docker)
-- [开发、构建与发布](#开发构建与发布)
-- [API 参考](#api-参考)
+- [系统架构](#系统架构)
+- [配置说明](#配置说明)
+- [API 与可观测性](#api-与可观测性)
 - [项目结构](#项目结构)
-- [后续开发](#后续开发) · [文档索引](#文档索引)
+- [文档地图](#文档地图)
 - [常见问题](#常见问题)
+- [路线图](#路线图)
 
----
+## 为什么做这个项目
+
+很多量化脚本能“拉行情、发订单”，但从研究策略到安全执行，中间还缺少一整套可观察、可回溯、可逐步放量的工程能力。本项目把这些能力收敛到一个本地工作台中：
+
+- 用统一接口接入多个交易所，减少策略与交易所 SDK 的耦合。
+- 用信号模式、模拟盘和 testnet 把策略验证拆成可控阶段。
+- 用风控闸门、Kill Switch、审计事件和同步器降低误操作风险。
+- 用 React 工作台查看行情、策略、组合、风险、审计和运行事件。
+- 用 OpenAI-compatible 接口接入不同 LLM，辅助分析而不是绕过风控。
+
+## 核心能力
+
+| 领域 | 能力 |
+| --- | --- |
+| **交易所** | Binance Spot / USDⓈ-M、Bitget USDT Futures、OKX Spot / Swap；统一现货与合约抽象 |
+| **行情** | Ticker、K 线、成交、订单簿、资金费率、价格比较、WebSocket ticker 订阅 |
+| **策略** | SMA 双均线、LLMAnalyzer、LLM 策略三层模式（观察 / 过滤 / 执行） |
+| **交易引擎** | 策略生命周期、信号处理、并发控制、订单执行、订单同步、持仓同步 |
+| **风控** | 仓位与名义价值、下单频率、每日亏损、最大回撤、止损止盈、逐品种限制、Kill Switch |
+| **验证** | 模拟盘、回测、下单预览、testnet 开关、策略信号与决策审计 |
+| **监控** | 健康检查、结构化告警、SSE 事件流、Prometheus `/metrics`、Telegram 监控 Bot |
+| **前端** | React 19 + Vite + TypeScript 交易终端；市场、交易、组合、策略、风控、审计等页面 |
+| **持久化** | SQLite（WAL）保存策略、信号、交易、模拟账户、持仓和审计事件 |
 
 ## 快速开始
 
-> ⚠️ **不要提交 `.env`。** 默认 `ENABLE_LIVE_TRADING=false`；请先使用 testnet 和模拟盘完成验证。
+### 方案 A：Docker Compose（推荐）
 
-### 方式一：Docker Compose（推荐）
-
-前置条件：已安装并启动 Docker Desktop / Docker Engine。
+适合第一次运行、演示和单机部署。只需要 Docker，不需要在宿主机安装 Python 或 Node.js。
 
 ```bash
-# 1. 创建本地配置（交易所/LLM key 均可先留空）
+# 1. 获取代码
+git clone https://github.com/bilbilmyc/trading.git
+cd trading
+
+# 2. 创建本地配置（不要提交 .env）
 cp .env.example .env
 
-# 2. 构建并在后台启动：FastAPI API + 已打包的前端都在 :8000
-# Windows PowerShell 可将 cp 替换为 Copy-Item
-make docker-up
-# 或：docker compose up --build -d
+# 3. 默认构建并启动 API + 前端
+docker compose up --build -d
 
-# 3. 验证与访问
+# 4. 验证服务
 curl http://127.0.0.1:8000/health
-# 浏览器打开：http://127.0.0.1:8000
-
-# 4. 查看日志 / 停止（SQLite named volume 会保留）
-docker compose logs -f api
-docker compose down
 ```
 
-### 方式二：本地开发（前后端热更新）
+打开以下地址：
 
-前置条件：Python 3.13、[uv](https://docs.astral.sh/uv/)、Node.js 22。
+- Web 工作台：<http://127.0.0.1:8000>
+- Swagger UI：<http://127.0.0.1:8000/docs>
+- OpenAPI JSON：<http://127.0.0.1:8000/openapi.json>
+
+常用命令：
 
 ```bash
-# 一次性安装锁定版本的依赖
-uv sync --all-extras --dev
-cd frontend && npm ci && cd ..
-cp .env.example .env
+docker compose logs -f api   # 查看日志
+docker compose ps             # 查看服务状态
+docker compose down           # 停止服务，保留 SQLite 数据卷
+docker compose up --build -d  # 依赖或代码更新后重新构建
+```
 
-# 终端 1：API
+> Docker Compose 使用 named volume 保存 SQLite 数据。`docker compose down -v` 会同时删除数据卷，请确认不再需要历史数据后再执行。
+
+### 方案 B：本地开发（前后端热更新）
+
+前置条件：
+
+- Python `3.13+`（`3.13 <= version < 3.15`）
+- [uv](https://docs.astral.sh/uv/)
+- Node.js `22`
+- pnpm `11`（推荐通过 Corepack 启用）
+
+本项目及后续前端项目统一使用 pnpm。仓库通过 `frontend/pnpm-workspace.yaml` 将 pnpm store 固定到 `~/.pnpm-store`，多个项目共享同一份依赖缓存。
+
+```bash
+# 1. 启用 pnpm
+corepack enable
+
+# 2. 安装后端与前端锁定依赖
+uv sync --all-extras --dev --frozen
+cd frontend && pnpm install --frozen-lockfile && cd ..
+
+# 3. 创建配置
+cp .env.example .env
+```
+
+然后分别启动后端和前端：
+
+```bash
+# 终端 1：FastAPI API
 uv run python main.py api --host 127.0.0.1 --port 8000
 
-# 终端 2：Vite 前端（固定端口 :5180）
-cd frontend && npm run dev
+# 终端 2：Vite dev server
+cd frontend && pnpm dev
 ```
 
-访问前端：<http://127.0.0.1:5180>；API 文档：<http://127.0.0.1:8000/docs>。
-前端会自动将开发期请求发往 `http://127.0.0.1:8000`。需要远程 API 时，在 `frontend/.env.local` 设置 `VITE_API_BASE_URL`。
+访问 <http://127.0.0.1:5180>。开发期前端会把 API 请求发往 `http://127.0.0.1:8000`；如需连接远程 API，在 `frontend/.env.local` 中设置 `VITE_API_BASE_URL`。
 
-### 常用一键命令（macOS / Linux / WSL / Git Bash）
+### 常用命令
 
-```bash
-make install       # 安装 uv + npm 锁定依赖
-make dev           # API :8000 + Vite :5180
-make ci            # 与 CI 对齐的本地质量门禁
-make docker-build  # 构建生产镜像
-make docker-up     # 后台启动生产 Compose 栈
-make docker-down   # 停止生产 Compose 栈，保留数据卷
+| 命令 | 用途 |
+| --- | --- |
+| `make install` | 安装 uv 与 pnpm 锁定依赖 |
+| `make dev` | 同时启动 API（`:8000`）和前端（`:5180`） |
+| `make ci` | 执行本地完整质量门禁 |
+| `make test` | 运行后端测试 |
+| `make test-frontend` | 运行前端 Vitest |
+| `make typecheck` | 运行 TypeScript 类型检查 |
+| `make build` | 构建生产前端 |
+| `make docker-up` | 构建并后台启动生产 Compose |
+| `make docker-dev` | 启动 Docker 热更新开发栈 |
+
+Windows 用户可以直接使用上面的 `uv`、`pnpm` 和 `docker compose` 命令；`make` 请在 WSL 或 Git Bash 中运行。
+
+## 开发工作流
+
+推荐按下面的顺序验证新策略或新交易功能：
+
+```text
+行情 / 历史数据
+      ↓
+策略信号（signal）
+      ↓
+下单预览 / 风控检查
+      ↓
+模拟盘（paper）
+      ↓
+testnet
+      ↓
+人工确认后再开启 live trading
 ```
 
-Windows PowerShell 用户可直接使用上方的 `uv`、`npm`、`docker compose` 命令；`make` 目标需在 WSL 或 Git Bash 中运行。
-
----
-
-## 运行
-
-### 调试模式启动
-
-开发调试时建议开启 DEBUG 日志，方便排查交易所请求和策略执行细节：
+后端入口：
 
 ```bash
-# API 服务（调试模式）
+uv run python main.py status                         # 查看已配置交易所
+uv run python main.py api --host 0.0.0.0 --port 8000 # 启动 API
+uv run python main.py trade                          # 运行示例策略循环
+uv run python main.py bot                            # 启动 Telegram 监控 Bot（需配置）
+```
+
+调试时可以临时提高日志级别：
+
+```bash
 LOG_LEVEL=DEBUG uv run python main.py api --host 0.0.0.0 --port 8000
-
-# 策略循环（调试模式）
-LOG_LEVEL=DEBUG uv run python main.py trade
-
-# 查看所有交易所健康状态
-curl http://127.0.0.1:8000/api/v1/health/venues
 ```
 
-### 查看状态
+### 质量门禁
+
+提交前建议运行与 CI 对齐的检查：
 
 ```bash
-uv run python main.py status
-```
-
-### 启动 API 服务
-
-```bash
-uv run python main.py api --host 0.0.0.0 --port 8000
-# 多 worker：
-uv run python main.py api --host 0.0.0.0 --port 8000 --workers 4
-```
-
-### 运行策略循环
-
-```bash
-uv run python main.py trade
-```
-
-### API 文档
-
-启动后访问：
-
-```text
-http://127.0.0.1:8000/docs
-```
-
-### FastAPI 调用关系速读
-
-后端 HTTP 层主要在 `app/api/server.py`。先按这条链看，代码会清楚很多：
-
-```text
-main.py api
-  -> uvicorn 启动
-  -> create_app()
-  -> AppState(settings)
-  -> @app.get/post/delete 路由函数
-  -> Depends(get_state) 注入同一个 AppState
-  -> state.get_exchange() / state.engine / state.store
-  -> 交易所适配器、交易引擎、SQLite
-```
-
-几个关键点：
-
-- `create_app()`：装配整个 FastAPI 应用，创建运行时对象、注册中间件和路由。
-- `AppState`：一个 API worker 里的共享上下文，放配置、SQLite、交易引擎和交易所客户端缓存。
-- `Depends(get_state)`：FastAPI 的依赖注入。请求进来时自动把 `AppState` 传给路由函数。
-- `call_exchange(...)`：统一包住交易所网络调用，把交易所错误转成稳定的 HTTP 响应。
-- `reject_live_disabled(...)`：实盘关闭时拦截下单/撤单/改杠杆，同时写入审计事件。
-- `POST /api/v1/contracts/order/preview`：真实下单前的预览入口，生成 `client_order_id`，估算名义价值、保证金、手续费和强平风险提示。
-
----
-
-## 阶段 5：实盘自动交易
-
-阶段 5 打通了从策略信号到实盘执行的完整链路，同时保护你不会意外全仓。
-
-### 架构
-
-```text
-┌─────────┐  信号   ┌────────────┐  风控通过   ┌────────────┐
-│ 策略     │───────→│ TradingEngine │─────────→│ Exchange   │
-│ SMA/LLM  │        │ _execute_signal │         │ place_order│
-└─────────┘        └────────────┘         └────────────┘
-                           │
-                    ┌──────┼──────┐
-                    │      │      │
-               OrderSync PositionSync Monitor
-               (拉取订单) (拉取持仓) (健康告警)
-```
-
-### 6 个子系统
-
-| # | 子系统 | 说明 | 启用方式 |
-|---|--------|------|---------|
-| 1 | **策略信号** | 策略产生 Signal(buy/sell/hold) | `POST /api/v1/strategies/{name}/start` |
-| 2 | **风控检查** | RiskManager 拦截超限订单 | 默认启用 |
-| 3 | **执行引擎** | TradingEngine 调用 exchange.place_order | `ENABLE_LIVE_TRADING=true` |
-| 4 | **订单同步** | OrderSync 定时拉取交易所订单状态 | 引擎 start() 自动启动 |
-| 5 | **持仓同步** | PositionSync 定时同步余额+合约持仓 | 引擎 start() 自动启动 |
-| 6 | **监控告警** | Monitor 检查引擎+风控+网络健康 | 引擎 start() 自动启动 |
-
-### 防全仓保护
-
-实盘模式仍受风控限制保护：
-
-```ini
-# .env
-MAX_POSITION_VALUE=1000        # 单笔最大金额 (USDT)
-MAX_DAILY_LOSS=100             # 每日最大亏损
-MAX_ORDERS_PER_MINUTE=5        # 每分钟最大订单数
-STOP_LOSS_PCT=0.05             # 默认止损 5%
-```
-
-所有 API 下单端点（`/api/v1/order`、`/api/v1/contracts/order`）在 `ENABLE_LIVE_TRADING=false` 时返回 **403**。
-
-### 监控与告警
-
-```bash
-# 监控面板
-curl http://127.0.0.1:8000/api/v1/monitor/status
-curl http://127.0.0.1:8000/api/v1/monitor/alerts
-curl http://127.0.0.1:8000/api/v1/monitor/last-error
-
-# 同步器状态
-curl http://127.0.0.1:8000/api/v1/sync/status
-
-# 手动触发同步
-curl -X POST http://127.0.0.1:8000/api/v1/sync/orders/binance_usdm
-curl -X POST http://127.0.0.1:8000/api/v1/sync/positions/binance_usdm
-```
-
----
-
-## AI 大模型分析
-
-系统内置 LLMAnalyzer 模块，支持将市场数据发送给大模型分析，返回结构化交易建议。
-
-### 支持的 LLM
-
-| 提供方 | `LLM_BASE_URL` | 推荐模型 |
-|--------|----------------|---------|
-| **OpenAI** | `https://api.openai.com/v1` | `gpt-4o-mini`（成本低） |
-| **DeepSeek** | `https://api.deepseek.com/v1` | `deepseek-v4-flash` |
-| **Ollama (本地)** | `http://localhost:11434/v1` | `llama3` |
-| **vLLM (本地)** | `http://localhost:8000/v1` | 任意部署模型 |
-
-### 配置
-
-```ini
-# .env
-LLM_API_KEY=sk-your-key-here
-LLM_BASE_URL=https://api.openai.com/v1
-LLM_MODEL=gpt-4o-mini
-LLM_TEMPERATURE=0.3
-LLM_DEFAULT_ORDER_AMOUNT=50    # 单笔默认金额 USDT
-```
-
-### 手动分析
-
-```bash
-curl -X POST http://127.0.0.1:8000/api/v1/ai/analyze \
-  -H 'Content-Type: application/json' \
-  -d '{"exchange":"binance_usdm","symbol":"BTCUSDT","interval":"1h","limit":30}'
-```
-
-返回示例：
-
-```json
-{
-  "decision": "buy",
-  "confidence": 0.78,
-  "reason": "BTC 突破 68500 阻力位后放量站稳，均线多头排列...",
-  "suggested_action": "open_long",
-  "suggested_quantity": 0.000727,
-  "suggested_price": 68750,
-  "stop_loss": 67200,
-  "take_profit": 71000,
-  "risk_level": "medium",
-  "risk_note": "上方 70000 整数关口有压力"
-}
-```
-
----
-
-## LLM 策略：D→B→A 三层架构
-
-![LLM 三层架构](docs/llm-architecture.svg)
-
-从**观察 → 辅助过滤 → 全自动**，逐步升级，每个阶段都受默认金额保护。
-
-### D 方案：信号顾问（观察）
-
-```bash
-# 创建 LLM 策略 (mode=signal)
-curl -X POST http://127.0.0.1:8000/api/v1/strategies/llm \
-  -H 'Content-Type: application/json' \
-  -d '{"exchange":"binance_usdm","symbol":"BTCUSDT",
-       "interval":"1h","default_order_amount":50,
-       "mode":"signal","enabled":true}'
-
-# 启动信号运行器
-curl -X POST http://127.0.0.1:8000/api/v1/runner/start \
-  -H 'Content-Type: application/json' \
-  -d '{"poll_seconds":300,"candle_limit":80}'
-
-# 查看 LLM 信号
-curl http://127.0.0.1:8000/api/v1/signals/recent?limit=5
-```
-
-- LLMStrategy 在 `generate_signals()` 中调用 LLM
-- `mode=signal`：引擎不执行，信号仅展示在面板
-- 每笔 `quantity = default_order_amount / current_price`
-
-### B 方案：混合过滤（SMA + LLM 二次确认）
-
-```bash
-# 附加 LLM 过滤器
-curl -X POST 'http://127.0.0.1:8000/api/v1/strategies/llm-filter/attach?\
-exchange=binance_usdm&symbol=BTCUSDT&default_order_amount=50&min_confidence=0.5'
-
-# 启动 SMA 策略
-curl -X POST http://127.0.0.1:8000/api/v1/strategies/sma_5_20_btcusdt/start
-
-# 查看被 LLM 拒绝的信号
-curl 'http://127.0.0.1:8000/api/v1/strategies/llm-filter/rejected?limit=10'
-```
-
-- SMA 出信号 → `LLMSignalFilter.check()` → LLM 二次确认 → 放行/拒绝
-- 方向不一致或置信度不足时拒绝
-- 过滤器异常时默认放行，不阻塞交易
-
-### A 方案：全自动执行
-
-```bash
-# 切换为 live 模式
-curl -X POST http://127.0.0.1:8000/api/v1/strategies/llm_btcusdt_1h/mode \
-  -H 'Content-Type: application/json' \
-  -d '{"mode":"live"}'
-
-# 启动策略
-curl -X POST http://127.0.0.1:8000/api/v1/strategies/llm_btcusdt_1h/start
-```
-
-- LLMStrategy `mode=live`：引擎自动执行信号
-- 仍经过风控检查 + 过滤器链
-- 单笔金额受 `default_order_amount` 限制
-
----
-
-## 前端工作台
-
-前端是 React + Vite + TypeScript。
-
-```bash
-# 先启动后端
-uv run python main.py api --host 0.0.0.0 --port 8000
-
-# 再启动前端
-cd frontend
-npm ci
-npm run dev
-```
-
-访问 `http://127.0.0.1:5180`
-
-功能：
-
-- API/LIVE 状态栏
-- Binance USD-M / Bitget USDT Futures / OKX Swap 切换
-- 合约 symbol 搜索、数量、价格、杠杆、保证金模式
-- 开多/平多/开空/平空方向选择
-- Maker/Taker 手续费查询 + 成本估算
-- 策略信号面板
-- 风控 / 持仓状态展示
-- 模拟盘
-
----
-
-## Docker
-
-生产镜像是一个单体服务：Docker 多阶段构建会生成 React 静态文件，并由 FastAPI 在 **:8000** 同时提供 Web UI 和 API。SQLite 保存于 `quant-trader-data` named volume，`docker compose down` 不会删除它。
-
-### 生产 / 演示
-
-```bash
-cp .env.example .env
-docker compose up --build -d
-curl http://127.0.0.1:8000/health
-docker compose logs -f api
-```
-
-访问 <http://127.0.0.1:8000>。停止服务但保留数据：`docker compose down`；如需同时清除 SQLite 数据卷：`docker compose down -v`（不可恢复）。
-
-也可直接运行 CI 发布的镜像：
-
-```bash
-docker run --rm --name quant-trader -p 8000:8000 --env-file .env ghcr.io/bilbilmyc/trading:latest
-```
-
-### 开发 Compose（热更新）
-
-```bash
-cp .env.example .env
-docker compose -f docker-compose.dev.yml up --build
-```
-
-该模式启动 API reload（<http://127.0.0.1:8000>）和 Vite HMR（<http://127.0.0.1:5180>）。浏览器中的 Vite 前端通过 `VITE_API_BASE_URL=http://localhost:8000` 访问 API；不要把这个开发 Compose 用于生产。
-
-停止开发栈：
-
-```bash
-docker compose -f docker-compose.dev.yml down
-```
-
-### 构建约定
-
-- `Dockerfile` 先按 `uv.lock` 和 `frontend/package-lock.json` 安装锁定依赖，再复制源代码，便于复用构建缓存。
-- `.dockerignore` 排除本地数据库、日志、虚拟环境和前端构建产物，避免把运行状态带进镜像。
-- CI 会在每个面向 `main` 的 PR 构建镜像；仅 `main` 的 push（或 main 上手动触发）会登录 GHCR 并发布 `latest` 与 `sha-<commit>` 标签。
-
----
-
-## 开发、构建与发布
-
-本地质量门禁与 GitHub Actions 使用同一套锁定依赖和命令：
-
-```bash
-# 后端：ruff、pytest 覆盖率、API import smoke test
-# 前端：TypeScript、Vitest、Vite production build
 make ci
 ```
 
-GitHub Actions 分为两条工作流：
+它会依次执行后端 ruff、pytest（含覆盖率门槛）、前端 typecheck、Vitest、生产构建和 API import smoke test。CI 配置见 [`.github/workflows/ci.yml`](.github/workflows/ci.yml)。
 
-| 工作流 | 触发 | 行为 |
-|---|---|---|
-| `CI` | `main` push、面向 `main` 的 PR、手动触发 | 后端 lint / 测试 / smoke，以及前端 typecheck / 测试 / build |
-| `Build and Publish Docker Image` | 同上 | PR 只构建验证镜像；`main` push 才发布到 GHCR |
+## 安全边界
 
-完整流程、排障与发布行为见 [docs/ci-cd.md](docs/ci-cd.md)。
+### 默认安全状态
 
----
+- `ENABLE_LIVE_TRADING=false`：默认禁止真实下单、撤单和部分高风险操作。
+- 所有交易所默认启用 testnet 配置；请先验证 API key、品种、数量精度和风险参数。
+- `AUTH_API_KEY` 为空时适合 localhost 个人使用；部署到非本机环境前请配置 Bearer token。
+- `.env`、交易所密钥、LLM 密钥和数据库文件不应提交到 Git。
 
-## API 参考
+### 开启实盘前的最低检查清单
 
-### 系统与健康
+- [ ] 已在 testnet 完整跑通行情、信号、下单预览、下单、撤单和持仓同步。
+- [ ] 已确认 `MAX_POSITION_VALUE`、`MAX_DAILY_LOSS`、`MAX_DRAWDOWN_PCT` 等限制。
+- [ ] 已验证 Kill Switch 和 API 鉴权。
+- [ ] 已确认只开放需要的交易所、交易品种和 LLM 白名单。
+- [ ] 已准备可观测性和异常恢复方案。
 
-```bash
-GET  /health
-GET  /api/v1/health/venues          # 各交易所公开/私有 API、时钟偏差、凭证状态
-GET  /api/v1/config
-GET  /api/v1/exchanges
-GET  /api/v1/risk/kill-switch
-POST /api/v1/risk/kill-switch       # {"enabled": true, "reason": "manual"}
-```
+> **不要把本项目当作投资建议。** 交易可能导致本金损失；真实资金请自行评估风险并承担后果。安全说明见 [`docs/security.md`](docs/security.md) 和 [`SECURITY.md`](SECURITY.md)。
 
-### 行情数据
+## 前端工作台
 
-```bash
-GET  /api/v1/ticker/{exchange}/{symbol}
-GET  /api/v1/klines/{exchange}/{symbol}?interval=1m&limit=100
-GET  /api/v1/trades/{exchange}/{symbol}?limit=50
-```
+前端位于 [`frontend/`](frontend/)，使用 React 19、Vite、TypeScript、Wouter 和 pnpm。页面按功能拆分并通过 lazy loading 加载：
 
-### 账户与订单
+| 路由 | 页面 |
+| --- | --- |
+| `/markets` | 市场总览 |
+| `/data` | 行情与数据 |
+| `/watchlist` | 自选列表 |
+| `/trade` | 交易面板 |
+| `/portfolio` | 投资组合 |
+| `/trade-history` | 成交历史 |
+| `/strategies` | 策略管理 |
+| `/risk` | 风控面板 |
+| `/audit` | 决策与交易审计 |
+| `/events` | 运行事件时间线 |
+| `/bot` | Telegram Bot 监控 |
+| `/settings` | 系统设置 |
 
-```bash
-GET  /api/v1/balances/{exchange}
-GET  /api/v1/balances/{exchange}/available
-GET  /api/v1/order/{exchange}/{symbol}/{order_id}
-GET  /api/v1/orders/{exchange}/open?symbol=BTCUSDT
-POST /api/v1/order                          # 需 ENABLE_LIVE_TRADING
-POST /api/v1/contracts/order/preview        # 下单前预览，不会真实提交
-POST /api/v1/contracts/order                # 合约专用，需 ENABLE_LIVE_TRADING
-DELETE /api/v1/order/{exchange}/{symbol}/{order_id}
-DELETE /api/v1/orders/{exchange}/open
-```
-
-### 合约
+前端脚本：
 
 ```bash
-GET  /api/v1/contracts/{exchange}?search=BTC&limit=200
-GET  /api/v1/contracts/{exchange}/{symbol}/fee-rate
-GET  /api/v1/contracts/{exchange}/{symbol}/cost-estimate?quantity=1&price=100000&liquidity=maker
-POST /api/v1/contracts/{exchange}/{symbol}/leverage?leverage=3&margin_mode=cross
+cd frontend
+pnpm dev       # :5180
+pnpm typecheck
+pnpm test:run
+pnpm build
+pnpm preview   # :4173
 ```
 
-### 引擎与策略
+## 系统架构
+
+```text
+┌──────────────────────────────────────────────────────────────┐
+│ React 工作台：行情 · 交易 · 策略 · 风控 · 审计 · 监控         │
+└──────────────────────────────┬───────────────────────────────┘
+                               │ REST / SSE
+┌──────────────────────────────▼───────────────────────────────┐
+│ FastAPI API                                                   │
+│ auth · validation · routing · AppState                        │
+└───────────┬──────────────────┬──────────────────┬────────────┘
+            │                  │                  │
+     TradingEngine       Data Sources       SQLite Store
+     策略 / 信号 / 风控     行情 / WebSocket     WAL / 审计 / 状态
+            │
+     Exchange adapters
+     Binance · Bitget · OKX
+```
+
+核心调用链：
+
+```text
+main.py api
+  → create_app()
+  → AppState
+  → FastAPI route
+  → TradingEngine / SQLiteStore / ExchangeFactory
+  → strategy / risk / exchange adapter
+```
+
+设计原则：
+
+- **薄路由**：API 层负责校验和编排，业务逻辑集中在 engine、strategy 和 exchange 层。
+- **统一抽象**：策略依赖 `StrategyBase`，交易所依赖 `ExchangeBase` / `ContractExchangeBase`。
+- **先观察再执行**：signal、paper、testnet、live 是逐级放量，而不是一键切换。
+- **可审计**：策略信号、LLM 决策、风控拒绝、Kill Switch 和同步事件写入 SQLite。
+
+## 配置说明
+
+从示例开始：
 
 ```bash
-GET   /api/v1/engine/status
-GET   /api/v1/strategies
-POST  /api/v1/strategies/sma                          # 创建 SMA 策略
-POST  /api/v1/strategies/llm                          # 创建 LLM 策略
-POST  /api/v1/strategies/{name}/start
-POST  /api/v1/strategies/{name}/stop
-POST  /api/v1/strategies/{name}/mode                  # signal|paper|live
-DELETE /api/v1/strategies/{name}
+cp .env.example .env
 ```
 
-### 信号运行器
+最常用配置如下：
+
+| 配置 | 默认值 | 说明 |
+| --- | --- | --- |
+| `APP_ENV` | `development` | 运行环境 |
+| `HOST` / `PORT` | `0.0.0.0` / `8000` | API 监听地址 |
+| `SQLITE_PATH` | `data/trading.sqlite3` | 本地 SQLite 路径 |
+| `DEFAULT_EXCHANGE` | `binance_usdm` | 默认交易所 |
+| `DEFAULT_SYMBOL` | `BTCUSDT` | 默认品种 |
+| `ENABLE_LIVE_TRADING` | `false` | 实盘总开关，务必谨慎 |
+| `AUTH_API_KEY` | 空 | 可选 Bearer 鉴权 |
+| `LLM_API_KEY` | 空 | OpenAI-compatible API key |
+| `LLM_BASE_URL` | OpenAI v1 | LLM API 地址 |
+| `LLM_MODEL` | `gpt-4o-mini` | LLM 模型名 |
+| `LLM_ALLOWED_SYMBOLS` | 空 | LLM 可决策品种白名单 |
+| `ALERT_*` | 空 | 飞书 / 钉钉 / 企微告警 |
+| `BOT_*` | 关闭 | Telegram 监控 Bot |
+
+完整配置和每个参数的注释见 [`.env.example`](.env.example)。
+
+### LLM 接入
+
+系统使用 OpenAI-compatible HTTP API，默认支持以下类型：
+
+| 类型 | 示例 `LLM_BASE_URL` |
+| --- | --- |
+| OpenAI | `https://api.openai.com/v1` |
+| DeepSeek | `https://api.deepseek.com/v1` |
+| Ollama | `http://localhost:11434/v1` |
+| vLLM | `http://localhost:8000/v1` |
+
+LLM 只负责分析和生成结构化建议，最终是否执行仍要经过策略模式、风控检查、实盘开关和交易所适配器。
+
+## API 与可观测性
+
+启动服务后优先使用自动生成的 API 文档：
+
+- [Swagger UI](http://127.0.0.1:8000/docs)
+- [OpenAPI JSON](http://127.0.0.1:8000/openapi.json)
+- [API 路由说明](docs/api.md)
+
+常用健康检查：
 
 ```bash
-GET   /api/v1/runner/status
-POST  /api/v1/runner/start     {"poll_seconds":60, "candle_limit":80}
-POST  /api/v1/runner/stop
-POST  /api/v1/runner/run-once
-GET   /api/v1/signals/recent?limit=20
-POST  /api/v1/signals/evaluate?exchange=binance_usdm&symbol=BTCUSDT
-GET   /api/v1/events/recent?category=risk&limit=30
+curl http://127.0.0.1:8000/health
+curl http://127.0.0.1:8000/api/v1/health/venues
+curl http://127.0.0.1:8000/api/v1/monitor/status
+curl http://127.0.0.1:8000/metrics
 ```
 
-### 模拟盘
+设置 `AUTH_API_KEY` 后，状态变更和危险端点使用：
 
 ```bash
-GET  /api/v1/paper
-POST /api/v1/paper/reset   {"initial_cash": 10000}
+curl \
+  -H "Authorization: Bearer $AUTH_API_KEY" \
+  http://127.0.0.1:8000/api/v1/engine/status
 ```
-
-### AI 分析
-
-```bash
-POST /api/v1/ai/analyze
-  {"exchange":"binance_usdm","symbol":"BTCUSDT","interval":"1h","limit":30}
-```
-
-### LLM 策略管理
-
-```bash
-POST  /api/v1/strategies/llm                 # 创建 LLM 策略
-POST  /api/v1/strategies/llm-filter/attach    # 附加 LLM 过滤器
-GET   /api/v1/strategies/llm-filter/rejected  # 被拒信号列表
-```
-
-### 监控与同步
-
-```bash
-GET   /api/v1/monitor/status
-GET   /api/v1/monitor/alerts?level=error&limit=50
-GET   /api/v1/monitor/last-error
-GET   /api/v1/sync/status
-POST  /api/v1/sync/orders/{exchange}
-POST  /api/v1/sync/positions/{exchange}
-```
-
----
 
 ## 项目结构
 
 ```text
 .
-├── main.py                     # CLI 入口
-├── config/
-│   ├── __init__.py
-│   └── settings.py             # 全部配置（风控/AI/监控/同步）
 ├── app/
-│   ├── api/server.py           # FastAPI 路由
-│   ├── core/                   # 日志、并发
-│   ├── engine/
-│   │   ├── trader.py           # 核心引擎
-│   │   ├── risk_manager.py     # 风控
-│   │   ├── position_manager.py # 持仓
-│   │   ├── paper_trading.py    # 模拟盘
-│   │   ├── order_sync.py       # 订单同步
-│   │   ├── position_sync.py    # 持仓同步
-│   │   ├── monitor.py          # 监控告警
-│   │   └── llm_filter.py       # LLM 信号过滤器 (B)
-│   ├── exchanges/              # 交易所适配器
-│   │   ├── base.py             # ExchangeBase 抽象
-│   │   ├── contract_base.py    # 合约抽象
-│   │   ├── factory.py          # 工厂/单例
-│   │   ├── binance.py / binance_usdm.py
-│   │   ├── bitget_usdt_futures.py
-│   │   └── okx.py / okx_swap.py
-│   ├── models/                 # 数据模型
-│   │   ├── order.py / position.py / balance.py
-│   │   ├── market.py           # Ticker / Candlestick / Trade
-│   │   └── contract.py         # 合约请求/费率/估算
-│   └── strategies/
-│       ├── base.py             # StrategyBase + Signal
-│       ├── sma.py              # SMA 双均线
-│       ├── llm_analyzer.py     # LLM 调用/ Prompt/ 解析
-│       └── llm_strategy.py     # LLMStrategy (D/A)
-├── frontend/                   # React 工作台
-│   ├── src/App.tsx / api.ts / styles.css
-│   └── package.json
-├── docs/
-│   ├── architecture.svg        # 架构图
-│   └── llm-architecture.svg    # LLM 三层架构图
-├── Dockerfile
-├── .env.example
-└── pyproject.toml
+│   ├── api/              # FastAPI 路由、鉴权、schema、SSE
+│   ├── bot/              # Telegram 监控 Bot
+│   ├── core/             # 日志、SQLite、缓存、基础设施
+│   ├── data_sources/     # 公共行情数据源
+│   ├── engine/           # 交易引擎、风控、同步、监控、模拟盘
+│   ├── exchanges/        # Binance / Bitget / OKX 适配器
+│   ├── models/           # 行情、订单、持仓、合约模型
+│   └── strategies/       # SMA、LLMAnalyzer、LLMStrategy
+├── frontend/
+│   ├── src/pages/        # 工作台页面
+│   ├── src/components/   # UI 组件
+│   ├── src/api/          # 按领域拆分的 API client
+│   ├── package.json      # pnpm scripts
+│   └── pnpm-workspace.yaml # 共享 ~/.pnpm-store
+├── tests/                # 后端测试
+├── docs/                 # 架构、API、部署、安全与运维文档
+├── main.py               # CLI：api / trade / status / bot
+├── .env.example          # 配置模板
+├── Dockerfile            # 生产镜像
+├── docker-compose.yaml   # 生产栈
+└── Makefile              # 常用开发命令
 ```
 
-## 后续开发
+## 文档地图
 
-详细规划与项目状态见 [`docs/STATUS.md`](docs/STATUS.md)（2026-06-29 审计，约 82% 完成度）。
-近期完成 / 进行中：[`CHANGELOG.md`](CHANGELOG.md)。
-
-## 文档索引
-
-- [`docs/STATUS.md`](docs/STATUS.md) — 项目完成度 5 维度审计报告
-- [`docs/architecture.svg`](docs/architecture.svg) — 系统架构图
-- [`docs/llm-architecture.svg`](docs/llm-architecture.svg) — LLM D→B→A 三层架构图
-- [`docs/api.md`](docs/api.md) — HTTP API 参考 + 鉴权说明
-- [`docs/deployment.md`](docs/deployment.md) — 部署指南（开发/生产/Docker）
-- [`docs/security.md`](docs/security.md) — 安全指南与 5 重 LLM 风控闸门
-- [`docs/alerts.md`](docs/alerts.md) — 告警外发（飞书/钉钉/企微）配置
-- [`docs/observability.md`](docs/observability.md) — Prometheus /metrics 端点与 Grafana 仪表盘建议
-- [`CHANGELOG.md`](CHANGELOG.md) — 版本变更日志
-- [`CONTRIBUTING.md`](CONTRIBUTING.md) — 贡献指南
-- [`SECURITY.md`](SECURITY.md) — 漏洞报告策略
-
----
+| 文档 | 内容 |
+| --- | --- |
+| [文档总览](docs/README.md) | 按使用场景查找所有文档 |
+| [部署指南](docs/deployment.md) | Docker、本地开发、升级和排障 |
+| [HTTP API](docs/api.md) | 路由分组、鉴权和错误响应 |
+| [安全指南](docs/security.md) | 实盘保护、LLM 风险闸门和密钥管理 |
+| [告警配置](docs/alerts.md) | 飞书、钉钉、企业微信告警 |
+| [Telegram Bot](docs/bot.md) | 监控 Bot 配置和运行方式 |
+| [可观测性](docs/observability.md) | Prometheus、事件流和监控建议 |
+| [系统状态](docs/STATUS.md) | 当前完成度、已知问题和路线图 |
+| [贡献指南](CONTRIBUTING.md) | 分支、测试、代码风格和 PR 约定 |
+| [变更日志](CHANGELOG.md) | 功能与版本变更记录 |
+| [安全漏洞报告](SECURITY.md) | 私下报告安全问题 |
 
 ## 常见问题
 
-### uv 找不到
+### pnpm 如何共享依赖缓存？
 
-```bash
-export PATH="$HOME/.local/bin:$PATH"
+仓库已固定 `frontend/pnpm-workspace.yaml`：
+
+```yaml
+storeDir: ~/.pnpm-store
 ```
 
-### API 不能下单
+首次使用可以检查：
 
 ```bash
-# 检查 .env
+corepack enable
+pnpm store path
+```
+
+后续新建前端项目时，默认也使用 pnpm；除非明确指定 bun。不要为每个项目单独配置 npm cache，也不要把 `node_modules` 提交到仓库。
+
+### API 启动了，但前端请求失败
+
+确认后端在 `:8000`、前端在 `:5180`，并检查 `frontend/.env.local` 是否配置了错误的 `VITE_API_BASE_URL`。本地开发时 FastAPI CORS 只允许本地 Vite 来源。
+
+### API 返回 403，不能下单
+
+这是默认安全保护。确认你已经在 testnet 验证完整流程后，才考虑设置：
+
+```ini
 ENABLE_LIVE_TRADING=true
 ```
 
-确认 API key 配置正确。实盘前先用 testnet。
+同时检查交易所 API key、账户权限和风控参数。相关端点还可能要求 `AUTH_API_KEY`。
 
-### LLM 分析返回 "未配置 API Key"
+### LLM 分析提示未配置 API Key
 
-```bash
-# 在 .env 中配置
+```ini
 LLM_API_KEY=sk-xxx
 LLM_BASE_URL=https://api.openai.com/v1
+LLM_MODEL=gpt-4o-mini
 ```
 
-未配置时端点依然可用，返回 `hold` + 提示。
+未配置时系统仍可运行，但 AI 分析会返回 `hold` 或未配置提示。
 
-### Docker 拉取私有镜像
+### 端口被占用
 
 ```bash
-echo <GITHUB_TOKEN> | docker login ghcr.io -u <USER> --password-stdin
+# 检查端口
+lsof -i :8000
+lsof -i :5180
 ```
 
----
+调整端口时要同时更新 API 地址和 CORS allowlist，不要只修改 Vite 端口。
 
-## 后续路线
+## 路线图
 
-详见 [`docs/STATUS.md`](docs/STATUS.md) §3 与 [`CHANGELOG.md`](CHANGELOG.md) v0.2.0 段。
+当前优先级以 [`docs/STATUS.md`](docs/STATUS.md) 为准。方向包括：
 
-### v0.2.0 已完成（13 个 commit）
-- [x] API 鉴权中间件 — `a856a36`
-- [x] LLM Prompt 风险 + few-shot + 数据接入 — `8b28b41` `91a019c`
-- [x] LLM symbol 白名单 — `73f333d`
-- [x] paper_trading / llm_analyzer 单测 — `e334f41` `a8d11c6`
-- [x] ruff + mypy + pre-commit — `cbcdf5f`
-- [x] 修 set_strategy_mode live 矛盾 — `9d5b206`
-- [x] server.py 抽 schemas + helpers — `6917863`
-- [x] 前端 api.ts 拆 9 个 domain（560 → 66 行）— `62f4850` 系列
-- [x] 告警外发飞书/钉钉/企微 — `7d4eee1`
-- [x] Prometheus /metrics 端点 — `0963ff3`
-- [x] CI 移除 `--ignore=` 死配置 — `4e007e2`
+- 完善 metrics 深度埋点与 Grafana 仪表盘。
+- 加强告警 provider 的签名校验和测试按钮。
+- 继续拆分 API router，降低单文件复杂度。
+- 增强策略回测、WebSocket 成交推送和 OMS 状态管理。
+- 在保持“个人 localhost 优先”定位的前提下，逐步补齐多用户能力。
 
-### v0.3 候选（按 ROI 排，不承诺时间）
-- 4 个 metrics 埋点深度接入（见 `docs/observability.md`）
-- 前端 Settings 加"测试告警"按钮
-- 钉钉加签 / 飞书签名校验（生产安全加固）
-- server.py 路由分组（需 APIRouter 重构）
+## 参与贡献
 
-### P2（长期 / 不阻塞）
-- [ ] 私有 WebSocket：订单成交推送
-- [ ] 完整 OMS 状态机（PostgreSQL + Alembic）
-- [ ] 多用户认证（JWT + RBAC）
-- [ ] 策略回测框架可视化
-- [ ] Prometheus / OTel metrics 端点
+欢迎提交 Issue、改进文档或发起 Pull Request：
 
-近期不再添加的项（明确不投入）：
-- 自动化测试覆盖率门槛（P1-2 已剔除）—— 代码健康看 reviewer，不靠门槛
-- 公网部署方案 —— 项目定位是个人 localhost 使用
+1. 先阅读 [贡献指南](CONTRIBUTING.md)。
+2. 从 `main` 创建主题分支。
+3. 保持一个 PR 一个主题，并在描述中写清动机、改动和验证方式。
+4. 提交前运行 `make ci`。
+
+如果这个项目对你有帮助，欢迎点一个 ⭐，这会帮助项目获得更多反馈。

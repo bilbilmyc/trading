@@ -28,7 +28,7 @@ services:
     image: node:22-slim
     container_name: quant-trader-web
     working_dir: /app
-    command: sh -c "npm ci && npm run dev"
+    command: sh -c "corepack enable && pnpm install --frozen-lockfile && pnpm dev"
     volumes:
       - ./frontend:/app
     environment:

@@ -5,7 +5,7 @@
 | 场景 | 命令 | Web UI | API |
 |---|---|---:|---:|
 | 生产 / 演示（Docker） | `docker compose up --build -d` | `:8000` | `:8000` |
-| 本地开发 | `uv run python main.py api` + `cd frontend && npm run dev` | `:5180` | `:8000` |
+| 本地开发 | `uv run python main.py api` + `cd frontend && pnpm dev` | `:5180` | `:8000` |
 | Docker 开发 | `docker compose -f docker-compose.dev.yml up --build` | `:5180` | `:8000` |
 
 生产模式由 FastAPI 提供编译后的静态前端，因此只暴露一个端口。开发模式运行 Vite；浏览器端 API 地址默认按 `:5180 → http://127.0.0.1:8000` 解析，可使用 `VITE_API_BASE_URL` 覆盖。
@@ -13,7 +13,7 @@
 ## 前置要求
 
 - **Docker 模式**：Docker Desktop / Docker Engine（含 Compose v2）
-- **本地模式**：Python 3.13、uv、Node.js 22
+- **本地模式**：Python 3.13、uv、Node.js 22、pnpm 11（或 Corepack）；pnpm 共享 store 位于 `~/.pnpm-store`
 - 可选：交易所 testnet API key、LLM API key
 
 ## 生产部署（推荐）
@@ -47,15 +47,16 @@ docker run --rm --name quant-trader -p 8000:8000 --env-file .env ghcr.io/bilbilm
 ## 本地开发（前后端分离）
 
 ```bash
+corepack enable  # 已安装 pnpm 时可跳过
 uv sync --all-extras --dev
-cd frontend && npm ci && cd ..
+cd frontend && pnpm install --frozen-lockfile && cd ..
 cp .env.example .env
 
 # 终端 1
 uv run python main.py api --host 127.0.0.1 --port 8000
 
 # 终端 2
-cd frontend && npm run dev
+cd frontend && pnpm dev
 ```
 
 访问 <http://127.0.0.1:5180>。FastAPI 的 CORS 仅允许本地 Vite 的 `localhost:5180` / `127.0.0.1:5180` 来源。
@@ -98,7 +99,7 @@ docker compose logs --tail=200 api
 ```bash
 git pull
 uv sync --all-extras --dev --frozen
-cd frontend && npm ci && cd ..
+cd frontend && pnpm install --frozen-lockfile && cd ..
 make ci
 # 或重新发布：docker compose up --build -d
 ```

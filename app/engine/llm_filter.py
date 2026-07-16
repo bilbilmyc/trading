@@ -26,7 +26,8 @@ class LLMSignalFilter:
     """LLM 信号过滤器
 
     收到策略信号后，获取最近 K 线数据，让 LLM 分析当前市场状况，
-    只有 LLM 确认方向与策略信号一致时才放行。
+    只有 LLM 确认方向与策略信号一致时才放行。无行情、调用异常、
+    失败结果或无效结果一律拒绝（fail-closed）。
     """
 
     def __init__(
@@ -66,8 +67,8 @@ class LLMSignalFilter:
             }
 
         if not ticker.get("last_price"):
-            logger.warning(f"LLM 过滤器 [{symbol}]: 无价格数据，放行")
-            return True
+            logger.warning(f"LLM 过滤器 [{symbol}]: 无价格数据，拒绝信号")
+            return False
 
         try:
             result = await self.analyzer.analyze_raw(
@@ -77,22 +78,35 @@ class LLMSignalFilter:
                 interval="",
                 position_context=None,
             )
+            decision = result.decision
+            confidence = float(result.confidence)
+            error_kind = getattr(result, "error_kind", None)
         except Exception as exc:
-            logger.warning(f"LLM 过滤器 [{symbol}] 调用异常: {exc}，放行")
-            return True
+            logger.warning(f"LLM 过滤器 [{symbol}] 调用异常: {exc}，拒绝信号")
+            return False
 
-        if result.decision == "hold":
+        if error_kind:
+            logger.warning(
+                f"LLM 过滤器 [{symbol}] 返回失败结果 ({error_kind})，拒绝信号"
+            )
+            return False
+
+        if decision not in {"buy", "sell", "hold"} or not 0 <= confidence <= 1:
+            logger.warning(f"LLM 过滤器 [{symbol}] 返回无效结果，拒绝信号")
+            return False
+
+        if decision == "hold":
             logger.info(f"LLM 过滤器 [{symbol}]: LLM hold，拒绝信号 {signal.action.value}")
             return False
 
-        if result.confidence < self.min_confidence:
+        if confidence < self.min_confidence:
             logger.info(
-                f"LLM 过滤器 [{symbol}]: 置信度 {result.confidence:.2f} < {self.min_confidence}，拒绝"
+                f"LLM 过滤器 [{symbol}]: 置信度 {confidence:.2f} < {self.min_confidence}，拒绝"
             )
             return False
 
         # 检查方向一致性
-        llm_action = result.decision  # "buy" / "sell"
+        llm_action = decision  # "buy" / "sell"
         signal_action = signal.action.value  # "buy" / "sell"
         if llm_action != signal_action:
             logger.info(
@@ -101,6 +115,6 @@ class LLMSignalFilter:
             return False
 
         logger.info(
-            f"LLM 过滤器 [{symbol}]: LLM 确认 {llm_action}，置信度 {result.confidence:.2f}，放行"
+            f"LLM 过滤器 [{symbol}]: LLM 确认 {llm_action}，置信度 {confidence:.2f}，放行"
         )
         return True

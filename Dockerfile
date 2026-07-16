@@ -2,10 +2,10 @@
 
 FROM node:22-slim AS frontend-builder
 WORKDIR /app/frontend
-COPY frontend/package*.json ./
-RUN npm ci
+COPY frontend/package.json frontend/pnpm-lock.yaml frontend/pnpm-workspace.yaml ./
+RUN corepack enable && pnpm install --frozen-lockfile
 COPY frontend/ ./
-RUN npm run build
+RUN pnpm build
 
 FROM python:3.13-slim AS runtime
 COPY --from=ghcr.io/astral-sh/uv:0.11.19 /uv /uvx /usr/local/bin/

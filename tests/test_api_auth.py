@@ -128,6 +128,7 @@ DANGEROUS_ENDPOINTS = [
     ("POST",   "/api/v1/positions/close",        {
         "exchange": "binance_usdm", "symbol": "BTCUSDT",
     }, "close position"),
+    ("POST",   "/api/v1/strategies/llm-filter/attach", None, "attach LLM filter"),
 ]
 
 

@@ -6,6 +6,7 @@
 """
 
 import asyncio
+import inspect
 import time
 from collections.abc import Callable
 from datetime import datetime
@@ -39,6 +40,29 @@ class _NoOpGuard:
     @property
     def kill_switch_enabled(self) -> bool:
         return False
+
+
+class _LegacySignalFilterAdapter:
+    """Adapt the historical ``(exchange, strategy, signal)`` callback API.
+
+    LiveOrderPipeline uses the safer two-argument ``check(signal, context)``
+    port. Keeping this adapter lets existing callers continue to register
+    legacy callbacks without bypassing the pipeline's fail-closed behavior.
+    """
+
+    def __init__(self, callback: Callable[..., Any]) -> None:
+        self._callback = callback
+        self.name = getattr(callback, "__qualname__", callback.__class__.__name__)
+
+    async def check(self, signal: Signal, context: dict[str, Any]) -> bool:
+        result = self._callback(
+            context.get("exchange", ""),
+            context.get("strategy", ""),
+            signal,
+        )
+        if inspect.isawaitable(result):
+            result = await result
+        return bool(result)
 
 
 class TradingEngine:
@@ -307,6 +331,26 @@ class TradingEngine:
 
         return self.paper_account.summary()
 
+    def close_paper_position(
+        self,
+        exchange: str,
+        symbol: str,
+        exit_quantity: float | None = None,
+        position_size_pct: float = 1.0,
+    ) -> dict[str, Any] | None:
+        """Close a paper position and persist the resulting paper order."""
+
+        order = self.paper_account.close_position(
+            exchange=exchange,
+            symbol=symbol,
+            exit_quantity=exit_quantity,
+            position_size_pct=position_size_pct,
+        )
+        if order and self.store:
+            self.store.save_paper_order(order)
+            self.store.save_paper_state(self.paper_account.summary())
+        return order
+
     def reset_paper_account(self, initial_cash: float | None = None) -> dict[str, Any]:
         """重置模拟盘账户并持久化。"""
 
@@ -528,12 +572,20 @@ class TradingEngine:
         self._on_order_callbacks.append(callback)
 
     def add_signal_filter(self, filter_fn: Callable) -> None:
-        """注册信号过滤器（B 方案用）。
+        """注册信号过滤器，并立即同步到已创建的交易流水线。
 
-        async (exchange_name, strategy_name, signal) -> bool
-        返回 False 表示拒绝该信号。
+        新式过滤器实现 ``check(signal, context)``；历史上的
+        ``(exchange_name, strategy_name, signal)`` 回调会自动适配。
+        任何过滤器异常都由 LiveOrderPipeline fail-closed。
         """
-        self._signal_filters.append(filter_fn)
+        normalized = (
+            filter_fn
+            if callable(getattr(filter_fn, "check", None))
+            else _LegacySignalFilterAdapter(filter_fn)
+        )
+        self._signal_filters.append(normalized)
+        for pipeline in self._pipelines.values():
+            pipeline.add_signal_filter(normalized)
 
     def get_rejected_signals(self, limit: int = 20) -> list[dict[str, Any]]:
         """返回最近被过滤器拒绝的信号。"""
@@ -572,7 +624,7 @@ class TradingEngine:
         checkers = build_engine_checkers(self._exchanges, self)
         for checker in checkers:
             self.monitor.add_checker(checker)
-        self._observer.start()
+        await self._observer.start()
         self.monitor.start()
 
         # ── 风险快照循环 ──

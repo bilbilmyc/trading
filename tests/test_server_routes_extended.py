@@ -11,6 +11,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from app.api.server import create_app
+from app.models.position import Position
 from config import Settings
 
 
@@ -196,3 +197,171 @@ def test_post_sources_register_and_list(tmp_path) -> None:
         r = c.get("/api/v1/sources")
         names = [s["name"] for s in r.json()["sources"]]
         assert "test-source" not in names
+
+
+def test_close_paper_position_does_not_require_live_trading(tmp_path) -> None:
+    with TestClient(create_app(_settings(sqlite_path=str(tmp_path / "paper-close.sqlite3")))) as c:
+        state = c.app.state.trading
+        state.engine.paper_account.positions["binance_usdm:BTCUSDT"] = {
+            "exchange": "binance_usdm",
+            "symbol": "BTCUSDT",
+            "quantity": 2.0,
+            "avg_entry_price": 100.0,
+            "current_price": 110.0,
+            "realized_pnl": 0.0,
+            "unrealized_pnl": 20.0,
+            "updated_at": "2026-01-01T00:00:00",
+        }
+
+        response = c.post(
+            "/api/v1/paper/positions/close",
+            json={
+                "exchange": "binance_usdm",
+                "symbol": "BTCUSDT",
+                "position_size_pct": 0.5,
+            },
+        )
+
+        assert response.status_code == 200
+        assert response.json()["closed_quantity"] == pytest.approx(1.0)
+        summary = state.engine.get_paper_summary()
+        assert summary["positions"][0]["quantity"] == pytest.approx(1.0)
+
+
+class _ClosePositionExchange:
+    def __init__(self) -> None:
+        self.calls: list[dict[str, Any]] = []
+
+    async def place_order(self, **kwargs: Any) -> dict[str, Any]:
+        self.calls.append(kwargs)
+        return {"order_id": "close-test-1", **kwargs}
+
+    async def close(self) -> None:
+        return None
+
+
+def test_close_position_rejects_when_live_trading_is_disabled(tmp_path) -> None:
+    with TestClient(create_app(_settings(sqlite_path=str(tmp_path / "close-disabled.sqlite3")))) as c:
+        response = c.post(
+            "/api/v1/positions/close",
+            json={"exchange": "binance_usdm", "symbol": "BTCUSDT"},
+        )
+
+        assert response.status_code == 403
+        assert "Live trading is disabled" in response.json()["detail"]
+
+
+def test_close_position_obeys_kill_switch(tmp_path) -> None:
+    settings = _settings(
+        sqlite_path=str(tmp_path / "close-kill-switch.sqlite3"),
+        enable_live_trading=True,
+        binance_usdm_enabled=False,
+    )
+    with TestClient(create_app(settings)) as c:
+        state = c.app.state.trading
+        exchange = _ClosePositionExchange()
+        state.trading_exchanges["binance_usdm"] = exchange
+        state.engine.position_manager._positions["binance_usdm:BTCUSDT"] = Position(
+            symbol="BTCUSDT", exchange="binance_usdm", quantity=2.0
+        )
+
+        response = c.post(
+            "/api/v1/risk/kill-switch",
+            json={"enabled": True, "reason": "close-route-test"},
+        )
+        assert response.status_code == 200
+
+        response = c.post(
+            "/api/v1/positions/close",
+            json={"exchange": "binance_usdm", "symbol": "BTCUSDT"},
+        )
+
+        assert response.status_code == 423
+        assert exchange.calls == []
+
+
+def test_close_position_uses_position_size_pct_for_partial_close(tmp_path) -> None:
+    settings = _settings(
+        sqlite_path=str(tmp_path / "close-partial.sqlite3"),
+        enable_live_trading=True,
+        binance_usdm_enabled=False,
+    )
+    with TestClient(create_app(settings)) as c:
+        state = c.app.state.trading
+        exchange = _ClosePositionExchange()
+        state.trading_exchanges["binance_usdm"] = exchange
+        state.engine.position_manager._positions["binance_usdm:BTCUSDT"] = Position(
+            symbol="BTCUSDT", exchange="binance_usdm", quantity=2.0
+        )
+
+        response = c.post(
+            "/api/v1/positions/close",
+            json={
+                "exchange": "binance_usdm",
+                "symbol": "BTCUSDT",
+                "position_size_pct": 0.25,
+            },
+        )
+
+        assert response.status_code == 200
+        assert response.json()["closed_quantity"] == pytest.approx(0.5)
+        assert exchange.calls == [{
+            "symbol": "BTCUSDT",
+            "side": "sell",
+            "order_type": "market",
+            "quantity": 0.5,
+            "price": None,
+        }]
+
+
+def test_close_position_rejects_exit_quantity_above_local_position(tmp_path) -> None:
+    settings = _settings(
+        sqlite_path=str(tmp_path / "close-too-large.sqlite3"),
+        enable_live_trading=True,
+        binance_usdm_enabled=False,
+    )
+    with TestClient(create_app(settings)) as c:
+        state = c.app.state.trading
+        exchange = _ClosePositionExchange()
+        state.trading_exchanges["binance_usdm"] = exchange
+        state.engine.position_manager._positions["binance_usdm:BTCUSDT"] = Position(
+            symbol="BTCUSDT", exchange="binance_usdm", quantity=2.0
+        )
+
+        response = c.post(
+            "/api/v1/positions/close",
+            json={
+                "exchange": "binance_usdm",
+                "symbol": "BTCUSDT",
+                "exit_quantity": 3.0,
+            },
+        )
+
+        assert response.status_code == 400
+        assert "exceeds position size" in response.json()["detail"]
+        assert exchange.calls == []
+
+
+def test_close_position_never_opens_a_position_when_local_position_is_missing(tmp_path) -> None:
+    settings = _settings(
+        sqlite_path=str(tmp_path / "close-missing-position.sqlite3"),
+        enable_live_trading=True,
+        binance_usdm_enabled=False,
+    )
+    with TestClient(create_app(settings)) as c:
+        state = c.app.state.trading
+        exchange = _ClosePositionExchange()
+        state.trading_exchanges["binance_usdm"] = exchange
+
+        response = c.post(
+            "/api/v1/positions/close",
+            json={
+                "exchange": "binance_usdm",
+                "symbol": "BTCUSDT",
+                "exit_quantity": 1.0,
+            },
+        )
+
+        assert response.status_code == 400
+        assert response.json()["detail"] == "No position to close"
+        assert exchange.calls == []

@@ -24,6 +24,7 @@ def test_engine_starts_and_stops(tmp_path) -> None:
         e = _engine(tmp_path)
         await e.start()
         assert e._running is True
+        assert e._observer._flush_task is not None
         await e.stop()
         assert e._running is False
 
@@ -65,6 +66,19 @@ def test_engine_signal_filter_sync(tmp_path) -> None:
     result = asyncio.run(my_filter("binance_usdm", "smatest", sig))
     assert result is True
     assert received[0][2] == "BTCUSDT"
+
+
+def test_engine_add_signal_filter_updates_existing_pipelines(tmp_path) -> None:
+    e = _engine(tmp_path)
+    e.add_exchange("binance_usdm", _make_fake_exchange())
+
+    async def filter_fn(exchange, strategy, signal):
+        return True
+
+    e.add_signal_filter(filter_fn)
+
+    assert len(e._signal_filters) == 1
+    assert len(e._pipelines["binance_usdm"]._signal_filters) == 1
 
 
 def test_engine_add_exchange_dedupes(tmp_path) -> None:

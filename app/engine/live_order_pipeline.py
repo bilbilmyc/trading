@@ -64,6 +64,10 @@ class LiveOrderPipeline:
         self._semaphore = semaphore
         self._signal_filters: Sequence[SignalFilter] = tuple(signal_filters)
 
+    def add_signal_filter(self, signal_filter: SignalFilter) -> None:
+        """Attach a filter to this live pipeline at runtime."""
+        self._signal_filters = (*self._signal_filters, signal_filter)
+
     async def execute(self, signal: Signal):
         # Lazy import — keep the pipeline import-graph clean even if metrics
         # is unavailable, and let `safe_*` swallow any later PrometheusError.
@@ -84,11 +88,18 @@ class LiveOrderPipeline:
             )
 
         # 2. Signal filters (async veto chain)
-        ctx: FilterContext = {"exchange": getattr(self._exchange, "name", "")}
+        ctx: FilterContext = {
+            "exchange": getattr(self._exchange, "name", ""),
+            "strategy": signal.metadata.get("strategy")
+            or signal.metadata.get("strategy_name", ""),
+        }
         for f in self._signal_filters:
             try:
-                if not await f.check(signal, ctx):
-                    name = getattr(f, "__class__", type(f)).__name__
+                checker = getattr(f, "check", f)
+                if not await checker(signal, ctx):
+                    name = getattr(f, "name", None) or getattr(
+                        f, "__class__", type(f)
+                    ).__name__
                     self._observer.record(
                         TradeEvent(
                             kind="signal_filtered",
@@ -102,9 +113,28 @@ class LiveOrderPipeline:
                     return Err(
                         TradeError(stage="filter", reason=f"rejected by {name}")
                     )
-            except Exception:
-                # Filter exception = pass-through (per existing engine semantics).
-                continue
+            except Exception as exc:
+                name = getattr(f, "name", None) or getattr(
+                    f, "__class__", type(f)
+                ).__name__
+                self._observer.record(
+                    TradeEvent(
+                        kind="signal_filter_error",
+                        payload={
+                            "filter": name,
+                            "symbol": signal.symbol,
+                            "error": str(exc),
+                        },
+                    )
+                )
+                safe_inc(RISK_REJECTIONS_TOTAL, reason=f"signal_filter_error:{name}")
+                return Err(
+                    TradeError(
+                        stage="filter",
+                        reason=f"{name} failed closed: {exc}",
+                        details={"filter": name, "symbol": signal.symbol},
+                    )
+                )
 
         # 3. Concurrency control + price + risk + place
         async with self._semaphore:

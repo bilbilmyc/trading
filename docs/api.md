@@ -8,7 +8,7 @@ FastAPI 自动生成的 OpenAPI 文档在 `/docs`（Swagger UI）和 `/openapi.j
 
 - 默认（`AUTH_API_KEY` 留空）：无鉴权，localhost 个人使用场景
 - 设置 `AUTH_API_KEY=<secret>` 后：所有状态变更端点要求 `Authorization: Bearer <secret>`
-- 12 个危险端点挂上 `require_api_key` 依赖（kill-switch、order、cancel、leverage、paper reset 等）
+- 所有状态变更和交易控制端点挂上 `require_api_key` 依赖（kill-switch、order、cancel、leverage、paper、LLM filter 等）
 
 生成密钥：
 
@@ -28,7 +28,7 @@ python -c "import secrets; print(secrets.token_urlsafe(32))"
 | 下单 | `/api/v1/order`, `/api/v1/contracts/order` | 2 | **是** |
 | 撤单 | `DELETE /api/v1/order/*`, `DELETE /api/v1/orders/*/open` | 2 | **是** |
 | 引擎 | `/api/v1/engine/*`, `/api/v1/runner/*` | 5 | 部分 |
-| 模拟盘 | `/api/v1/paper`, `/api/v1/paper/reset` | 2 | **是**（reset） |
+| 模拟盘 | `/api/v1/paper`, `/api/v1/paper/positions/close`, `/api/v1/paper/reset` | 3 | **是**（写） |
 | 策略 | `/api/v1/strategies/*` | 10+ | **是**（写） |
 | 信号/事件 | `/api/v1/signals/recent`, `/api/v1/events/recent` | 2 | 否 |
 | 风控计算 | `/api/v1/sizing`, `/api/v1/atr-sizing` | 2 | 否 |
@@ -39,7 +39,8 @@ python -c "import secrets; print(secrets.token_urlsafe(32))"
 | 监控/同步 | `/api/v1/monitor/*`, `/api/v1/sync/*` | 5 | 否 |
 | 数据源 | `/api/v1/sources` | 3 | **是**（写） |
 | SSE | `/api/v1/stream/events` | 1 | 否 |
-| 平仓 | `/api/v1/positions/close` | 1 | **是** |
+| 平仓（实盘） | `/api/v1/positions/close` | 1 | **是** |
+| 平仓（模拟盘） | `/api/v1/paper/positions/close` | 1 | **是** |
 
 完整 70+ 路由见 [`app/api/server.py`](../app/api/server.py) 或启动服务后访问 `/docs`。
 

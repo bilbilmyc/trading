@@ -9,7 +9,7 @@ from datetime import datetime
 from typing import Any
 from uuid import uuid4
 
-from app.strategies.base import Signal
+from app.strategies.base import Signal, SignalAction
 
 
 class PaperTradingAccount:
@@ -177,6 +177,52 @@ class PaperTradingAccount:
         self.orders.append(order)
         self.orders = self.orders[-200:]
         return order
+
+    def close_position(
+        self,
+        exchange: str,
+        symbol: str,
+        exit_quantity: float | None = None,
+        position_size_pct: float = 1.0,
+    ) -> dict[str, Any] | None:
+        """Close all or part of a paper position at its latest mark price."""
+
+        if not 0 < position_size_pct <= 1:
+            raise ValueError("position_size_pct must be between 0 and 1")
+
+        position = self.positions.get(self._position_key(exchange, symbol))
+        if not position or abs(float(position.get("quantity", 0.0))) <= 0:
+            return None
+
+        current_quantity = float(position["quantity"])
+        max_quantity = abs(current_quantity)
+        quantity = (
+            float(exit_quantity)
+            if exit_quantity is not None
+            else max_quantity * position_size_pct
+        )
+        if quantity <= 0:
+            raise ValueError("exit quantity must be positive")
+        if quantity > max_quantity:
+            raise ValueError(
+                f"close quantity {quantity} exceeds position size {max_quantity}"
+            )
+
+        fill_price = float(
+            position.get("current_price") or position.get("avg_entry_price") or 0.0
+        )
+        if fill_price <= 0:
+            raise ValueError("paper position has no valid mark price")
+
+        signal = Signal(
+            symbol=symbol,
+            action=SignalAction.SELL if current_quantity > 0 else SignalAction.BUY,
+            strength=1.0,
+            quantity=quantity,
+            price=fill_price,
+            metadata={"source": "manual_paper_close"},
+        )
+        return self.apply_signal(exchange, "manual", signal, fill_price)
 
     def summary(self) -> dict[str, Any]:
         """返回模拟账户汇总，供 API 和前端展示。"""

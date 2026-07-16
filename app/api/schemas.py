@@ -158,7 +158,7 @@ class ClosePositionRequest(BaseModel):
 
     symbol: str
     exchange: str
-    exit_quantity: float | None = None
+    exit_quantity: float | None = Field(default=None, gt=0)
     position_size_pct: float = Field(1.0, gt=0, le=1.0)
 
 

@@ -61,7 +61,7 @@ class RiskDecision:
 class TradeEvent:
     """An event the Observer records. `kind` is the discriminator."""
 
-    kind: str  # "signal_filtered" | "gate_blocked" | "risk_rejected" | "order_placed" | "order_failed"
+    kind: str  # "signal_filtered" | "signal_filter_error" | "gate_blocked" | "risk_rejected" | "order_placed" | "order_failed"
     payload: Mapping[str, Any] = field(default_factory=dict)
 
 

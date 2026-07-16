@@ -80,7 +80,7 @@ export function RiskPage() {
     if (!window.confirm(`确认平仓 ${symbol}（${exchange}）？`)) return;
     setBusy(true);
     try {
-      await api.closePosition({ exchange, symbol });
+      await api.closePaperPosition({ exchange, symbol });
       setMessage(`已平仓 ${symbol}`);
       await refresh();
     } catch (err) {

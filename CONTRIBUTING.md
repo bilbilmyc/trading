@@ -7,13 +7,16 @@
 ```bash
 git clone <repo>
 cd trading
+corepack enable  # 已安装 pnpm 时可跳过
 uv sync --all-extras --dev
-cd frontend && npm ci && cd ..
+cd frontend && pnpm install --frozen-lockfile && cd ..
 
 # 装 pre-commit hooks（可选）
 uv run pip install pre-commit
 uv run pre-commit install
 ```
+
+前端依赖使用 pnpm，仓库通过 `frontend/pnpm-workspace.yaml` 将共享 store 固定到 `~/.pnpm-store`，避免每个项目各自维护一份 npm 缓存。
 
 ## 工作流
 

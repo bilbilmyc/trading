@@ -379,9 +379,6 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 "error_category": category,
             }) from exc
 
-    def _placeholder():
-        pass
-
     async def build_contract_order_preview(request: ContractOrderRequest) -> dict[str, Any]:
         """构建合约下单预览，不产生任何交易所状态变更。"""
 
@@ -1160,6 +1157,44 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     async def paper_summary(state: AppState = Depends(get_state)):
         return state.engine.get_paper_summary()
 
+    @app.post("/api/v1/paper/positions/close", dependencies=[Depends(require_api_key)])
+    async def close_paper_position_endpoint(
+        request: ClosePositionRequest,
+        state: AppState = Depends(get_state),
+    ):
+        """Close all or part of a simulated position without touching a venue."""
+        exchange_name = request.exchange.lower()
+        try:
+            order = state.engine.close_paper_position(
+                exchange=exchange_name,
+                symbol=request.symbol,
+                exit_quantity=request.exit_quantity,
+                position_size_pct=request.position_size_pct,
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+        if order is None:
+            raise HTTPException(status_code=400, detail="No paper position to close")
+
+        state.engine._record_event(
+            category="paper",
+            event_type="paper_position_closed",
+            level="info",
+            exchange=exchange_name,
+            symbol=request.symbol,
+            order_id=str(order.get("order_id", "")) or None,
+            message=f"Closed {order.get('quantity', 0)} {request.symbol} in paper account",
+            details={
+                "quantity": order.get("quantity"),
+                "price": order.get("price"),
+                "realized_pnl": order.get("realized_pnl"),
+                "position_size_pct": request.position_size_pct,
+                "requested_exit_quantity": request.exit_quantity,
+            },
+        )
+        return {"closed_quantity": order["quantity"], "order": order}
+
     @app.post("/api/v1/paper/reset", dependencies=[Depends(require_api_key)])
     async def reset_paper_account(
         request: PaperResetRequest,
@@ -1682,7 +1717,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             item for item in state.engine.list_strategies() if item["name"] == strategy_name
         )}
 
-    @app.post("/api/v1/strategies/llm-filter/attach")
+    @app.post("/api/v1/strategies/llm-filter/attach", dependencies=[Depends(require_api_key)])
     async def attach_llm_filter(
         exchange: str = Query("binance_usdm", min_length=1),
         symbol: str = Query("BTCUSDT", min_length=1),
@@ -1817,10 +1852,33 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     ):
         """Close (or partially close) a position at market.
 
-        Sends a closing order to the configured trading exchange.
-        For a partial close, `exit_quantity` controls how much to close.
+        This endpoint is a live-trading mutation, so it must pass the same
+        live-trading and kill-switch gates as the normal order endpoints.
+        ``position_size_pct`` is used when ``exit_quantity`` is omitted.
         """
-        client = state.trading_exchanges.get(request.exchange.lower())
+        exchange_name = request.exchange.lower()
+        if not state.settings.enable_live_trading:
+            reject_live_disabled(
+                action="close_position",
+                detail="Live trading is disabled. Enable it before closing positions.",
+                exchange=exchange_name,
+                symbol=request.symbol,
+                details={
+                    "position_size_pct": request.position_size_pct,
+                    "exit_quantity": request.exit_quantity,
+                },
+            )
+        ensure_trading_not_killed(
+            action="close_position",
+            exchange=exchange_name,
+            symbol=request.symbol,
+            details={
+                "position_size_pct": request.position_size_pct,
+                "exit_quantity": request.exit_quantity,
+            },
+        )
+
+        client = state.trading_exchanges.get(exchange_name)
         if client is None:
             raise HTTPException(
                 status_code=400,
@@ -1828,29 +1886,39 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             )
         try:
             pos = await state.engine.position_manager.get_position(
-                request.exchange, request.symbol
+                exchange_name, request.symbol
             )
         except Exception:
             pos = None
 
-        side = "sell" if (pos and pos.quantity > 0) else "buy"
-        order_type = "market"
-        qty = request.exit_quantity if request.exit_quantity is not None else (
-            abs(pos.quantity) if pos else 0.0
+        position_quantity = abs(pos.quantity) if pos else 0.0
+        if position_quantity <= 0:
+            raise HTTPException(status_code=400, detail="No position to close")
+
+        side = "sell" if pos.quantity > 0 else "buy"
+        qty = (
+            request.exit_quantity
+            if request.exit_quantity is not None
+            else position_quantity * request.position_size_pct
         )
         if qty <= 0:
             raise HTTPException(status_code=400, detail="No position to close")
+        if pos is not None and qty > position_quantity:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Close quantity {qty} exceeds position size {position_quantity}",
+            )
 
-        try:
-            result = await client.place_order(
+        result = await call_exchange(
+            lambda: client.place_order(
                 symbol=request.symbol,
                 side=side,
-                order_type=order_type,
+                order_type="market",
                 quantity=qty,
                 price=None,
-            )
-        except Exception as exc:
-            raise HTTPException(status_code=502, detail=f"Exchange error: {exc}") from exc
+            ),
+            is_private=True,
+        )
 
         # Audit event.
         try:
@@ -1858,10 +1926,14 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 category="order",
                 event_type="position_closed",
                 level="info",
-                exchange=request.exchange,
+                exchange=exchange_name,
                 symbol=request.symbol,
                 message=f"Closed {qty} {request.symbol} via market order",
-                details={"order_id": str(result.get("order_id", ""))},
+                details={
+                    "order_id": str(result.get("order_id", "")),
+                    "position_size_pct": request.position_size_pct,
+                    "requested_exit_quantity": request.exit_quantity,
+                },
             )
         except Exception:
             pass

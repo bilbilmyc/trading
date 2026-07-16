@@ -202,6 +202,33 @@ class AllowingFilter:
         return True
 
 
+class FailingFilter:
+    async def check(self, signal, context):
+        raise RuntimeError("filter provider unavailable")
+
+
+@pytest.mark.asyncio
+async def test_filter_exception_fails_closed_before_risk_or_place() -> None:
+    pipe, observer, tracker, recorder, exchange = _pipeline(
+        filters=[FailingFilter()]
+    )
+
+    result = await pipe.execute(_buy_signal())
+
+    assert isinstance(result, Err)
+    err = result.unwrap_err()
+    assert err.stage == "filter"
+    assert "failed closed" in err.reason
+    assert err.details["filter"] == "FailingFilter"
+
+    assert len(observer.events) == 1
+    assert observer.events[0].kind == "signal_filter_error"
+    assert observer.events[0].payload["filter"] == "FailingFilter"
+    assert tracker.tracked == []
+    assert recorder.records == []
+    assert exchange.placed == []
+
+
 @pytest.mark.asyncio
 async def test_filter_veto_short_circuits_before_risk_or_place() -> None:
     pipe, observer, tracker, recorder, exchange = _pipeline(

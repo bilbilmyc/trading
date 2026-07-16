@@ -18,12 +18,12 @@
 3. `uv run pytest tests/ --cov=app --cov-fail-under=60`
 4. API 入口相关模块 import smoke test
 
-前端任务（Node 22 + npm）：
+前端任务（Node 22 + pnpm）：
 
-1. `npm ci`
-2. `npm run typecheck`
-3. `npm run test:run`
-4. `npm run build`
+1. `pnpm install --frozen-lockfile`
+2. `pnpm typecheck`
+3. `pnpm test:run`
+4. `pnpm build`
 
 本地复现完整门禁：
 
@@ -43,7 +43,7 @@ Docker 工作流使用 Buildx 和 GitHub Actions cache：
   - `ghcr.io/bilbilmyc/trading:sha-<commit>`
 - **手动触发**：只有选择 `main` 分支时才会发布；其他分支只构建验证。
 
-镜像构建同时验证：前端 `npm ci && npm run build`、后端 `uv sync --frozen --no-dev --no-install-project`，以及最终 API 运行时镜像的文件布局。
+镜像构建同时验证：前端 `pnpm install --frozen-lockfile && pnpm build`、后端 `uv sync --frozen --no-dev --no-install-project`，以及最终 API 运行时镜像的文件布局。
 
 ## 发布后验证
 
@@ -59,7 +59,7 @@ docker stop quant-trader-check
 
 ## 失败处理
 
-- **uv / npm 依赖失败**：确认 lockfile 与 manifest 同步，使用 `uv sync --frozen` / `npm ci` 本地复现。
+- **uv / pnpm 依赖失败**：确认 lockfile 与 manifest 同步，使用 `uv sync --frozen` / `pnpm install --frozen-lockfile` 本地复现。
 - **Docker 构建失败**：运行 `docker compose build api`；检查 `.dockerignore` 没有排除运行时必须的文件。
 - **GHCR 推送失败**：确认仓库 Actions 对 `GITHUB_TOKEN` 的 packages 写入权限未被组织策略禁用。
 - **覆盖率门槛失败**：为实际行为添加测试，不要仅为抬高数字编写无效测试。

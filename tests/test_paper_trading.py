@@ -294,6 +294,30 @@ def test_load_state_restores_account_fields() -> None:
     assert acct.orders[0]["order_id"] == "paper_abc"
 
 
+def test_manual_close_position_uses_partial_percentage() -> None:
+    acct = _account(fee_rate=0.0)
+    acct.apply_signal("binance_usdm", "sma", _buy(quantity=0.2), fill_price=50000.0)
+    acct.mark_price("binance_usdm", "BTCUSDT", 55000.0)
+
+    order = acct.close_position(
+        "binance_usdm", "BTCUSDT", position_size_pct=0.25
+    )
+
+    assert order is not None
+    assert order["side"] == "sell"
+    assert order["quantity"] == pytest.approx(0.05)
+    assert acct.positions["binance_usdm:BTCUSDT"]["quantity"] == pytest.approx(0.15)
+    assert order["realized_pnl"] == pytest.approx(250.0)
+
+
+def test_manual_close_position_rejects_over_close() -> None:
+    acct = _account()
+    acct.apply_signal("binance_usdm", "sma", _buy(quantity=0.2), fill_price=50000.0)
+
+    with pytest.raises(ValueError, match="exceeds position size"):
+        acct.close_position("binance_usdm", "BTCUSDT", exit_quantity=0.3)
+
+
 # ── Order log ─────────────────────────────────────────────────────
 
 
