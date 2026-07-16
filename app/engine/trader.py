@@ -52,7 +52,22 @@ class _LegacySignalFilterAdapter:
 
     def __init__(self, callback: Callable[..., Any]) -> None:
         self._callback = callback
+        self._target = getattr(callback, "__self__", None)
         self.name = getattr(callback, "__qualname__", callback.__class__.__name__)
+        self.requires_market_data = bool(
+            getattr(self._target, "requires_market_data", False)
+        )
+        self.market_data_limit = getattr(self._target, "market_data_limit", 80)
+
+    def feed_market_data(
+        self,
+        symbol: str,
+        ticker: dict[str, Any],
+        klines: list[Any],
+    ) -> None:
+        target = getattr(self._target, "feed_market_data", None)
+        if callable(target):
+            target(symbol, ticker, klines)
 
     async def check(self, signal: Signal, context: dict[str, Any]) -> bool:
         result = self._callback(
@@ -148,7 +163,7 @@ class TradingEngine:
         self._on_order_callbacks: list[Callable] = []
 
         # 信号过滤器（B 方案：LLM 二次确认）
-        # 过滤器签名：async (exchange_name, strategy_name, signal) -> bool
+        # 新式过滤器签名：async check(signal, context) -> bool；兼容历史三参数回调。
         self._signal_filters: list[Callable] = []
         self._signal_filter_rejects: list[dict[str, Any]] = []
 
@@ -735,6 +750,14 @@ class TradingEngine:
         # 执行有效信号
         for (strategy_name, _), signal in zip(signal_tasks, signals):
             if isinstance(signal, Signal) and signal.is_actionable:
+                # 注入过滤器需要的策略上下文后再记录和执行。
+                if signal.metadata is None:
+                    signal.metadata = {}
+                signal.metadata["strategy_name"] = strategy_name
+                signal.metadata.setdefault(
+                    "interval",
+                    str(self._strategy_configs.get(strategy_name, {}).get("interval") or "1m"),
+                )
                 self._record_signal(exchange_name, strategy_name, signal)
                 # 通知回调
                 for callback in self._on_signal_callbacks:
@@ -746,10 +769,6 @@ class TradingEngine:
                     except Exception as e:
                         logger.error(f"信号回调错误：{e}")
 
-                # 注入策略名到 metadata（供过滤器使用）
-                if signal.metadata is None:
-                    signal.metadata = {}
-                signal.metadata["strategy_name"] = strategy_name
                 # 执行订单
                 await self._execute_signal(exchange, signal)
                 executed_signals.append(signal)

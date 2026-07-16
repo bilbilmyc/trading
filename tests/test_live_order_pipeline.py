@@ -87,9 +87,13 @@ class FakeExchange:
         self._ticker_price = ticker_price
         self._place_result = place_result or {"order_id": "fake-order-1"}
         self.placed: List[Dict[str, Any]] = []
+        self.klines = [{"open_time": 1, "close": self._ticker_price}]
 
     async def get_ticker(self, symbol: str) -> Dict[str, Any]:
         return {"last_price": self._ticker_price}
+
+    async def get_klines(self, symbol: str, interval: str, limit: int = 100):
+        return self.klines[-limit:]
 
     async def place_order(self, **kwargs: Any) -> Dict[str, Any]:
         self.placed.append(kwargs)
@@ -167,6 +171,31 @@ async def test_happy_path_places_order_and_emits_single_placed_event() -> None:
     assert len(exchange.placed) == 1
     assert exchange.placed[0]["symbol"] == "BTCUSDT"
     assert exchange.placed[0]["side"] == "buy"
+
+
+class MarketDataAwareFilter:
+    requires_market_data = True
+    market_data_limit = 20
+
+    def __init__(self) -> None:
+        self.context = None
+
+    async def check(self, signal, context):
+        self.context = context
+        return True
+
+
+@pytest.mark.asyncio
+async def test_market_data_aware_filter_receives_fresh_exchange_data() -> None:
+    market_filter = MarketDataAwareFilter()
+    pipe, observer, tracker, recorder, exchange = _pipeline(filters=(market_filter,))
+
+    result = await pipe.execute(_buy_signal())
+
+    assert isinstance(result, Ok)
+    assert market_filter.context["ticker"] == {"last_price": 100.0}
+    assert market_filter.context["klines"] == exchange.klines
+    assert market_filter.context["interval"] == "1m"
 
 
 @pytest.mark.asyncio

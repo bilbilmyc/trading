@@ -79,3 +79,27 @@ async def test_matching_high_confidence_analysis_is_allowed() -> None:
     allowed = await filter_.check("binance_usdm", "sma", _signal())
 
     assert allowed is True
+
+
+@pytest.mark.asyncio
+async def test_context_market_data_is_forwarded_to_analyzer() -> None:
+    analyzer = AsyncMock()
+    analyzer.analyze_raw.return_value = _result()
+    filter_ = LLMSignalFilter(analyzer=analyzer)
+    signal = _signal().model_copy(update={"price": None})
+    ticker = {"symbol": "BTCUSDT", "last_price": 101.0}
+    klines = [{"open_time": 1, "close": 101.0}]
+
+    allowed = await filter_.check(
+        signal,
+        {"ticker": ticker, "klines": klines, "interval": "5m"},
+    )
+
+    assert allowed is True
+    analyzer.analyze_raw.assert_awaited_once_with(
+        ticker=ticker,
+        klines=klines,
+        symbol="BTCUSDT",
+        interval="5m",
+        position_context=None,
+    )

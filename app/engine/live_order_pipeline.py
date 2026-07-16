@@ -21,11 +21,10 @@ Returns:
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 
 from app.core.result import Err, Ok
 from app.engine.pipeline_types import (
-    FilterContext,
     Observer,
     OrderTracker,
     PositionRecorder,
@@ -88,11 +87,61 @@ class LiveOrderPipeline:
             )
 
         # 2. Signal filters (async veto chain)
-        ctx: FilterContext = {
+        ctx: dict[str, object] = {
             "exchange": getattr(self._exchange, "name", ""),
             "strategy": signal.metadata.get("strategy")
             or signal.metadata.get("strategy_name", ""),
+            "interval": signal.metadata.get("interval", "1m"),
         }
+        market_data_filters = [
+            f
+            for f in self._signal_filters
+            if getattr(f, "requires_market_data", False)
+        ]
+        if market_data_filters:
+            try:
+                ctx["ticker"] = await self._exchange.get_ticker(signal.symbol)
+                limit = max(
+                    int(getattr(f, "market_data_limit", 80) or 80)
+                    for f in market_data_filters
+                )
+                ctx["klines"] = await self._exchange.get_klines(
+                    signal.symbol,
+                    interval=str(ctx["interval"] or "1m"),
+                    limit=limit,
+                )
+            except Exception as exc:
+                self._observer.record(
+                    TradeEvent(
+                        kind="signal_filter_error",
+                        payload={
+                            "filter": "market_data",
+                            "symbol": signal.symbol,
+                            "error": str(exc),
+                        },
+                    )
+                )
+                safe_inc(
+                    RISK_REJECTIONS_TOTAL,
+                    reason="signal_filter_error:market_data",
+                )
+                return Err(
+                    TradeError(
+                        stage="filter",
+                        reason=f"market data preparation failed closed: {exc}",
+                        details={"filter": "market_data", "symbol": signal.symbol},
+                    )
+                )
+
+        for f in market_data_filters:
+            target = getattr(f, "feed_market_data", None)
+            if callable(target):
+                target(
+                    signal.symbol,
+                    ctx.get("ticker", {}),
+                    ctx.get("klines", []),
+                )
+
         for f in self._signal_filters:
             try:
                 checker = getattr(f, "check", f)
@@ -138,10 +187,12 @@ class LiveOrderPipeline:
 
         # 3. Concurrency control + price + risk + place
         async with self._semaphore:
+            ticker = ctx.get("ticker")
             price = signal.price if (signal.price and signal.price > 0) else None
             if price is None:
                 try:
-                    ticker = await self._exchange.get_ticker(signal.symbol)
+                    if not isinstance(ticker, Mapping):
+                        ticker = await self._exchange.get_ticker(signal.symbol)
                     price = float(ticker.get("last_price", 0) or 0)
                 except Exception as exc:
                     self._observer.record(

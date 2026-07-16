@@ -1751,7 +1751,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             default_order_amount_usdt=amount,
             min_confidence=min_confidence,
         )
-        state.engine.add_signal_filter(filter_.check)
+        state.engine.add_signal_filter(filter_)
 
         return {
             "status": "attached",

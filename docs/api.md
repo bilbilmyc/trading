@@ -42,6 +42,10 @@ python -c "import secrets; print(secrets.token_urlsafe(32))"
 | 平仓（实盘） | `/api/v1/positions/close` | 1 | **是** |
 | 平仓（模拟盘） | `/api/v1/paper/positions/close` | 1 | **是** |
 
+### LLM 信号过滤器
+
+`POST /api/v1/strategies/llm-filter/attach` 会把 LLM 二次确认过滤器挂到实盘流水线。每次过滤前，流水线按信号中的策略周期刷新 ticker 和 K 线，过滤器不会依赖过期的本地行情缓存。行情或 LLM 分析任一步失败都会 fail-closed，信号不会进入风控和交易所下单阶段。
+
 完整 70+ 路由见 [`app/api/server.py`](../app/api/server.py) 或启动服务后访问 `/docs`。
 
 ## 错误响应

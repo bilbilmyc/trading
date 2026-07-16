@@ -9,9 +9,10 @@ LLM 信号过滤器（B 方案）
     # 在 API 或 main.py 中
     from app.engine.llm_filter import LLMSignalFilter
     filter_ = LLMSignalFilter(analyzer, default_order_amount_usdt=50)
-    engine.add_signal_filter(filter_.check)
+    engine.add_signal_filter(filter_)
 """
 
+from collections.abc import Mapping
 from typing import TYPE_CHECKING, Any
 
 from loguru import logger
@@ -29,6 +30,12 @@ class LLMSignalFilter:
     只有 LLM 确认方向与策略信号一致时才放行。无行情、调用异常、
     失败结果或无效结果一律拒绝（fail-closed）。
     """
+
+    # LiveOrderPipeline uses this marker to fetch fresh market data only when
+    # a filter actually needs it.  This avoids adding a second exchange call
+    # to every signal when no market-data-aware filter is attached.
+    requires_market_data = True
+    market_data_limit = 80
 
     def __init__(
         self,
@@ -48,20 +55,48 @@ class LLMSignalFilter:
         self._latest_ticker[symbol] = ticker
         self._latest_klines[symbol] = klines[-80:] if klines else []
 
-    async def check(self, exchange_name: str, strategy_name: str, signal: Signal) -> bool:
-        """信号过滤回调。返回 True 放行，False 拒绝。"""
+    async def check(
+        self,
+        exchange_or_signal: str | Signal,
+        strategy_or_context: str | Mapping[str, Any] | None = None,
+        signal: Signal | None = None,
+    ) -> bool:
+        """检查信号，兼容历史三参数回调和流水线上下文协议。
+
+        历史调用方式为 ``check(exchange, strategy, signal)``；新的流水线
+        调用方式为 ``check(signal, context)``，其中 context 会携带最新
+        ticker/K 线，避免在过滤器外部维护一份可能过期的行情缓存。
+        """
+
+        if isinstance(exchange_or_signal, Signal):
+            signal = exchange_or_signal
+            context = (
+                strategy_or_context
+                if isinstance(strategy_or_context, Mapping)
+                else {}
+            )
+        else:
+            context = {}
+
+        if signal is None:
+            logger.warning("LLM 过滤器收到不完整信号，拒绝信号")
+            return False
 
         symbol = signal.symbol
-        klines = self._latest_klines.get(symbol, [])
+        interval = str(context.get("interval") or "")
+        klines = list(
+            context.get("klines") or self._latest_klines.get(symbol, [])
+        )
+        ticker = context.get("ticker")
         if not klines:
             # 没有缓存数据，用 ticker 凑合
-            ticker = self._latest_ticker.get(symbol, {}) or {
+            ticker = ticker or self._latest_ticker.get(symbol, {}) or {
                 "symbol": symbol,
                 "last_price": signal.price or 0,
             }
         else:
             last = klines[-1]
-            ticker = self._latest_ticker.get(symbol, {}) or {
+            ticker = ticker or self._latest_ticker.get(symbol, {}) or {
                 "symbol": symbol,
                 "last_price": float(last.get("close", last.get("last_price", 0))),
             }
@@ -75,7 +110,7 @@ class LLMSignalFilter:
                 ticker=ticker,
                 klines=klines,
                 symbol=symbol,
-                interval="",
+                interval=interval,
                 position_context=None,
             )
             decision = result.decision
