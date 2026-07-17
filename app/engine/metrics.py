@@ -162,10 +162,21 @@ CACHE_EVENTS_TOTAL = Counter(
 # never crash the trading loop or the alert path. These helpers
 # centralize that contract.
 
+
 def safe_inc(metric: Counter, **labels: Any) -> bool:
-    """Increment a Counter, swallow every exception. Returns whether it actually inc'd."""
+    """Increment a Counter by one, swallowing every exception."""
+    return safe_add(metric, 1.0, **labels)
+
+
+def safe_add(metric: Counter, value: float, **labels: Any) -> bool:
+    """Increment a Counter by ``value``, swallowing every exception.
+
+    This is intentionally separate from :func:`safe_inc` because several
+    counters represent quantities (for example LLM tokens) rather than a
+    count of events.
+    """
     try:
-        metric.labels(**labels).inc()
+        metric.labels(**labels).inc(value)
         return True
     except Exception:
         return False

@@ -180,6 +180,11 @@ class Settings(BaseSettings):
     llm_temperature: float = 0.3
     llm_max_tokens: int = 2048
     llm_request_timeout: float = 30.0
+    # Strategy-scoped LLM availability controls. Cache hits bypass these
+    # limits; defaults preserve the existing request cadence.
+    llm_min_request_interval_seconds: float = Field(default=0.0, ge=0, le=3600)
+    llm_circuit_failure_threshold: int = Field(default=3, ge=1, le=100)
+    llm_circuit_cooldown_seconds: float = Field(default=60.0, ge=1, le=3600)
     llm_min_candles: int = 20
     llm_max_candles: int = 100
     llm_default_order_amount: float = 50.0

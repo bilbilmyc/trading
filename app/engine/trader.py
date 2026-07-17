@@ -6,7 +6,9 @@
 """
 
 import asyncio
+import hashlib
 import inspect
+import json
 import time
 from collections.abc import Callable
 from datetime import datetime
@@ -15,6 +17,10 @@ from typing import Any, Optional
 from loguru import logger
 
 from app.core.sqlite_store import SQLiteStore
+from app.engine.account_reconciliation import (
+    AccountReconciliationFilter,
+    AccountReconciliationGuard,
+)
 from app.engine.composite_observer import CompositeObserver
 from app.engine.live_order_pipeline import LiveOrderPipeline
 from app.engine.live_trading_guard import LiveTradingGuard
@@ -54,9 +60,7 @@ class _LegacySignalFilterAdapter:
         self._callback = callback
         self._target = getattr(callback, "__self__", None)
         self.name = getattr(callback, "__qualname__", callback.__class__.__name__)
-        self.requires_market_data = bool(
-            getattr(self._target, "requires_market_data", False)
-        )
+        self.requires_market_data = bool(getattr(self._target, "requires_market_data", False))
         self.market_data_limit = getattr(self._target, "market_data_limit", 80)
 
     def feed_market_data(
@@ -82,7 +86,7 @@ class _LegacySignalFilterAdapter:
 
 class TradingEngine:
     """交易引擎
-    
+
     核心功能：
     - 多交易所连接管理
     - 多策略并行执行
@@ -131,6 +135,7 @@ class TradingEngine:
         # 核心组件
         self.risk_manager = RiskManager(risk_config, trading_guard=trading_guard)
         self.position_manager = PositionManager()
+        self.account_reconciliation = AccountReconciliationGuard()
         self.paper_account = PaperTradingAccount()
 
         # 实盘同步组件（阶段 5）
@@ -165,6 +170,9 @@ class TradingEngine:
         # 信号过滤器（B 方案：LLM 二次确认）
         # 新式过滤器签名：async check(signal, context) -> bool；兼容历史三参数回调。
         self._signal_filters: list[Callable] = []
+        self._account_reconciliation_filter = AccountReconciliationFilter(
+            self.account_reconciliation
+        )
         self._signal_filter_rejects: list[dict[str, Any]] = []
 
         logger.info("交易引擎初始化完成（含 stage-5 实盘同步组件）")
@@ -200,9 +208,7 @@ class TradingEngine:
                 long_window=int(data.get("long_window", 20)),
             )
 
-        self.strategy_registry.register(
-            cls=SMAStrategy, snapshot=_sma_snap, restore=_sma_restore
-        )
+        self.strategy_registry.register(cls=SMAStrategy, snapshot=_sma_snap, restore=_sma_restore)
 
         # LLM strategy: round-trip non-primitive config (model, analyzer, prompt).
         try:
@@ -268,6 +274,7 @@ class TradingEngine:
             observer=self._observer,
             semaphore=self._pipeline_semaphore,
             signal_filters=tuple(self._signal_filters),
+            safety_filter=self._account_reconciliation_filter,
         )
         logger.info(f"添加交易所：{name}")
 
@@ -376,7 +383,9 @@ class TradingEngine:
             self.store.clear_paper_orders()
         return summary
 
-    async def start_signal_runner(self, poll_seconds: int = 60, candle_limit: int = 80) -> dict[str, Any]:
+    async def start_signal_runner(
+        self, poll_seconds: int = 60, candle_limit: int = 80
+    ) -> dict[str, Any]:
         """启动只生成信号、不真实下单的后台循环。"""
 
         if self._signal_runner_task is not None and not self._signal_runner_task.done():
@@ -421,10 +430,12 @@ class TradingEngine:
                     "interval": config.get("interval", "1m"),
                     "mode": config.get("mode", "signal"),
                     "updated_at": config.get("updated_at"),
+                    "version": config.get("version"),
                     "parameters": {
                         key: value
                         for key, value in vars(strategy).items()
-                        if not key.startswith("_") and isinstance(value, (str, int, float, bool, type(None)))
+                        if not key.startswith("_")
+                        and isinstance(value, (str, int, float, bool, type(None)))
                     },
                 }
             )
@@ -447,21 +458,33 @@ class TradingEngine:
             "interval": config.get("interval", "1m"),
             "mode": config.get("mode", "signal"),
             "updated_at": config.get("updated_at"),
+            "version": config.get("version"),
             "parameters": {
                 key: value
                 for key, value in vars(strategy).items()
-                if not key.startswith("_") and isinstance(value, (str, int, float, bool, type(None)))
+                if not key.startswith("_")
+                and isinstance(value, (str, int, float, bool, type(None)))
             },
         }
 
     def _persist_strategy(self, name: str) -> None:
-        """如果配置了 SQLite，就持久化一个策略。"""
+        """Persist current strategy and append a deduplicated immutable version."""
 
         if not self.store:
             return
         snapshot = self._strategy_snapshot(name)
-        if snapshot:
-            self.store.upsert_strategy(snapshot)
+        if not snapshot:
+            return
+        self.store.upsert_strategy(snapshot)
+        version_payload = {
+            key: snapshot.get(key)
+            for key in ("class_name", "exchange", "symbol", "interval", "mode", "running", "parameters")
+        }
+        fingerprint = hashlib.sha256(
+            json.dumps(version_payload, ensure_ascii=False, sort_keys=True, default=str).encode("utf-8")
+        ).hexdigest()
+        version = self.store.record_strategy_version(snapshot, fingerprint=fingerprint)
+        self._strategy_configs.setdefault(name, {})["version"] = version["version"]
 
     def restore_persisted_strategies(self) -> int:
         """从 SQLite 恢复已注册的策略定义。
@@ -535,11 +558,7 @@ class TradingEngine:
             category="risk",
             event_type=legacy_type,
             level="critical" if enabled else "warning",
-            message=(
-                "全局 Kill Switch 已被触发"
-                if enabled
-                else "全局 Kill Switch 已解除"
-            ),
+            message=("全局 Kill Switch 已被触发" if enabled else "全局 Kill Switch 已解除"),
             details={"enabled": enabled, "reason": reason or ""},
         )
 
@@ -625,14 +644,10 @@ class TradingEngine:
             logger.info(f"策略 {name} 已启动")
 
         # ── 阶段 5：启动订单同步循环（由引擎驱动；OrderSync 不再自管循环） ──
-        self._sync_tasks.append(
-            asyncio.create_task(self._order_sync_loop())
-        )
+        self._sync_tasks.append(asyncio.create_task(self._order_sync_loop()))
 
         # ── 阶段 5：启动持仓同步循环（同上） ──
-        self._sync_tasks.append(
-            asyncio.create_task(self._position_sync_loop())
-        )
+        self._sync_tasks.append(asyncio.create_task(self._position_sync_loop()))
 
         # ── 阶段 5：启动监控告警 ──
         # 注册标准检查器
@@ -645,9 +660,7 @@ class TradingEngine:
         # ── 风险快照循环 ──
         # 每 30s 把 risk 状态 + 关键计数写成一条 events row，供前端
         # sparkline 拉历史。失败只记日志，不影响交易。
-        self._sync_tasks.append(
-            asyncio.create_task(self._risk_snapshot_loop())
-        )
+        self._sync_tasks.append(asyncio.create_task(self._risk_snapshot_loop()))
 
         self.monitor.push(
             Alert(
@@ -701,18 +714,13 @@ class TradingEngine:
 
         logger.info("交易引擎已停止")
 
-    async def process_market_data(
-        self,
-        exchange_name: str,
-        symbol: str,
-        data: dict[str, Any]
-    ):
+    async def process_market_data(self, exchange_name: str, symbol: str, data: dict[str, Any]):
         """处理行情数据
-        
+
         将行情数据分发给所有策略
         """
         # 更新持仓价格
-        price = float(data.get('last_price', data.get('close', 0)))
+        price = float(data.get("last_price", data.get("close", 0)))
         if price > 0:
             await self.position_manager.update_price(exchange_name, symbol, price)
 
@@ -725,11 +733,7 @@ class TradingEngine:
         if tasks:
             await asyncio.gather(*tasks, return_exceptions=True)
 
-    async def check_and_execute_signals(
-        self,
-        exchange_name: str,
-        symbol: str
-    ) -> list[Signal]:
+    async def check_and_execute_signals(self, exchange_name: str, symbol: str) -> list[Signal]:
         """检查并执行交易信号"""
         if exchange_name not in self._exchanges:
             logger.error(f"交易所 {exchange_name} 未找到")
@@ -845,7 +849,9 @@ class TradingEngine:
             try:
                 klines = await exchange.get_klines(symbol, interval=interval, limit=candle_limit)
                 for candle in sorted(klines, key=lambda item: item.get("open_time", "")):
-                    await self._process_market_data_for_strategy(strategy, exchange_name, symbol, candle)
+                    await self._process_market_data_for_strategy(
+                        strategy, exchange_name, symbol, candle
+                    )
                 signal = await self._generate_signal(strategy, symbol)
                 processed += 1
                 if isinstance(signal, Signal):
@@ -1024,7 +1030,9 @@ class TradingEngine:
             await self.position_manager.update_price(exchange_name, symbol, price)
         await strategy.on_market_data(symbol, data)
 
-    def _serialize_signal(self, exchange_name: str, strategy_name: str, signal: Signal) -> dict[str, Any]:
+    def _serialize_signal(
+        self, exchange_name: str, strategy_name: str, signal: Signal
+    ) -> dict[str, Any]:
         """把 Signal 序列化成 API/UI 使用的字典。"""
 
         return {
@@ -1066,24 +1074,26 @@ class TradingEngine:
                 self.store.save_paper_order(order)
                 self.store.save_paper_state(self.paper_account.summary())
                 # 审计事件：纸盘成交（独立于实盘路径，按 ADR-0001 保持分离）。
-                self.store.append_event({
-                    "category": "paper",
-                    "event_type": "paper_order_filled",
-                    "level": "info",
-                    "exchange": exchange_name,
-                    "symbol": signal.symbol,
-                    "strategy": strategy_name,
-                    "order_id": str(order.get("order_id", "")) or None,
-                    "message": f"{signal.action.value.upper()} {signal.symbol} @ {price} (paper)",
-                    "details": {
-                        "side": signal.action.value,
-                        "quantity": order.get("quantity"),
-                        "price": price,
-                        "fee": order.get("fee"),
-                        "realized_pnl": order.get("realized_pnl"),
-                    },
-                    "timestamp": datetime.utcnow().isoformat(),
-                })
+                self.store.append_event(
+                    {
+                        "category": "paper",
+                        "event_type": "paper_order_filled",
+                        "level": "info",
+                        "exchange": exchange_name,
+                        "symbol": signal.symbol,
+                        "strategy": strategy_name,
+                        "order_id": str(order.get("order_id", "")) or None,
+                        "message": f"{signal.action.value.upper()} {signal.symbol} @ {price} (paper)",
+                        "details": {
+                            "side": signal.action.value,
+                            "quantity": order.get("quantity"),
+                            "price": price,
+                            "fee": order.get("fee"),
+                            "realized_pnl": order.get("realized_pnl"),
+                        },
+                        "timestamp": datetime.utcnow().isoformat(),
+                    }
+                )
         return order
 
     def _strategy_matches(
@@ -1106,11 +1116,7 @@ class TradingEngine:
             return False
         return True
 
-    async def _generate_signal(
-        self,
-        strategy: StrategyBase,
-        symbol: str
-    ) -> Signal | None:
+    async def _generate_signal(self, strategy: StrategyBase, symbol: str) -> Signal | None:
         """生成交易信号"""
         try:
             return await strategy.generate_signals(symbol)
@@ -1134,6 +1140,7 @@ class TradingEngine:
 
         # 订单回调仍然由引擎调度（pipeline 不拥有引擎级回调注册表）。
         from app.core.result import Ok
+
         if isinstance(result, Ok):
             receipt = result.unwrap()
             for callback in self._on_order_callbacks:
@@ -1173,23 +1180,23 @@ class TradingEngine:
         position_summary = await self.position_manager.get_position_summary()
 
         return {
-            'running': self._running,
-            'exchanges': list(self._exchanges.keys()),
-            'strategies': list(self._strategies.keys()),
-            'strategy_details': self.list_strategies(),
-            'recent_signals': self.get_recent_signals(limit=10),
-            'signal_runner': self.get_signal_runner_status(),
-            'paper': self.get_paper_summary(),
-            'risk': risk_status,
-            'positions': position_summary,
+            "running": self._running,
+            "exchanges": list(self._exchanges.keys()),
+            "strategies": list(self._strategies.keys()),
+            "strategy_details": self.list_strategies(),
+            "recent_signals": self.get_recent_signals(limit=10),
+            "signal_runner": self.get_signal_runner_status(),
+            "paper": self.get_paper_summary(),
+            "risk": risk_status,
+            "positions": position_summary,
             # 阶段 5：实盘同步 + 监控状态（loop 状态由引擎统一报告）
-            'order_sync': {
-                'running': self._running,
-                'tracked_orders': self.order_sync.tracked_count,
+            "order_sync": {
+                "running": self._running,
+                "tracked_orders": self.order_sync.tracked_count,
             },
-            'position_sync': {
-                'running': self._running,
+            "position_sync": {
+                "running": self._running,
             },
-            'monitor': self.monitor.summary(),
-            'timestamp': datetime.utcnow().isoformat(),
+            "monitor": self.monitor.summary(),
+            "timestamp": datetime.utcnow().isoformat(),
         }

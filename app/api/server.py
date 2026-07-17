@@ -13,7 +13,7 @@ FastAPI HTTP 入口。
 
 from collections.abc import Awaitable, Callable
 from contextlib import asynccontextmanager
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any, TypeVar
 
@@ -26,7 +26,9 @@ from fastapi.staticfiles import StaticFiles
 from app.api.auth import require_api_key
 from app.api.cache import TTLCache
 from app.api.helpers import (
+    ensure_client_order_id,
     ensure_contract_client_order_id,
+    execution_fingerprint,
     extract_order_id,
     infer_liquidity,
 )
@@ -40,11 +42,15 @@ from app.api.schemas import (
     LLMStrategyCreateRequest,
     OrderRequest,
     PaperResetRequest,
+    ReconciliationRecoveryRequest,
     SignalRunnerRequest,
     SizingRequest,
     SMAStrategyRequest,
     StrategyModeRequest,
+    StrategyPromotionDecisionRequest,
+    StrategyPromotionEvaluateRequest,
     SuggestRequest,
+    WalkForwardRequest,
 )
 from app.core.logging import setup_logger
 from app.core.sqlite_store import SQLiteStore
@@ -56,6 +62,7 @@ from app.exchanges.base import ExchangeBase
 from app.exchanges.contract_base import ContractExchangeBase
 from app.exchanges.factory import ExchangeFactory
 from app.models.contract import ContractOrderRequest, LiquidityType, MarginMode, PositionSide
+from app.models.order import Order, OrderSide, OrderStatus, OrderType
 from app.strategies.sma import SMAStrategy
 from config import Settings, load_settings
 
@@ -115,6 +122,12 @@ class AppState:
                 enabled=False,
                 mode="signal",
             )
+        # Persist sync outcomes back to the durable execution-intent ledger,
+        # then restore every non-terminal intent after a process restart.
+        self.engine.order_sync.on_sync(self._persist_execution_intent_from_sync)
+        self.engine.position_sync.on_reconciliation(self._persist_reconciliation_outcome)
+        self._restore_execution_intents()
+        self._restore_reconciliation_blocks()
         # Two-layer exchange registry (ADR-0003):
         # - data_sources: public market data only, no auth required.
         # - trading_exchanges: private + order operations, require keys + flag.
@@ -219,6 +232,87 @@ class AppState:
             raise HTTPException(status_code=400, detail=f"Exchange is not contract-capable: {name}")
         return exchange
 
+    def _restore_execution_intents(self) -> None:
+        """Reload durable, non-terminal submissions into the reconciliation loop."""
+
+        for intent in self.store.pending_execution_intents():
+            self.track_execution_intent(intent["client_order_id"])
+
+    def _restore_reconciliation_blocks(self) -> None:
+        """Keep critical account discrepancies fail-closed across restarts."""
+
+        self.engine.account_reconciliation.restore(self.store.reconciliation_issues(status="open"))
+
+    async def _persist_reconciliation_outcome(self, outcome) -> None:
+        """Persist authoritative account snapshots and trigger venue-local blocks."""
+
+        payload = outcome.as_dict()
+        self.store.append_account_snapshot(payload)
+        self.store.upsert_reconciliation_issues(outcome.exchange, outcome.issues)
+        if self.engine.account_reconciliation.observe(outcome):
+            self.store.append_event(
+                {
+                    "category": "risk",
+                    "event_type": "account_reconciliation_blocked",
+                    "level": "critical",
+                    "exchange": outcome.exchange,
+                    "message": "New exposure blocked due to account/position reconciliation discrepancy",
+                    "details": {"issues": outcome.issues},
+                    "timestamp": outcome.completed_at,
+                }
+            )
+
+    def track_execution_intent(self, client_order_id: str) -> None:
+        """Track an intent by client id so a later exchange sync can bind it."""
+
+        intent = self.store.get_execution_intent(client_order_id)
+        if intent is None:
+            return
+        try:
+            status = OrderStatus(intent["status"])
+        except ValueError:
+            status = OrderStatus.UNKNOWN
+        if status in {
+            OrderStatus.FILLED,
+            OrderStatus.CANCELLED,
+            OrderStatus.REJECTED,
+            OrderStatus.EXPIRED,
+        }:
+            return
+        try:
+            side = OrderSide(str(intent["side"]).lower())
+        except ValueError:
+            return
+        order_type = (
+            OrderType.MARKET if str(intent["order_type"]).lower() == "market" else OrderType.LIMIT
+        )
+        self.engine.order_sync.track(
+            Order(
+                order_id=intent.get("exchange_order_id"),
+                client_order_id=intent["client_order_id"],
+                exchange=intent["exchange"],
+                symbol=intent["symbol"],
+                side=side,
+                order_type=order_type,
+                quantity=float(intent["quantity"]),
+                price=intent.get("price"),
+                status=status,
+            )
+        )
+
+    async def _persist_execution_intent_from_sync(self, order: Order, changed: bool) -> None:
+        """Reflect reconciliation results in SQLite without blocking order sync."""
+
+        if not order.client_order_id:
+            return
+        status = order.status.value if isinstance(order.status, OrderStatus) else str(order.status)
+        self.store.update_execution_intent(
+            order.client_order_id,
+            status=status,
+            exchange_order_id=order.order_id,
+            clear_error=status not in {OrderStatus.SUBMITTING.value, OrderStatus.UNKNOWN.value},
+        )
+
     def ensure_strategy_exchanges(self) -> None:
         """策略运行前，先把策略配置里需要的交易所客户端创建好。"""
 
@@ -264,13 +358,15 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     except ValueError:
         min_level = _AlertLevel.WARNING
 
-    _dispatcher = AlertDispatcher(DispatcherConfig(
-        min_level=min_level,
-        feishu_url=settings.alert_feishu_webhook,
-        dingtalk_url=settings.alert_dingtalk_webhook,
-        wecom_url=settings.alert_wecom_webhook,
-        http_timeout=settings.alert_http_timeout,
-    ))
+    _dispatcher = AlertDispatcher(
+        DispatcherConfig(
+            min_level=min_level,
+            feishu_url=settings.alert_feishu_webhook,
+            dingtalk_url=settings.alert_dingtalk_webhook,
+            wecom_url=settings.alert_wecom_webhook,
+            http_timeout=settings.alert_http_timeout,
+        )
+    )
     if _dispatcher.providers:
         state.engine.monitor.on_alert(_dispatcher.handle_alert)
         _loguru_logger.info(
@@ -284,6 +380,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         # 启动时把 state 挂到 app.state，便于调试；关闭时统一释放资源。
         # Stamp APP_INFO gauge so Prometheus picks up version + env labels.
         from app.engine.metrics import APP_INFO
+
         APP_INFO.labels(version=app.version, env=settings.app_env).set(1)
 
         app.state.trading = state
@@ -346,10 +443,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         except HTTPException:
             raise
         except ValueError as exc:
-            raise HTTPException(status_code=400, detail={
-                "message": str(exc),
-                "error_category": category,
-            }) from exc
+            raise HTTPException(
+                status_code=400,
+                detail={
+                    "message": str(exc),
+                    "error_category": category,
+                },
+            ) from exc
         except httpx.HTTPStatusError as exc:
             detail: Any
             try:
@@ -363,7 +463,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 "exchange_detail": detail,
             }
             if is_private and exc.response.status_code in (401, 403):
-                body["hint"] = "请检查 .env 中对应交易所的 API Key / Secret 是否正确配置，以及账户权限是否足够。"
+                body["hint"] = (
+                    "请检查 .env 中对应交易所的 API Key / Secret 是否正确配置，以及账户权限是否足够。"
+                )
             raise HTTPException(status_code=502, detail=body) from exc
         except httpx.HTTPError as exc:
             raise HTTPException(
@@ -374,23 +476,32 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 },
             ) from exc
         except Exception as exc:
-            raise HTTPException(status_code=502, detail={
-                "message": str(exc),
-                "error_category": category,
-            }) from exc
+            raise HTTPException(
+                status_code=502,
+                detail={
+                    "message": str(exc),
+                    "error_category": category,
+                },
+            ) from exc
 
     async def build_contract_order_preview(request: ContractOrderRequest) -> dict[str, Any]:
         """构建合约下单预览，不产生任何交易所状态变更。"""
 
         preview_request = ensure_contract_client_order_id(request)
         client = state.get_contract_exchange(preview_request.exchange)
-        side, inferred_position_side, inferred_reduce_only = client.resolve_order_intent(preview_request.intent)
+        side, inferred_position_side, inferred_reduce_only = client.resolve_order_intent(
+            preview_request.intent
+        )
         position_side = (
             preview_request.position_side
             if preview_request.position_side != PositionSide.NET
             else inferred_position_side
         )
-        reduce_only = inferred_reduce_only if preview_request.reduce_only is None else preview_request.reduce_only
+        reduce_only = (
+            inferred_reduce_only
+            if preview_request.reduce_only is None
+            else preview_request.reduce_only
+        )
         liquidity = infer_liquidity(preview_request.order_type)
         notes = [
             "这是下单前预览，不会向交易所提交订单。",
@@ -472,6 +583,123 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             }
         )
 
+    def _intent_status_from_response(response: dict[str, Any]) -> str:
+        raw = str(response.get("status") or response.get("state") or "submitted").lower()
+        mapping = {
+            "new": "pending",
+            "open": "pending",
+            "live": "pending",
+            "pending": "pending",
+            "partially_filled": "partially_filled",
+            "partial": "partially_filled",
+            "filled": "filled",
+            "closed": "filled",
+            "cancelled": "cancelled",
+            "canceled": "cancelled",
+            "rejected": "rejected",
+            "expired": "expired",
+            "submitting": "submitting",
+            "submitted": "submitted",
+            "unknown": "unknown",
+        }
+        return mapping.get(raw, "submitted")
+
+    def _claim_execution_intent(
+        *,
+        client_order_id: str,
+        request: Any,
+        side: str,
+    ) -> dict[str, Any] | None:
+        """Atomically reserve an order key before touching an exchange.
+
+        A repeat with identical economic parameters returns the existing durable
+        result. Reusing a key for different parameters is rejected explicitly.
+        """
+
+        fingerprint = execution_fingerprint(request)
+        existing = state.store.get_execution_intent(client_order_id)
+        if existing is not None:
+            if existing["fingerprint"] != fingerprint:
+                raise HTTPException(
+                    status_code=409,
+                    detail={
+                        "message": "client_order_id was already used for a different order request.",
+                        "client_order_id": client_order_id,
+                    },
+                )
+            return existing
+
+        now = datetime.utcnow().isoformat()
+        created = state.store.create_execution_intent(
+            {
+                "client_order_id": client_order_id,
+                "fingerprint": fingerprint,
+                "exchange": request.exchange,
+                "symbol": request.symbol,
+                "side": side,
+                "order_type": request.order_type,
+                "quantity": request.quantity,
+                "price": request.price,
+                "status": "submitting",
+                "request": request.model_dump(mode="json"),
+                "created_at": now,
+                "updated_at": now,
+            }
+        )
+        if created:
+            return None
+
+        # A concurrent request claimed it first. Read the winner and apply the
+        # same fingerprint rule rather than issuing a second external request.
+        existing = state.store.get_execution_intent(client_order_id)
+        if existing is None:
+            raise HTTPException(status_code=503, detail="Unable to reserve order idempotency key.")
+        if existing["fingerprint"] != fingerprint:
+            raise HTTPException(
+                status_code=409,
+                detail={
+                    "message": "client_order_id was already used for a different order request.",
+                    "client_order_id": client_order_id,
+                },
+            )
+        return existing
+
+    def _replay_execution_intent(intent: dict[str, Any]) -> dict[str, Any]:
+        response = dict(intent.get("response") or {})
+        response.setdefault("order_id", intent.get("exchange_order_id"))
+        response.update(
+            {
+                "client_order_id": intent["client_order_id"],
+                "execution_status": intent["status"],
+                "idempotent_replay": True,
+                "reconciliation_required": intent["status"] in {"submitting", "unknown"},
+            }
+        )
+        return response
+
+    def _mark_submission_unknown(
+        *,
+        request: Any,
+        action: str,
+        error: HTTPException,
+    ) -> None:
+        state.store.update_execution_intent(
+            request.client_order_id,
+            status="unknown",
+            last_error=str(error.detail),
+        )
+        state.track_execution_intent(request.client_order_id)
+        record_event(
+            category="order",
+            event_type=f"{action}_submission_unknown",
+            level="warning",
+            exchange=request.exchange,
+            symbol=request.symbol,
+            order_id=request.client_order_id,
+            message="Order submission outcome is unknown; reconciliation is required before retrying.",
+            details={"request": request.model_dump(mode="json"), "exchange_error": error.detail},
+        )
+
     async def _on_llm_decision(payload: dict[str, Any]) -> None:
         """Observer for LLMAnalyzer — persists every fresh decision (and
         LLMError) to the events table so the right-hand audit panel can
@@ -506,6 +734,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                     "decision": decision,
                     "confidence": confidence,
                     "reason": reason,
+                    "provider": payload.get("provider"),
                     "model": payload.get("model"),
                     "risk_level": payload.get("risk_level"),
                     "interval": payload.get("interval"),
@@ -585,6 +814,38 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 details=details,
             )
 
+    def ensure_account_reconciled(
+        *,
+        action: str,
+        exchange: str,
+        symbol: str | None = None,
+        details: dict[str, Any] | None = None,
+    ) -> None:
+        """Fail closed for new exposure on a venue with unresolved position drift."""
+
+        guard = state.engine.account_reconciliation
+        if not guard.is_blocked(exchange):
+            return
+        reason = guard.rejection_reason(exchange) or "account reconciliation is blocked"
+        record_event(
+            category="risk",
+            event_type="account_reconciliation_blocked_order",
+            level="critical",
+            exchange=exchange,
+            symbol=symbol,
+            message=f"{action} rejected: {reason}",
+            details={"action": action, **(details or {})},
+        )
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "code": "account_reconciliation_blocked",
+                "message": reason,
+                "exchange": exchange,
+                "reconciliation_required": True,
+            },
+        )
+
     @app.get("/health")
     async def health() -> dict[str, Any]:
         return {"status": "ok", "env": settings.app_env}
@@ -602,6 +863,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         monitoring network, e.g. behind a Prometheus IP allowlist).
         """
         from app.engine.metrics import render as render_metrics
+
         body, content_type = render_metrics()
         return Response(content=body, media_type=content_type)
 
@@ -697,6 +959,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 "exchange_capabilities": capabilities,
                 "risk": settings.risk.model_dump(),
             }
+
         return await state.cache.get_or_set("config", build, ttl=30.0)
 
     @app.get("/api/v1/exchanges")
@@ -705,7 +968,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         enabled = [
             name
             for name in supported
-            if (exchange_settings := settings.exchange(name)) is not None and exchange_settings.enabled
+            if (exchange_settings := settings.exchange(name)) is not None
+            and exchange_settings.enabled
         ]
         return {"exchanges": supported, "enabled": enabled}
 
@@ -777,15 +1041,17 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             if ts < cutoff:
                 continue
             details = row.get("details") or {}
-            snapshots.append({
-                "timestamp": ts,
-                "daily_pnl": details.get("daily_pnl", 0.0),
-                "current_drawdown": details.get("current_drawdown", 0.0),
-                "orders_last_minute": details.get("orders_last_minute", 0),
-                "max_orders_per_minute": details.get("max_orders_per_minute", 0),
-                "total_unrealized_pnl": details.get("total_unrealized_pnl", 0.0),
-                "kill_switch_enabled": details.get("kill_switch_enabled", False),
-            })
+            snapshots.append(
+                {
+                    "timestamp": ts,
+                    "daily_pnl": details.get("daily_pnl", 0.0),
+                    "current_drawdown": details.get("current_drawdown", 0.0),
+                    "orders_last_minute": details.get("orders_last_minute", 0),
+                    "max_orders_per_minute": details.get("max_orders_per_minute", 0),
+                    "total_unrealized_pnl": details.get("total_unrealized_pnl", 0.0),
+                    "kill_switch_enabled": details.get("kill_switch_enabled", False),
+                }
+            )
         return {
             "snapshots": snapshots,
             "minutes": minutes,
@@ -807,7 +1073,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         state: AppState = Depends(get_state),
     ):
         client = state.get_exchange(exchange)
-        return await call_exchange(lambda: client.get_klines(symbol, interval=interval, limit=limit))
+        return await call_exchange(
+            lambda: client.get_klines(symbol, interval=interval, limit=limit)
+        )
 
     @app.get("/api/v1/trades/{exchange}/{symbol}")
     async def get_recent_trades(
@@ -886,7 +1154,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         state: AppState = Depends(get_state),
     ):
         client = state.get_contract_exchange(exchange)
-        return await call_exchange(lambda: client.estimate_order_cost(symbol, quantity, price, liquidity))
+        return await call_exchange(
+            lambda: client.estimate_order_cost(symbol, quantity, price, liquidity)
+        )
 
     @app.post("/api/v1/contracts/order/preview")
     async def preview_contract_order(
@@ -947,7 +1217,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             },
         )
         client = state.get_contract_exchange(exchange)
-        result = await call_exchange(lambda: client.set_leverage(symbol, leverage, margin_mode, position_side), is_private=True)
+        result = await call_exchange(
+            lambda: client.set_leverage(symbol, leverage, margin_mode, position_side),
+            is_private=True,
+        )
         record_event(
             category="order",
             event_type="leverage_changed",
@@ -965,6 +1238,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @app.post("/api/v1/order", dependencies=[Depends(require_api_key)])
     async def place_order(request: OrderRequest, state: AppState = Depends(get_state)):
+        request = ensure_client_order_id(request)
         # 默认只允许读操作；真实下单必须在 .env 里显式开启 ENABLE_LIVE_TRADING。
         if not state.settings.enable_live_trading:
             reject_live_disabled(
@@ -972,37 +1246,81 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 detail="Live trading is disabled. Set ENABLE_LIVE_TRADING=true to place orders.",
                 exchange=request.exchange,
                 symbol=request.symbol,
-                details=request.model_dump(),
+                details=request.model_dump(mode="json"),
             )
         ensure_trading_not_killed(
             action="place_order",
             exchange=request.exchange,
             symbol=request.symbol,
-            details=request.model_dump(),
+            details=request.model_dump(mode="json"),
+        )
+        ensure_account_reconciled(
+            action="place_order",
+            exchange=request.exchange,
+            symbol=request.symbol,
+            details=request.model_dump(mode="json"),
         )
 
-        client = state.get_exchange(request.exchange)
-        result = await call_exchange(
-            lambda: client.place_order(
-                symbol=request.symbol,
-                side=request.side,
-                order_type=request.order_type,
-                quantity=request.quantity,
-                price=request.price,
-                quote_order_qty=request.quote_order_qty,
-            ),
-            is_private=True,
+        existing = _claim_execution_intent(
+            client_order_id=request.client_order_id,
+            request=request,
+            side=request.side,
         )
+        if existing is not None:
+            return _replay_execution_intent(existing)
+
+        client = state.get_exchange(request.exchange)
+        try:
+            result = await call_exchange(
+                lambda: client.place_order(
+                    symbol=request.symbol,
+                    side=request.side,
+                    order_type=request.order_type,
+                    quantity=request.quantity,
+                    price=request.price,
+                    quote_order_qty=request.quote_order_qty,
+                    client_order_id=request.client_order_id,
+                ),
+                is_private=True,
+            )
+        except HTTPException as exc:
+            _mark_submission_unknown(request=request, action="spot_order", error=exc)
+            raise HTTPException(
+                status_code=502,
+                detail={
+                    "message": "Spot order submission outcome is unknown; do not retry with a new client_order_id.",
+                    "client_order_id": request.client_order_id,
+                    "reconciliation_required": True,
+                    "exchange_error": exc.detail,
+                },
+            ) from exc
+
+        response = dict(result)
+        order_id = extract_order_id(response)
+        status = _intent_status_from_response(response)
+        state.store.update_execution_intent(
+            request.client_order_id,
+            status=status,
+            exchange_order_id=order_id,
+            response=response,
+            clear_error=True,
+        )
+        state.track_execution_intent(request.client_order_id)
         record_event(
             category="order",
             event_type="spot_order_submitted",
             exchange=request.exchange,
             symbol=request.symbol,
-            order_id=extract_order_id(result),
+            order_id=order_id or request.client_order_id,
             message=f"Spot order submitted: {request.side.upper()} {request.quantity} {request.symbol}",
-            details={"request": request.model_dump(), "response": result},
+            details={"request": request.model_dump(mode="json"), "response": response},
         )
-        return result
+        return {
+            **response,
+            "client_order_id": request.client_order_id,
+            "execution_status": status,
+            "idempotent_replay": False,
+        }
 
     @app.post("/api/v1/contracts/order", dependencies=[Depends(require_api_key)])
     async def place_contract_order(
@@ -1025,19 +1343,65 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             symbol=request.symbol,
             details=request.model_dump(mode="json"),
         )
+        ensure_account_reconciled(
+            action="place_contract_order",
+            exchange=request.exchange,
+            symbol=request.symbol,
+            details=request.model_dump(mode="json"),
+        )
 
         client = state.get_contract_exchange(request.exchange)
-        result = await call_exchange(lambda: client.place_contract_order(request), is_private=True)
+        side, _, _ = client.resolve_order_intent(request.intent)
+        existing = _claim_execution_intent(
+            client_order_id=request.client_order_id,
+            request=request,
+            side=side,
+        )
+        if existing is not None:
+            return _replay_execution_intent(existing)
+
+        try:
+            result = await call_exchange(
+                lambda: client.place_contract_order(request), is_private=True
+            )
+        except HTTPException as exc:
+            _mark_submission_unknown(request=request, action="contract_order", error=exc)
+            raise HTTPException(
+                status_code=502,
+                detail={
+                    "message": "Contract order submission outcome is unknown; do not retry with a new client_order_id.",
+                    "client_order_id": request.client_order_id,
+                    "reconciliation_required": True,
+                    "exchange_error": exc.detail,
+                },
+            ) from exc
+
+        response = dict(result)
+        order_id = extract_order_id(response)
+        status = _intent_status_from_response(response)
+        state.store.update_execution_intent(
+            request.client_order_id,
+            status=status,
+            exchange_order_id=order_id,
+            response=response,
+            clear_error=True,
+        )
+        state.track_execution_intent(request.client_order_id)
         record_event(
             category="order",
             event_type="contract_order_submitted",
             exchange=request.exchange,
             symbol=request.symbol,
-            order_id=extract_order_id(result),
+            order_id=order_id or request.client_order_id,
             message=f"Contract order submitted: {request.intent.value} {request.quantity} {request.symbol}",
-            details={"request": request.model_dump(mode="json"), "response": result},
+            details={"request": request.model_dump(mode="json"), "response": response},
         )
-        return result
+        return {
+            **response,
+            "client_order_id": request.client_order_id,
+            "execution_status": status,
+            "idempotent_replay": False,
+        }
 
     @app.delete(
         "/api/v1/order/{exchange}/{symbol}/{order_id}",
@@ -1145,7 +1509,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     async def stop_signal_runner(state: AppState = Depends(get_state)):
         return await state.engine.stop_signal_runner()
 
-    @app.post("/api/v1/runner/run-once")
+    @app.post("/api/v1/runner/run-once", dependencies=[Depends(require_api_key)])
     async def run_signal_cycle(
         request: SignalRunnerRequest,
         state: AppState = Depends(get_state),
@@ -1225,7 +1589,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         state: AppState = Depends(get_state),
     ):
         if request.short_window >= request.long_window:
-            raise HTTPException(status_code=400, detail="short_window must be smaller than long_window")
+            raise HTTPException(
+                status_code=400, detail="short_window must be smaller than long_window"
+            )
 
         strategy_name = request.name or (
             f"sma_{request.short_window}_{request.long_window}_"
@@ -1245,25 +1611,37 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             enabled=request.enabled,
             mode=request.mode,
         )
-        return {"strategy": next(item for item in state.engine.list_strategies() if item["name"] == strategy_name)}
+        return {
+            "strategy": next(
+                item for item in state.engine.list_strategies() if item["name"] == strategy_name
+            )
+        }
 
-    @app.post("/api/v1/strategies/{name}/start")
+    @app.post("/api/v1/strategies/{name}/start", dependencies=[Depends(require_api_key)])
     async def start_strategy(name: str, state: AppState = Depends(get_state)):
         try:
             state.engine.set_strategy_enabled(name, True)
         except KeyError as exc:
             raise HTTPException(status_code=404, detail=f"Strategy not found: {name}") from exc
-        return {"strategy": next(item for item in state.engine.list_strategies() if item["name"] == name)}
+        return {
+            "strategy": next(
+                item for item in state.engine.list_strategies() if item["name"] == name
+            )
+        }
 
-    @app.post("/api/v1/strategies/{name}/stop")
+    @app.post("/api/v1/strategies/{name}/stop", dependencies=[Depends(require_api_key)])
     async def stop_strategy(name: str, state: AppState = Depends(get_state)):
         try:
             state.engine.set_strategy_enabled(name, False)
         except KeyError as exc:
             raise HTTPException(status_code=404, detail=f"Strategy not found: {name}") from exc
-        return {"strategy": next(item for item in state.engine.list_strategies() if item["name"] == name)}
+        return {
+            "strategy": next(
+                item for item in state.engine.list_strategies() if item["name"] == name
+            )
+        }
 
-    @app.post("/api/v1/strategies/{name}/mode")
+    @app.post("/api/v1/strategies/{name}/mode", dependencies=[Depends(require_api_key)])
     async def update_strategy_mode(
         name: str,
         request: StrategyModeRequest,
@@ -1275,9 +1653,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             raise HTTPException(status_code=404, detail=f"Strategy not found: {name}") from exc
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
-        return {"strategy": next(item for item in state.engine.list_strategies() if item["name"] == name)}
+        return {
+            "strategy": next(
+                item for item in state.engine.list_strategies() if item["name"] == name
+            )
+        }
 
-    @app.delete("/api/v1/strategies/{name}")
+    @app.delete("/api/v1/strategies/{name}", dependencies=[Depends(require_api_key)])
     async def delete_strategy(name: str, state: AppState = Depends(get_state)):
         if not state.engine.remove_strategy(name):
             raise HTTPException(status_code=404, detail=f"Strategy not found: {name}")
@@ -1305,6 +1687,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         )
         if minutes is not None:
             from datetime import datetime, timedelta
+
             cutoff = (datetime.utcnow() - timedelta(minutes=minutes)).isoformat()
             events = [e for e in events if e.get("timestamp", "") >= cutoff]
         return {"events": events, "count": len(events)}
@@ -1318,7 +1701,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         state: AppState = Depends(get_state),
     ):
         client = state.get_exchange(exchange)
-        klines = await call_exchange(lambda: client.get_klines(symbol, interval=interval, limit=limit))
+        klines = await call_exchange(
+            lambda: client.get_klines(symbol, interval=interval, limit=limit)
+        )
         for candle in sorted(klines, key=lambda item: item.get("open_time", "")):
             await state.engine.process_market_data(exchange, symbol, candle)
         signals = await state.engine.evaluate_signals(exchange, symbol)
@@ -1331,7 +1716,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             "recent_signals": state.engine.get_recent_signals(limit=10),
         }
 
-    @app.post("/api/v1/engine/strategy/sma")
+    @app.post("/api/v1/engine/strategy/sma", dependencies=[Depends(require_api_key)])
     async def add_sma_strategy(
         short_window: int = Query(5, ge=1),
         long_window: int = Query(20, ge=2),
@@ -1391,6 +1776,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 long_window=request.long_window,
                 initial_capital=request.initial_capital,
                 position_size_pct=request.position_size_pct,
+                fee_rate=request.fee_rate,
+                slippage_rate=request.slippage_rate,
+                stop_loss_pct=request.stop_loss_pct,
+                take_profit_pct=request.take_profit_pct,
             )
         except (KeyError, ValueError, TypeError) as exc:
             raise HTTPException(status_code=400, detail=f"Invalid kline data: {exc}") from exc
@@ -1412,9 +1801,177 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             "win_rate": r.win_rate,
             "max_drawdown": r.max_drawdown,
             "equity_curve": r.equity_curve,
+            "total_fees": r.total_fees,
+            "gross_pnl": r.gross_pnl,
+            "total_return_pct": r.total_return_pct,
+            "profit_factor": r.profit_factor,
+            "trade_history": [
+                {
+                    "entry_index": trade.entry_index,
+                    "exit_index": trade.exit_index,
+                    "entry_time": _serialize_kline({"value": trade.entry_time})["value"],
+                    "exit_time": _serialize_kline({"value": trade.exit_time})["value"],
+                    "quantity": trade.quantity,
+                    "entry_price": trade.entry_price,
+                    "exit_price": trade.exit_price,
+                    "gross_pnl": trade.gross_pnl,
+                    "fees": trade.fees,
+                    "net_pnl": trade.net_pnl,
+                    "exit_reason": trade.exit_reason,
+                }
+                for trade in r.trade_history
+            ],
             "klines_used": [_serialize_kline(k) for k in request.klines],
         }
 
+    @app.get("/api/v1/strategies/{name}/versions", dependencies=[Depends(require_api_key)])
+    async def strategy_versions_endpoint(
+        name: str,
+        state: AppState = Depends(get_state),
+        limit: int = Query(50, ge=1, le=200),
+    ):
+        if not any(item["name"] == name for item in state.engine.list_strategies()):
+            raise HTTPException(status_code=404, detail=f"Strategy not found: {name}")
+        return {"strategy": name, "versions": state.store.strategy_versions(name, limit=limit)}
+
+    @app.get("/api/v1/strategies/{name}/backtests", dependencies=[Depends(require_api_key)])
+    async def strategy_backtests_endpoint(
+        name: str,
+        state: AppState = Depends(get_state),
+        limit: int = Query(20, ge=1, le=100),
+    ):
+        if not any(item["name"] == name for item in state.engine.list_strategies()):
+            raise HTTPException(status_code=404, detail=f"Strategy not found: {name}")
+        return {"strategy": name, "runs": state.store.recent_strategy_backtest_runs(name, limit=limit)}
+
+    @app.post(
+        "/api/v1/strategies/{name}/backtests/walk-forward",
+        dependencies=[Depends(require_api_key)],
+    )
+    async def strategy_walk_forward_endpoint(
+        name: str,
+        request: WalkForwardRequest,
+        state: AppState = Depends(get_state),
+    ):
+        """Run and persist strictly out-of-sample WFO evidence for one strategy version."""
+        if not any(item["name"] == name for item in state.engine.list_strategies()):
+            raise HTTPException(status_code=404, detail=f"Strategy not found: {name}")
+        version = state.store.latest_strategy_version(name)
+        if version is None:
+            raise HTTPException(status_code=409, detail="strategy has no immutable version record")
+        from app.engine.strategy_governance import SMAParameters, run_walk_forward_backtest
+
+        try:
+            result = run_walk_forward_backtest(
+                request.klines,
+                train_size=request.train_size,
+                test_size=request.test_size,
+                step_size=request.step_size,
+                candidate_parameters=[
+                    SMAParameters(short_window=item.short_window, long_window=item.long_window)
+                    for item in request.candidate_parameters
+                ]
+                or None,
+                short_window=request.short_window,
+                long_window=request.long_window,
+                initial_capital=request.initial_capital,
+                position_size_pct=request.position_size_pct,
+                fee_rate=request.fee_rate,
+                slippage_rate=request.slippage_rate,
+                stop_loss_pct=request.stop_loss_pct,
+                take_profit_pct=request.take_profit_pct,
+            )
+        except (KeyError, ValueError, TypeError) as exc:
+            raise HTTPException(status_code=400, detail=f"Invalid walk-forward data: {exc}") from exc
+
+        payload = result.as_dict()
+        run_id = state.store.save_strategy_backtest_run(
+            strategy_name=name,
+            strategy_version=int(version["version"]),
+            kind="walk_forward",
+            request=request.model_dump(mode="json"),
+            result=payload,
+            created_at=datetime.utcnow().isoformat(),
+        )
+        return {
+            "id": run_id,
+            "strategy": name,
+            "strategy_version": version["version"],
+            "kind": "walk_forward",
+            "result": payload,
+            "disclaimer": "Only out-of-sample folds are aggregated; this does not approve or enable live trading.",
+        }
+
+    @app.post(
+        "/api/v1/strategies/{name}/promotion/evaluate",
+        dependencies=[Depends(require_api_key)],
+    )
+    async def evaluate_strategy_promotion_endpoint(
+        name: str,
+        request: StrategyPromotionEvaluateRequest,
+        state: AppState = Depends(get_state),
+    ):
+        """Create an auditable promotion review from persisted paper executions."""
+        if not any(item["name"] == name for item in state.engine.list_strategies()):
+            raise HTTPException(status_code=404, detail=f"Strategy not found: {name}")
+        version = state.store.latest_strategy_version(name)
+        if version is None:
+            raise HTTPException(status_code=409, detail="strategy has no immutable version record")
+        evidence = state.store.paper_strategy_performance(name)
+        thresholds = request.model_dump(mode="json")
+        profit_factor = evidence["profit_factor"]
+        profit_factor_ok = (
+            (profit_factor is None and evidence["total_pnl"] > 0)
+            or (profit_factor is not None and profit_factor >= request.min_profit_factor)
+        )
+        checks = {
+            "closed_trades": evidence["closed_trades"] >= request.min_closed_trades,
+            "win_rate": evidence["win_rate"] >= request.min_win_rate,
+            "profit_factor": profit_factor_ok,
+            "total_pnl": evidence["total_pnl"] >= request.min_total_pnl,
+        }
+        evidence["checks"] = checks
+        status = "eligible" if all(checks.values()) else "insufficient_evidence"
+        review = state.store.create_strategy_promotion_review(
+            strategy_name=name,
+            strategy_version=int(version["version"]),
+            status=status,
+            evidence=evidence,
+            thresholds=thresholds,
+            requested_at=datetime.utcnow().isoformat(),
+        )
+        return {
+            "review": review,
+            "can_request_manual_approval": status == "eligible",
+            "live_mode_changed": False,
+            "disclaimer": "Promotion evidence never changes strategy mode or bypasses live-trading guards.",
+        }
+
+    @app.post(
+        "/api/v1/strategies/{name}/promotion/{review_id}/decision",
+        dependencies=[Depends(require_api_key)],
+    )
+    async def decide_strategy_promotion_endpoint(
+        name: str,
+        review_id: int,
+        request: StrategyPromotionDecisionRequest,
+        state: AppState = Depends(get_state),
+    ):
+        review = state.store.decide_strategy_promotion_review(
+            review_id,
+            strategy_name=name,
+            approved=request.approved,
+            decided_by=request.decided_by,
+            note=request.note,
+            decided_at=datetime.utcnow().isoformat(),
+        )
+        if review is None:
+            raise HTTPException(status_code=409, detail="promotion review is not eligible or already decided")
+        return {
+            "review": review,
+            "live_mode_changed": False,
+            "next_step": "Use the existing strategy mode endpoint only after reviewing all live-trading safeguards.",
+        }
 
     @app.post("/api/v1/strategies/suggest")
     async def suggest_strategy_endpoint(request: SuggestRequest):
@@ -1426,7 +1983,6 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             prefer=request.prefer,
         )
 
-
     @app.get("/api/v1/strategies/leaderboard")
     async def strategies_leaderboard(state: AppState = Depends(get_state)):
         """Rank strategies by composite score (Sharpe + winrate + DD-adjusted)."""
@@ -1435,12 +1991,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         # In production, this would aggregate from store-recorded outcomes.
         return {"strategies": [], "note": "live leaderboard requires trade history"}
 
-
     @app.get("/api/v1/portfolio/metrics")
     async def portfolio_metrics(state: AppState = Depends(get_state)):
         """Compute Sharpe / Sortino / max DD from running equity curve."""
         # Without persistent trade history, return empty metrics.
         from app.engine.portfolio_metrics import compute_metrics
+
         return compute_metrics([]).__dict__
 
     @app.get("/api/v1/portfolio/equity-curves")
@@ -1485,11 +2041,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         state: AppState = Depends(get_state),
     ):
         """List paper (or live) trade history — newest first."""
-        orders = state.store.recent_paper_orders(
-            limit=limit, strategy=strategy, exchange=exchange
-        )
+        orders = state.store.recent_paper_orders(limit=limit, strategy=strategy, exchange=exchange)
         return {"trades": orders}
-
 
     @app.post("/api/v1/atr-sizing")
     async def atr_sizing_endpoint(request: AIAnalyzeRequest):
@@ -1516,14 +2069,17 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         try:
             r = atr_position_size(
                 account_equity=10_000.0,
-                entry_price=request.entry_price if hasattr(request, "entry_price") else closes[-1] if closes else 100.0,
+                entry_price=request.entry_price
+                if hasattr(request, "entry_price")
+                else closes[-1]
+                if closes
+                else 100.0,
                 atr=atr,
                 risk_pct=0.02,
             )
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         return r.__dict__
-
 
     @app.get("/api/v1/prices")
     async def prices_snapshot(state: AppState = Depends(get_state)):
@@ -1533,7 +2089,6 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         # Singleton: attached to app.state for shared access.
         feed: PriceFeed = getattr(app.state, "price_feed", None) or PriceFeed()
         return feed.latest_dict()
-
 
     @app.get("/api/v1/market/top-movers")
     async def top_movers(
@@ -1553,8 +2108,16 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         adapters that don't surface the field will return 0.0 there.
         """
         watchlist = [
-            "BTCUSDT", "ETHUSDT", "SOLUSDT", "BNBUSDT", "XRPUSDT",
-            "ADAUSDT", "DOGEUSDT", "AVAXUSDT", "LINKUSDT", "DOTUSDT",
+            "BTCUSDT",
+            "ETHUSDT",
+            "SOLUSDT",
+            "BNBUSDT",
+            "XRPUSDT",
+            "ADAUSDT",
+            "DOGEUSDT",
+            "AVAXUSDT",
+            "LINKUSDT",
+            "DOTUSDT",
         ]
         ex_name = (exchange or settings.default_exchange).lower()
         sym_list = [s.strip() for s in (symbols or ",".join(watchlist)).split(",") if s.strip()]
@@ -1575,21 +2138,25 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 try:
                     t = await call_exchange(lambda: client.get_ticker(sym))
                 except HTTPException as exc:
-                    items.append({
-                        "symbol": sym,
-                        "price": None,
-                        "change_pct_24h": None,
-                        "error": exc.detail,
-                    })
+                    items.append(
+                        {
+                            "symbol": sym,
+                            "price": None,
+                            "change_pct_24h": None,
+                            "error": exc.detail,
+                        }
+                    )
                     continue
-                items.append({
-                    "symbol": sym,
-                    "price": float(t.get("last_price", 0)) or None,
-                    "change_pct_24h": t.get("price_change_pct_24h"),
-                    "change_24h": t.get("price_change_24h"),
-                    "high_24h": t.get("high_24h"),
-                    "low_24h": t.get("low_24h"),
-                })
+                items.append(
+                    {
+                        "symbol": sym,
+                        "price": float(t.get("last_price", 0)) or None,
+                        "change_pct_24h": t.get("price_change_pct_24h"),
+                        "change_24h": t.get("price_change_24h"),
+                        "high_24h": t.get("high_24h"),
+                        "low_24h": t.get("low_24h"),
+                    }
+                )
             return {
                 "exchange": ex_name,
                 "items": items,
@@ -1598,6 +2165,128 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
         return await state.ticker_cache.get_or_set(cache_key, _fetch)
 
+    @app.get("/api/v1/ai/insights", dependencies=[Depends(require_api_key)])
+    async def llm_insights(
+        minutes: int = Query(1440, ge=1, le=43_200),
+        limit: int = Query(2_000, ge=1, le=5_000),
+        state: AppState = Depends(get_state),
+    ):
+        """Aggregate persisted LLM decision events for the audit workspace.
+
+        This endpoint deliberately uses SQLite audit events rather than
+        Prometheus counters: it provides a bounded, restart-safe operational
+        history and does not attempt to estimate provider billing.
+        """
+        cutoff = (datetime.utcnow() - timedelta(minutes=minutes)).isoformat()
+        events = state.store.recent_events(category="llm", event_type="llm_decision", limit=limit)
+        events = [event for event in events if event.get("timestamp", "") >= cutoff]
+
+        def as_non_negative_int(value: Any) -> int:
+            try:
+                return max(0, int(float(value or 0)))
+            except (TypeError, ValueError):
+                return 0
+
+        def percentile_95(values: list[int]) -> int:
+            if not values:
+                return 0
+            ordered = sorted(values)
+            index = max(0, (len(ordered) * 95 + 99) // 100 - 1)
+            return ordered[index]
+
+        decisions = {"buy": 0, "sell": 0, "hold": 0}
+        failures: dict[str, int] = {}
+        model_stats: dict[tuple[str, str], dict[str, Any]] = {}
+        successful_calls = 0
+        failed_calls = 0
+        prompt_tokens = 0
+        completion_tokens = 0
+        latencies: list[int] = []
+
+        for event in events:
+            details = event.get("details")
+            if not isinstance(details, dict):
+                details = {}
+            provider = str(details.get("provider") or "unknown")
+            model = str(details.get("model") or state.settings.llm_model or "unconfigured")
+            key = (provider, model)
+            stats = model_stats.setdefault(
+                key,
+                {
+                    "provider": provider,
+                    "model": model,
+                    "calls": 0,
+                    "successful_calls": 0,
+                    "failed_calls": 0,
+                    "prompt_tokens": 0,
+                    "completion_tokens": 0,
+                    "latencies": [],
+                },
+            )
+            stats["calls"] += 1
+
+            prompt = as_non_negative_int(details.get("prompt_tokens"))
+            completion = as_non_negative_int(details.get("completion_tokens"))
+            latency = as_non_negative_int(details.get("latency_ms"))
+            prompt_tokens += prompt
+            completion_tokens += completion
+            latencies.append(latency)
+            stats["prompt_tokens"] += prompt
+            stats["completion_tokens"] += completion
+            stats["latencies"].append(latency)
+
+            failure = details.get("failed")
+            if failure:
+                failure_name = str(failure)
+                failed_calls += 1
+                stats["failed_calls"] += 1
+                failures[failure_name] = failures.get(failure_name, 0) + 1
+                continue
+
+            successful_calls += 1
+            stats["successful_calls"] += 1
+            decision = str(details.get("decision") or "hold").lower()
+            if decision in decisions:
+                decisions[decision] += 1
+
+        calls_total = len(events)
+        models = [
+            {
+                "provider": stats["provider"],
+                "model": stats["model"],
+                "calls": stats["calls"],
+                "successful_calls": stats["successful_calls"],
+                "failed_calls": stats["failed_calls"],
+                "prompt_tokens": stats["prompt_tokens"],
+                "completion_tokens": stats["completion_tokens"],
+                "total_tokens": stats["prompt_tokens"] + stats["completion_tokens"],
+                "avg_latency_ms": round(sum(stats["latencies"]) / len(stats["latencies"]), 2)
+                if stats["latencies"]
+                else 0,
+                "p95_latency_ms": percentile_95(stats["latencies"]),
+            }
+            for stats in model_stats.values()
+        ]
+        models.sort(key=lambda item: (-item["calls"], item["provider"], item["model"]))
+
+        return {
+            "window_minutes": minutes,
+            "generated_at": datetime.utcnow().isoformat(),
+            "event_limit": limit,
+            "calls_total": calls_total,
+            "successful_calls": successful_calls,
+            "failed_calls": failed_calls,
+            "safety_rejections": failures.get("safety_rejected", 0),
+            "success_rate": round(successful_calls / calls_total * 100, 2) if calls_total else 0,
+            "prompt_tokens": prompt_tokens,
+            "completion_tokens": completion_tokens,
+            "total_tokens": prompt_tokens + completion_tokens,
+            "avg_latency_ms": round(sum(latencies) / len(latencies), 2) if latencies else 0,
+            "p95_latency_ms": percentile_95(latencies),
+            "decisions": decisions,
+            "failures": failures,
+            "models": models,
+        }
 
     @app.post("/api/v1/ai/analyze", dependencies=[Depends(require_api_key)])
     async def ai_analyze(
@@ -1615,6 +2304,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             temperature=state.settings.llm_temperature,
             max_tokens=state.settings.llm_max_tokens,
             request_timeout=state.settings.llm_request_timeout,
+            min_request_interval_seconds=state.settings.llm_min_request_interval_seconds,
+            circuit_failure_threshold=state.settings.llm_circuit_failure_threshold,
+            circuit_cooldown_seconds=state.settings.llm_circuit_cooldown_seconds,
             min_candles=state.settings.llm_min_candles,
             max_candles=state.settings.llm_max_candles,
         )
@@ -1656,7 +2348,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     # ── LLM 策略（D / B / A）管理 API ─────────────────────────
 
-    @app.post("/api/v1/strategies/llm")
+    @app.post("/api/v1/strategies/llm", dependencies=[Depends(require_api_key)])
     async def create_llm_strategy(
         request: LLMStrategyCreateRequest,
         state: AppState = Depends(get_state),
@@ -1680,6 +2372,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             temperature=state.settings.llm_temperature,
             max_tokens=state.settings.llm_max_tokens,
             request_timeout=state.settings.llm_request_timeout,
+            min_request_interval_seconds=state.settings.llm_min_request_interval_seconds,
+            circuit_failure_threshold=state.settings.llm_circuit_failure_threshold,
+            circuit_cooldown_seconds=state.settings.llm_circuit_cooldown_seconds,
             min_candles=state.settings.llm_min_candles,
             max_candles=state.settings.llm_max_candles,
         )
@@ -1713,9 +2408,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             enabled=request.enabled,
             mode=request.mode,
         )
-        return {"strategy": next(
-            item for item in state.engine.list_strategies() if item["name"] == strategy_name
-        )}
+        return {
+            "strategy": next(
+                item for item in state.engine.list_strategies() if item["name"] == strategy_name
+            )
+        }
 
     @app.post("/api/v1/strategies/llm-filter/attach", dependencies=[Depends(require_api_key)])
     async def attach_llm_filter(
@@ -1740,6 +2437,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             temperature=state.settings.llm_temperature,
             max_tokens=state.settings.llm_max_tokens,
             request_timeout=state.settings.llm_request_timeout,
+            min_request_interval_seconds=state.settings.llm_min_request_interval_seconds,
+            circuit_failure_threshold=state.settings.llm_circuit_failure_threshold,
+            circuit_cooldown_seconds=state.settings.llm_circuit_cooldown_seconds,
             min_candles=state.settings.llm_min_candles,
             max_candles=state.settings.llm_max_candles,
         )
@@ -1783,6 +2483,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         alert_level = None
         if level:
             from app.engine.monitor import AlertLevel
+
             alert_level = AlertLevel(level.lower())
         return {"alerts": state.engine.monitor.recent_alerts(level=alert_level, limit=limit)}
 
@@ -1819,10 +2520,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             ]
         }
 
-    @app.post("/api/v1/sources")
+    @app.post("/api/v1/sources", dependencies=[Depends(require_api_key)])
     async def register_source(request: CustomSourceRequest, state: AppState = Depends(get_state)):
         if request.name in state.custom_sources or request.name in state.data_sources:
-            raise HTTPException(status_code=409, detail=f"Source already registered: {request.name}")
+            raise HTTPException(
+                status_code=409, detail=f"Source already registered: {request.name}"
+            )
         src = GenericHttpDataSource(
             name=request.name,
             base_url=request.base_url,
@@ -1835,13 +2538,15 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         state.data_sources[request.name] = src
         return {"name": request.name, "registered": True}
 
-    @app.delete("/api/v1/sources/{name}")
+    @app.delete("/api/v1/sources/{name}", dependencies=[Depends(require_api_key)])
     async def remove_source(name: str, state: AppState = Depends(get_state)):
         if name not in state.custom_sources:
             raise HTTPException(status_code=404, detail=f"Custom source not found: {name}")
         del state.custom_sources[name]
         # Also drop from data_sources (only if it was custom — builtins are kept).
-        if name in state.data_sources and isinstance(state.data_sources.get(name), GenericHttpDataSource):
+        if name in state.data_sources and isinstance(
+            state.data_sources.get(name), GenericHttpDataSource
+        ):
             del state.data_sources[name]
         return {"name": name, "removed": True}
 
@@ -1885,9 +2590,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 detail=f"No trading exchange configured: {request.exchange}",
             )
         try:
-            pos = await state.engine.position_manager.get_position(
-                exchange_name, request.symbol
-            )
+            pos = await state.engine.position_manager.get_position(exchange_name, request.symbol)
         except Exception:
             pos = None
 
@@ -2005,38 +2708,44 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                         ts = alert.get("timestamp") or ""
                         if ts and ts > cursor:
                             cursor = ts
-                            yield _emit({
-                                "kind": "event",
-                                "category": alert.get("category"),
-                                "title": alert.get("title"),
-                                "message": alert.get("message"),
-                                "level": alert.get("level"),
-                                "timestamp": ts,
-                                "exchange": alert.get("exchange"),
-                                "symbol": alert.get("symbol"),
-                            })
+                            yield _emit(
+                                {
+                                    "kind": "event",
+                                    "category": alert.get("category"),
+                                    "title": alert.get("title"),
+                                    "message": alert.get("message"),
+                                    "level": alert.get("level"),
+                                    "timestamp": ts,
+                                    "exchange": alert.get("exchange"),
+                                    "symbol": alert.get("symbol"),
+                                }
+                            )
                     # Historical events from CompositeObserver.
                     for ev in state.store.recent_events(limit=50):
                         ts = ev.get("timestamp", "")
                         if ts and ts > cursor:
                             cursor = ts
-                            yield _emit({
-                                "kind": "event",
-                                "category": ev.get("category"),
-                                "event_type": ev.get("event_type"),
-                                "title": ev.get("title"),
-                                "message": ev.get("message"),
-                                "level": ev.get("level"),
-                                "timestamp": ts,
-                                "exchange": ev.get("exchange"),
-                                "symbol": ev.get("symbol"),
-                            })
+                            yield _emit(
+                                {
+                                    "kind": "event",
+                                    "category": ev.get("category"),
+                                    "event_type": ev.get("event_type"),
+                                    "title": ev.get("title"),
+                                    "message": ev.get("message"),
+                                    "level": ev.get("level"),
+                                    "timestamp": ts,
+                                    "exchange": ev.get("exchange"),
+                                    "symbol": ev.get("symbol"),
+                                }
+                            )
                     since_last_heartbeat += poll_interval_seconds
                     if since_last_heartbeat >= heartbeat_seconds:
-                        yield _emit({
-                            "kind": "heartbeat",
-                            "timestamp": datetime.utcnow().isoformat(),
-                        })
+                        yield _emit(
+                            {
+                                "kind": "heartbeat",
+                                "timestamp": datetime.utcnow().isoformat(),
+                            }
+                        )
                         since_last_heartbeat = 0.0
                 except Exception as exc:  # noqa: BLE001
                     yield _emit({"kind": "error", "message": str(exc)})
@@ -2053,17 +2762,105 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             },
         )
 
-    @app.post("/api/v1/sync/orders/{exchange}")
+    @app.get("/api/v1/executions/pending", dependencies=[Depends(require_api_key)])
+    async def list_pending_executions(
+        exchange: str | None = None,
+        state: AppState = Depends(get_state),
+    ) -> dict[str, Any]:
+        """List non-terminal execution intents requiring tracking or reconciliation."""
+
+        intents = state.store.pending_execution_intents(exchange)
+        return {"intents": intents, "count": len(intents)}
+
+    @app.post("/api/v1/sync/orders/{exchange}", dependencies=[Depends(require_api_key)])
     async def sync_orders_manual(exchange: str, state: AppState = Depends(get_state)):
         client = state.get_exchange(exchange)
         changed = await state.engine.order_sync.sync(client)
-        return {"exchange": exchange, "orders_changed": changed, "tracked": state.engine.order_sync.tracked_count}
+        intents = state.store.pending_execution_intents(exchange)
+        return {
+            "exchange": exchange,
+            "orders_changed": changed,
+            "tracked": state.engine.order_sync.tracked_count,
+            "unresolved": sum(intent["status"] in {"submitting", "unknown"} for intent in intents),
+        }
 
-    @app.post("/api/v1/sync/positions/{exchange}")
-    async def sync_positions_manual(exchange: str, symbol: str | None = None, state: AppState = Depends(get_state)):
+    @app.get("/api/v1/reconciliation/status", dependencies=[Depends(require_api_key)])
+    async def reconciliation_status(
+        exchange: str | None = None, state: AppState = Depends(get_state)
+    ) -> dict[str, Any]:
+        return {
+            "guard": state.engine.account_reconciliation.status(exchange),
+            "summary": state.store.reconciliation_summary(exchange),
+        }
+
+    @app.get("/api/v1/reconciliation/issues", dependencies=[Depends(require_api_key)])
+    async def reconciliation_issues(
+        exchange: str | None = None,
+        status: str = Query("open", pattern="^(open|resolved)$"),
+        state: AppState = Depends(get_state),
+    ) -> dict[str, Any]:
+        issues = state.store.reconciliation_issues(exchange, status)
+        return {"issues": issues, "count": len(issues)}
+
+    @app.post(
+        "/api/v1/reconciliation/{exchange}/recover",
+        dependencies=[Depends(require_api_key)],
+    )
+    async def recover_reconciliation(
+        exchange: str,
+        request: ReconciliationRecoveryRequest,
+        state: AppState = Depends(get_state),
+    ) -> dict[str, Any]:
+        """Adopt a freshly verified exchange state, then explicitly release its block."""
+
+        client = state.get_exchange(exchange)
+        await state.engine.position_sync.sync(client, exchange)
+        await state.engine.position_sync.sync(client, exchange)
+        outcome = state.engine.position_sync.last_outcome(exchange)
+        critical = [
+            issue
+            for issue in (outcome.issues if outcome else [])
+            if issue.get("severity") == "critical"
+        ]
+        if critical:
+            raise HTTPException(
+                status_code=409,
+                detail={
+                    "code": "account_reconciliation_still_mismatched",
+                    "message": "Exchange state is still changing; new exposure remains blocked.",
+                    "issues": critical,
+                },
+            )
+        resolved = state.store.resolve_reconciliation_issues(exchange, request.note)
+        released = state.engine.account_reconciliation.release(exchange)
+        record_event(
+            category="risk",
+            event_type="account_reconciliation_recovered",
+            level="warning",
+            exchange=exchange,
+            message="Operator acknowledged exchange state and released reconciliation block",
+            details={"note": request.note, "resolved_issues": resolved},
+        )
+        return {
+            "exchange": exchange,
+            "released": released,
+            "resolved_issues": resolved,
+            "guard": state.engine.account_reconciliation.status(exchange),
+        }
+
+    @app.post("/api/v1/sync/positions/{exchange}", dependencies=[Depends(require_api_key)])
+    async def sync_positions_manual(
+        exchange: str, symbol: str | None = None, state: AppState = Depends(get_state)
+    ) -> dict[str, Any]:
         client = state.get_exchange(exchange)
         changed = await state.engine.position_sync.sync(client, exchange, symbol)
-        return {"exchange": exchange, "items_updated": changed}
+        outcome = state.engine.position_sync.last_outcome(exchange)
+        return {
+            "exchange": exchange,
+            "items_updated": changed,
+            "reconciliation": outcome.as_dict() if outcome else None,
+            "guard": state.engine.account_reconciliation.status(exchange),
+        }
 
     static_dir = Path(settings.frontend_static_dir)
     if static_dir.exists():

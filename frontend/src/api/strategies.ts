@@ -61,6 +61,7 @@ export interface StrategyInfo {
   interval?: string;
   mode?: string;
   updated_at?: string | null;
+  version?: number | null;
   parameters: Record<string, string | number | boolean | null>;
 }
 
@@ -106,6 +107,35 @@ export interface AuditEvent {
   timestamp: string;
 }
 
+export interface StrategyVersion {
+  id: number;
+  strategy_name: string;
+  version: number;
+  fingerprint: string;
+  class_name: string;
+  exchange: string | null;
+  symbol: string | null;
+  interval: string;
+  mode: string;
+  enabled: boolean;
+  parameters: Record<string, unknown>;
+  created_at: string;
+  reason: string;
+}
+
+export interface StrategyPromotionReview {
+  id: number;
+  strategy_name: string;
+  strategy_version: number;
+  status: "eligible" | "insufficient_evidence" | "approved" | "rejected" | string;
+  evidence: Record<string, unknown>;
+  thresholds: Record<string, unknown>;
+  requested_at: string;
+  decided_at: string | null;
+  decided_by: string | null;
+  decision_note: string | null;
+}
+
 export interface SignalRunnerStatus {
   running: boolean;
   poll_seconds?: number | null;
@@ -142,6 +172,35 @@ export const strategiesApi = {
     request<{ strategy: StrategyInfo }>(
       `/api/v1/strategies/${encodeURIComponent(name)}/mode`,
       { method: "POST", body: JSON.stringify({ mode }) },
+    ),
+
+  strategyVersions: (name: string) =>
+    request<{ strategy: string; versions: StrategyVersion[] }>(
+      `/api/v1/strategies/${encodeURIComponent(name)}/versions`,
+    ),
+
+  evaluatePromotion: (
+    name: string,
+    thresholds: {
+      min_closed_trades?: number;
+      min_win_rate?: number;
+      min_profit_factor?: number;
+      min_total_pnl?: number;
+    } = {},
+  ) =>
+    request<{ review: StrategyPromotionReview; can_request_manual_approval: boolean; live_mode_changed: false }>(
+      `/api/v1/strategies/${encodeURIComponent(name)}/promotion/evaluate`,
+      { method: "POST", body: JSON.stringify(thresholds) },
+    ),
+
+  decidePromotion: (
+    name: string,
+    reviewId: number,
+    payload: { approved: boolean; decided_by?: string; note: string },
+  ) =>
+    request<{ review: StrategyPromotionReview; live_mode_changed: false }>(
+      `/api/v1/strategies/${encodeURIComponent(name)}/promotion/${reviewId}/decision`,
+      { method: "POST", body: JSON.stringify(payload) },
     ),
 
   recentSignals: (limit = 20) => {

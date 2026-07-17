@@ -18,7 +18,7 @@ canned LLMResponse objects.
 
 from __future__ import annotations
 
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 import pytest
 
@@ -29,11 +29,10 @@ from app.engine.llm_types import (
     LLMResponse,
 )
 from app.strategies.llm_analyzer import (
+    LLMAnalysisResult,
     LLMAnalyzer,
     LLMAnalyzerConfig,
-    LLMAnalysisResult,
 )
-
 
 # ── Test doubles ──────────────────────────────────────────────────
 
@@ -46,9 +45,9 @@ class FakeProvider:
     arguments for assertions.
     """
 
-    def __init__(self, responses: Optional[List[LLMResponse]] = None) -> None:
+    def __init__(self, responses: list[LLMResponse] | None = None) -> None:
         self.responses = list(responses or [])
-        self.calls: List[Any] = []
+        self.calls: list[Any] = []
         self._default = LLMResponse(
             decided=LLMDecided(
                 decision="hold", confidence=0.0, reason="",
@@ -83,7 +82,7 @@ def _err_response(kind: LLMErrorKind = LLMErrorKind.NETWORK, msg: str = "boom") 
     return LLMResponse(failed=LLMError(kind=kind, message=msg))
 
 
-def _ticker(price: float = 50000.0) -> Dict[str, Any]:
+def _ticker(price: float = 50000.0) -> dict[str, Any]:
     return {
         "symbol": "BTCUSDT",
         "last_price": price,
@@ -93,7 +92,7 @@ def _ticker(price: float = 50000.0) -> Dict[str, Any]:
     }
 
 
-def _klines(n: int = 30, base: float = 50000.0) -> List[Dict[str, Any]]:
+def _klines(n: int = 30, base: float = 50000.0) -> list[dict[str, Any]]:
     """Build a synthetic K-line series with monotonically increasing prices."""
     return [
         {
@@ -446,9 +445,9 @@ async def test_analyze_method_respects_min_max_candles() -> None:
 async def test_on_decision_fires_on_fresh_call() -> None:
     """A fresh call must invoke the observer exactly once with the decision."""
     provider = FakeProvider(responses=[_ok_response()])
-    seen: list[Dict[str, Any]] = []
+    seen: list[dict[str, Any]] = []
 
-    async def on_decision(payload: Dict[str, Any]) -> None:
+    async def on_decision(payload: dict[str, Any]) -> None:
         seen.append(payload)
 
     a = LLMAnalyzer(
@@ -479,9 +478,9 @@ async def test_on_decision_fires_on_fresh_call() -> None:
 async def test_on_decision_not_fired_on_cache_hit() -> None:
     """The observer captures fresh calls only — second call must not fire."""
     provider = FakeProvider(responses=[_ok_response()])
-    seen: list[Dict[str, Any]] = []
+    seen: list[dict[str, Any]] = []
 
-    async def on_decision(payload: Dict[str, Any]) -> None:
+    async def on_decision(payload: dict[str, Any]) -> None:
         seen.append(payload)
 
     a = LLMAnalyzer(
@@ -507,9 +506,9 @@ async def test_on_decision_not_fired_on_cache_hit() -> None:
 async def test_on_decision_carries_exchange_name() -> None:
     """When analyze() passes exchange, observer must see its name."""
     provider = FakeProvider(responses=[_ok_response()])
-    seen: list[Dict[str, Any]] = []
+    seen: list[dict[str, Any]] = []
 
-    async def on_decision(payload: Dict[str, Any]) -> None:
+    async def on_decision(payload: dict[str, Any]) -> None:
         seen.append(payload)
 
     a = LLMAnalyzer(
@@ -534,7 +533,7 @@ async def test_on_decision_exception_does_not_break_analyze() -> None:
     """An audit failure must never bubble up and block the trading path."""
     provider = FakeProvider(responses=[_ok_response()])
 
-    async def on_decision_boom(payload: Dict[str, Any]) -> None:
+    async def on_decision_boom(payload: dict[str, Any]) -> None:
         raise RuntimeError("audit log down")
 
     a = LLMAnalyzer(
@@ -558,9 +557,9 @@ async def test_on_decision_fires_on_failed_response() -> None:
     provider = FakeProvider(responses=[
         _err_response(kind=LLMErrorKind.NETWORK, msg="upstream timeout"),
     ])
-    seen: list[Dict[str, Any]] = []
+    seen: list[dict[str, Any]] = []
 
-    async def on_decision(payload: Dict[str, Any]) -> None:
+    async def on_decision(payload: dict[str, Any]) -> None:
         seen.append(payload)
 
     a = LLMAnalyzer(
@@ -595,3 +594,173 @@ async def test_analyze_raw_without_observer_does_not_break() -> None:
         symbol="BTCUSDT", interval="1h",
     )
     assert result.decision == "buy"
+
+
+@pytest.mark.asyncio
+async def test_analyze_raw_rejects_unsafe_levels_before_returning_signal() -> None:
+    """A malformed actionable response must degrade to hold for every caller."""
+    provider = FakeProvider(responses=[
+        _ok_response(stop_loss=51000.0, take_profit=49000.0),
+    ])
+    seen: list[dict[str, Any]] = []
+
+    async def on_decision(payload: dict[str, Any]) -> None:
+        seen.append(payload)
+
+    a = LLMAnalyzer(
+        config=LLMAnalyzerConfig(api_key="k"), on_decision=on_decision
+    )
+    a._provider = provider
+
+    result = await a.analyze_raw(
+        ticker=_ticker(), klines=_klines(30),
+        symbol="BTCUSDT", interval="1h",
+    )
+
+    assert result.decision == "hold"
+    assert result.confidence == 0.0
+    assert result.error_kind == "safety_rejected"
+    assert "已拒绝执行" in result.reason
+    assert len(provider.calls) == 1
+    assert seen[0]["failed"] == "safety_rejected"
+    assert "已拒绝执行" in seen[0]["reason"]
+
+
+@pytest.mark.asyncio
+async def test_analyze_fails_before_market_fetch_when_api_key_is_missing() -> None:
+    """Missing credentials must not create avoidable exchange/network traffic."""
+
+    class ExchangeThatMustNotBeCalled:
+        name = "test"
+
+        async def get_ticker(self, symbol):
+            raise AssertionError("ticker must not be fetched without an API key")
+
+        async def get_klines(self, symbol, interval, limit):
+            raise AssertionError("klines must not be fetched without an API key")
+
+    a = LLMAnalyzer(config=LLMAnalyzerConfig(api_key=""))
+    result = await a.analyze(ExchangeThatMustNotBeCalled(), "BTCUSDT")
+
+    assert result.decision == "hold"
+    assert result.error_kind == "api_key_missing"
+    assert result.candle_count == 0
+
+
+@pytest.mark.asyncio
+async def test_analyze_market_data_failure_returns_structured_network_error() -> None:
+    """Exchange failures must not bubble out as a 500 from AI analysis."""
+
+    class FailingExchange:
+        name = "test"
+
+        async def get_ticker(self, symbol):
+            raise RuntimeError("ticker unavailable")
+
+        async def get_klines(self, symbol, interval, limit):
+            raise RuntimeError("klines unavailable")
+
+    provider = FakeProvider()
+    a = LLMAnalyzer(config=LLMAnalyzerConfig(api_key="k"))
+    a._provider = provider
+
+    result = await a.analyze(FailingExchange(), "BTCUSDT")
+
+    assert result.decision == "hold"
+    assert result.error_kind == "network"
+    assert "市场数据" in result.reason
+    assert provider.calls == []
+
+@pytest.mark.asyncio
+async def test_analyze_raw_emits_provider_latency_and_token_metrics(monkeypatch) -> None:
+    """A real provider response must produce best-effort Prometheus samples."""
+    response = _ok_response()
+    provider = FakeProvider(responses=[
+        LLMResponse(
+            decided=response.decided,
+            prompt_tokens=123,
+            completion_tokens=45,
+            latency_ms=1_250,
+        )
+    ])
+    observed: list[tuple[float, dict[str, Any]]] = []
+    added: list[tuple[float, dict[str, Any]]] = []
+
+    monkeypatch.setattr(
+        "app.strategies.llm_analyzer.safe_observe",
+        lambda _metric, value, **labels: observed.append((value, labels)) or True,
+    )
+    monkeypatch.setattr(
+        "app.strategies.llm_analyzer.safe_add",
+        lambda _metric, value, **labels: added.append((value, labels)) or True,
+    )
+
+    analyzer = LLMAnalyzer(config=LLMAnalyzerConfig(api_key="k"))
+    analyzer._provider = provider
+    await analyzer.analyze_raw(
+        ticker=_ticker(), klines=_klines(30), symbol="BTCUSDT", interval="1h"
+    )
+
+    assert observed == [(1.25, {"provider": "unknown", "model": "test-model", "status": "success"})]
+    assert added == [
+        (123, {"provider": "unknown", "model": "test-model", "type": "prompt"}),
+        (45, {"provider": "unknown", "model": "test-model", "type": "completion"}),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_analyze_raw_metrics_mark_safety_rejection(monkeypatch) -> None:
+    """Guardrail failures remain visible as a distinct provider-call outcome."""
+    provider = FakeProvider(responses=[
+        LLMResponse(
+            decided=_ok_response(stop_loss=51_000.0, take_profit=49_000.0).decided,
+            latency_ms=200,
+        )
+    ])
+    observed: list[dict[str, Any]] = []
+
+    monkeypatch.setattr(
+        "app.strategies.llm_analyzer.safe_observe",
+        lambda _metric, _value, **labels: observed.append(labels) or True,
+    )
+
+    analyzer = LLMAnalyzer(config=LLMAnalyzerConfig(api_key="k"))
+    analyzer._provider = provider
+    result = await analyzer.analyze_raw(
+        ticker=_ticker(), klines=_klines(30), symbol="BTCUSDT", interval="1h"
+    )
+
+    assert result.error_kind == "safety_rejected"
+    assert observed[0]["status"] == "safety_rejected"
+
+
+@pytest.mark.asyncio
+async def test_analyze_raw_rate_limit_skips_provider_and_audits_degradation() -> None:
+    """A strategy-scoped throttle returns hold without another model request."""
+    provider = FakeProvider(responses=[_ok_response()])
+    seen: list[dict[str, Any]] = []
+
+    async def on_decision(payload: dict[str, Any]) -> None:
+        seen.append(payload)
+
+    analyzer = LLMAnalyzer(
+        config=LLMAnalyzerConfig(api_key="k", min_request_interval_seconds=60),
+        on_decision=on_decision,
+    )
+    analyzer._provider = provider
+
+    first = await analyzer.analyze_raw(
+        ticker=_ticker(), klines=_klines(30), symbol="BTCUSDT", interval="1h"
+    )
+    second = await analyzer.analyze_raw(
+        ticker=_ticker(),
+        klines=_klines(30, base=60000.0),
+        symbol="BTCUSDT",
+        interval="1h",
+    )
+
+    assert first.decision == "buy"
+    assert second.decision == "hold"
+    assert second.error_kind == "rate_limited"
+    assert len(provider.calls) == 1
+    assert [payload["failed"] for payload in seen] == [None, "rate_limited"]

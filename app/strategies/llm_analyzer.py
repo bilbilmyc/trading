@@ -17,12 +17,16 @@ from decimal import Decimal
 from typing import Any
 
 from app.engine.llm_cache import LLMFingerprintCache
+from app.engine.llm_governor import LLMCallGovernor
+from app.engine.llm_guardrails import validate_trade_decision
 from app.engine.llm_types import (
+    LLMError,
     LLMErrorKind,
     LLMMessage,
     LLMRequest,
     LLMResponse,
 )
+from app.engine.metrics import LLM_CALL_DURATION, LLM_TOKENS_TOTAL, safe_add, safe_observe
 from app.engine.openai_provider import OpenAIProvider, RetryPolicy
 from app.exchanges.base import ExchangeBase
 
@@ -37,6 +41,9 @@ class LLMAnalyzerConfig:
     temperature: float = 0.3
     max_tokens: int = 2048
     request_timeout: float = 30.0
+    min_request_interval_seconds: float = 0.0
+    circuit_failure_threshold: int = 3
+    circuit_cooldown_seconds: float = 60.0
     min_candles: int = 20
     max_candles: int = 100
     default_interval: str = "1h"
@@ -250,6 +257,13 @@ class LLMAnalyzer:
             ttl_seconds=self.config.cache_ttl_seconds,
             max_entries=self.config.cache_max_entries,
         )
+        # The governor is analyzer-instance scoped: long-running strategies
+        # retain its state, while one-shot API analyses remain independent.
+        self._governor = LLMCallGovernor(
+            min_request_interval_seconds=self.config.min_request_interval_seconds,
+            circuit_failure_threshold=self.config.circuit_failure_threshold,
+            circuit_cooldown_seconds=self.config.circuit_cooldown_seconds,
+        )
         # Optional observer — fired once per LLM decision (after the
         # response comes back, before the result is returned to the
         # caller). Used by traders / API endpoints to persist the
@@ -262,30 +276,39 @@ class LLMAnalyzer:
         key = self.config.api_key
         if "deepseek" in url:
             from app.engine.deepseek_provider import DeepSeekProvider
+
             return DeepSeekProvider(
-                api_key=key, base_url=self.config.base_url,
+                api_key=key,
+                base_url=self.config.base_url,
                 timeout_seconds=self.config.request_timeout,
             )
         if "minimax" in url or "minimax" in url:
             from app.engine.minimax_provider import MiniMaxProvider
+
             return MiniMaxProvider(
-                api_key=key, base_url=self.config.base_url,
+                api_key=key,
+                base_url=self.config.base_url,
                 timeout_seconds=self.config.request_timeout,
             )
         if "anthropic" in url or "claude" in url:
             from app.engine.anthropic_provider import AnthropicProvider
+
             return AnthropicProvider(
-                api_key=key, base_url=self.config.base_url,
+                api_key=key,
+                base_url=self.config.base_url,
                 timeout_seconds=self.config.request_timeout,
             )
         if "ollama" in url or url.endswith(":11434") or "localhost" in url:
             from app.engine.ollama_provider import OllamaProvider
+
             return OllamaProvider(
-                api_key=key, base_url=self.config.base_url,
+                api_key=key,
+                base_url=self.config.base_url,
                 timeout_seconds=self.config.request_timeout,
             )
         return OpenAIProvider(
-            api_key=key, base_url=self.config.base_url,
+            api_key=key,
+            base_url=self.config.base_url,
             timeout_seconds=self.config.request_timeout,
             retry_policy=RetryPolicy(),
         )
@@ -307,7 +330,28 @@ class LLMAnalyzer:
             max(limit or self.config.default_limit, self.config.min_candles),
             self.config.max_candles,
         )
-        ticker, klines = await self._fetch_market_data(exchange, symbol, interval, limit)
+        preflight = self._preflight_failure()
+        if preflight is not None:
+            return await self._finalize_fresh_response(
+                preflight, symbol, interval, candle_count=0, exchange=exchange
+            )
+
+        try:
+            ticker, klines = await self._fetch_market_data(exchange, symbol, interval, limit)
+        except Exception as exc:
+            return await self._finalize_fresh_response(
+                LLMResponse(
+                    failed=LLMError(
+                        kind=LLMErrorKind.NETWORK,
+                        message=f"获取市场数据失败: {exc}",
+                        retryable=True,
+                    )
+                ),
+                symbol,
+                interval,
+                candle_count=0,
+                exchange=exchange,
+            )
         return await self.analyze_raw(
             ticker=ticker,
             klines=klines,
@@ -330,6 +374,12 @@ class LLMAnalyzer:
         trade_history: dict[str, Any] | None = None,
         exchange: ExchangeBase | None = None,
     ) -> LLMAnalysisResult:
+        preflight = self._preflight_failure()
+        if preflight is not None:
+            return await self._finalize_fresh_response(
+                preflight, symbol, interval, candle_count=len(klines), exchange=exchange
+            )
+
         position_signature = self._position_signature(position_context)
         last_candle = klines[-1] if klines else {}
         cache_key = LLMFingerprintCache.fingerprint(
@@ -343,12 +393,21 @@ class LLMAnalyzer:
         if cached is not None and cached.is_ok:
             return self._translate(cached, symbol, interval, len(klines), cache_hit=True)
 
-        # From here on we are making a fresh provider call. Bind `cache_hit`
-        # explicitly so the observer / final return can refer to it without
-        # relying on the early-return above to "guard" the name.
-        cache_hit = False
+        governor_failure = self._governor.before_provider_call()
+        if governor_failure is not None:
+            return await self._finalize_fresh_response(
+                LLMResponse(failed=governor_failure),
+                symbol,
+                interval,
+                candle_count=len(klines),
+                exchange=exchange,
+            )
+
         prompt = self._build_prompt(
-            symbol, interval, ticker, klines,
+            symbol,
+            interval,
+            ticker,
+            klines,
             position_context=position_context,
             risk_context=risk_context,
             trade_history=trade_history,
@@ -364,32 +423,110 @@ class LLMAnalyzer:
             response_format_json=True,
         )
         response = await self._provider.complete(request)
+        response = validate_trade_decision(response, current_price=ticker.get("last_price"))
+        self._governor.record_provider_response(response)
+        self._record_provider_metrics(response)
         if response.is_ok:
             self._cache.put(cache_key, response)
-        # Fire observer (best-effort) so the trader / API can persist
-        # this decision as an audit event. Skip when we hit the cache
-        # — observers are intended to capture fresh calls.
-        if self._on_decision is not None and not cache_hit:
+        return await self._finalize_fresh_response(
+            response, symbol, interval, candle_count=len(klines), exchange=exchange
+        )
+
+    def _preflight_failure(self) -> LLMResponse | None:
+        """Fail fast before market I/O when the configured provider has no key."""
+        if str(self.config.api_key or "").strip():
+            return None
+        return LLMResponse(
+            failed=LLMError(
+                kind=LLMErrorKind.API_KEY_MISSING,
+                message="未配置 LLM API Key，请设置 LLM_API_KEY 后重试。",
+                retryable=False,
+            )
+        )
+
+    def _record_provider_metrics(self, response: LLMResponse) -> None:
+        """Emit best-effort metrics for one real provider request.
+
+        Preflight and market-data failures never reach this method: they do
+        not spend provider time or tokens. Safety rejections do reach it, so
+        the response was produced by a model but rejected before it could
+        enter a trading path.
+        """
+        provider = str(getattr(self._provider, "name", "unknown") or "unknown")
+        model = (
+            response.decided.model
+            if response.decided and response.decided.model
+            else (self.config.model or "unknown")
+        )
+        status = response.failed.kind.value if response.failed else "success"
+        latency_ms = max(0, int(response.latency_ms or 0))
+
+        safe_observe(
+            LLM_CALL_DURATION,
+            latency_ms / 1000.0,
+            provider=provider,
+            model=model,
+            status=status,
+        )
+        if response.prompt_tokens > 0:
+            safe_add(
+                LLM_TOKENS_TOTAL,
+                response.prompt_tokens,
+                provider=provider,
+                model=model,
+                type="prompt",
+            )
+        if response.completion_tokens > 0:
+            safe_add(
+                LLM_TOKENS_TOTAL,
+                response.completion_tokens,
+                provider=provider,
+                model=model,
+                type="completion",
+            )
+
+    async def _finalize_fresh_response(
+        self,
+        response: LLMResponse,
+        symbol: str,
+        interval: str,
+        *,
+        candle_count: int,
+        exchange: ExchangeBase | None,
+    ) -> LLMAnalysisResult:
+        """Audit and translate a non-cached provider/preflight response."""
+        if self._on_decision is not None:
             try:
-                await self._on_decision({
-                    "symbol": symbol,
-                    "interval": interval,
-                    "exchange": str(getattr(exchange, "name", "") or ""),
-                    "decision": response.decided.decision if response.decided else None,
-                    "confidence": response.decided.confidence if response.decided else None,
-                    "reason": response.decided.reason if response.decided else None,
-                    "model": response.decided.model if response.decided else "",
-                    "risk_level": response.decided.risk_level if response.decided else "",
-                    "prompt_tokens": response.prompt_tokens,
-                    "completion_tokens": response.completion_tokens,
-                    "latency_ms": response.latency_ms,
-                    "failed": response.failed.kind.value if response.failed else None,
-                    "cache_hit": cache_hit,
-                })
+                await self._on_decision(
+                    {
+                        "symbol": symbol,
+                        "interval": interval,
+                        "exchange": str(getattr(exchange, "name", "") or ""),
+                        "decision": response.decided.decision if response.decided else None,
+                        "confidence": response.decided.confidence if response.decided else None,
+                        "reason": (
+                            response.decided.reason
+                            if response.decided
+                            else (response.failed.message if response.failed else None)
+                        ),
+                        "provider": str(getattr(self._provider, "name", "unknown") or "unknown"),
+                        "model": (
+                            response.decided.model
+                            if response.decided and response.decided.model
+                            else self.config.model
+                        ),
+                        "risk_level": response.decided.risk_level if response.decided else "",
+                        "prompt_tokens": response.prompt_tokens,
+                        "completion_tokens": response.completion_tokens,
+                        "latency_ms": response.latency_ms,
+                        "failed": response.failed.kind.value if response.failed else None,
+                        "cache_hit": False,
+                    }
+                )
             except Exception:
                 # Audit failures must never break the trading path.
                 pass
-        return self._translate(response, symbol, interval, len(klines), cache_hit=False)
+        return self._translate(response, symbol, interval, candle_count, cache_hit=False)
 
     # ── Internals ──────────────────────────────────────────────
 
@@ -401,6 +538,7 @@ class LLMAnalyzer:
         limit: int,
     ) -> tuple:
         import asyncio
+
         ticker, klines = await asyncio.gather(
             exchange.get_ticker(symbol),
             exchange.get_klines(symbol, interval=interval, limit=limit),

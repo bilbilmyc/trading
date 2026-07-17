@@ -186,6 +186,9 @@ class OKXExchange(ExchangeBase):
 
         if order_type.lower() == 'limit' and price is not None:
             params['px'] = str(price)
+        if kwargs.get("client_order_id"):
+            # clOrdId is OKX's client supplied idempotency / reconciliation key.
+            params["clOrdId"] = str(kwargs["client_order_id"])
 
         # 签名计算必须和实际发送的 JSON body 保持同一份字节表示。
         body = orjson.dumps(params)

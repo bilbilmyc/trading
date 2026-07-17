@@ -2,9 +2,6 @@
 
 from __future__ import annotations
 
-from datetime import datetime
-
-import pytest  # noqa: F401
 from fastapi.testclient import TestClient
 
 from app.api.server import create_app
@@ -67,3 +64,45 @@ def test_backtest_endpoint_400_on_empty_klines() -> None:
             json={"klines": [], "short_window": 5, "long_window": 20, "initial_capital": 10_000},
         )
         assert response.status_code == 422
+
+
+def test_backtest_endpoint_exposes_execution_assumptions_and_trade_history() -> None:
+    app = create_app(_settings())
+    with TestClient(app) as client:
+        response = client.post(
+            "/api/v1/backtest",
+            json={
+                "klines": _klines([100, 100, 100, 110, 120, 125]),
+                "short_window": 2,
+                "long_window": 3,
+                "initial_capital": 1_000,
+                "fee_rate": 0.002,
+                "slippage_rate": 0.001,
+                "stop_loss_pct": 0.05,
+                "take_profit_pct": 0.1,
+            },
+        )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["total_fees"] > 0
+    assert "gross_pnl" in body
+    assert "total_return_pct" in body
+    assert "profit_factor" in body
+    assert isinstance(body["trade_history"], list)
+
+
+def test_backtest_endpoint_rejects_invalid_execution_rate() -> None:
+    app = create_app(_settings())
+    with TestClient(app) as client:
+        response = client.post(
+            "/api/v1/backtest",
+            json={
+                "klines": _klines([100, 100, 100, 110]),
+                "short_window": 2,
+                "long_window": 3,
+                "fee_rate": 1.0,
+            },
+        )
+
+    assert response.status_code == 422

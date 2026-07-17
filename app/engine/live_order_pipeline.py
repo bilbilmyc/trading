@@ -50,6 +50,7 @@ class LiveOrderPipeline:
         observer: Observer,
         semaphore: asyncio.Semaphore,
         signal_filters: Sequence[SignalFilter] = (),
+        safety_filter: SignalFilter | None = None,
     ) -> None:
         self._exchange = exchange
         # Cache the exchange name once — `self._exchange` is immutable and
@@ -62,6 +63,9 @@ class LiveOrderPipeline:
         self._observer = observer
         self._semaphore = semaphore
         self._signal_filters: Sequence[SignalFilter] = tuple(signal_filters)
+        # A built-in safety veto is kept separate from user-managed filters so
+        # compatibility callers can still inspect/manage ``_signal_filters``.
+        self._safety_filter = safety_filter
 
     def add_signal_filter(self, signal_filter: SignalFilter) -> None:
         """Attach a filter to this live pipeline at runtime."""
@@ -71,6 +75,7 @@ class LiveOrderPipeline:
         # Lazy import — keep the pipeline import-graph clean even if metrics
         # is unavailable, and let `safe_*` swallow any later PrometheusError.
         from app.engine.metrics import ORDERS_TOTAL, RISK_REJECTIONS_TOTAL, safe_inc
+
         exchange_name = self._exchange_name
 
         # 1. Trading guard
@@ -82,28 +87,25 @@ class LiveOrderPipeline:
                 )
             )
             safe_inc(RISK_REJECTIONS_TOTAL, reason="trading_disabled")
-            return Err(
-                TradeError(stage="guard", reason="trading is disabled")
-            )
+            return Err(TradeError(stage="guard", reason="trading is disabled"))
 
         # 2. Signal filters (async veto chain)
         ctx: dict[str, object] = {
             "exchange": getattr(self._exchange, "name", ""),
-            "strategy": signal.metadata.get("strategy")
-            or signal.metadata.get("strategy_name", ""),
+            "strategy": signal.metadata.get("strategy") or signal.metadata.get("strategy_name", ""),
             "interval": signal.metadata.get("interval", "1m"),
         }
-        market_data_filters = [
-            f
-            for f in self._signal_filters
-            if getattr(f, "requires_market_data", False)
-        ]
+        filters: Sequence[SignalFilter] = (
+            (self._safety_filter, *self._signal_filters)
+            if self._safety_filter is not None
+            else self._signal_filters
+        )
+        market_data_filters = [f for f in filters if getattr(f, "requires_market_data", False)]
         if market_data_filters:
             try:
                 ctx["ticker"] = await self._exchange.get_ticker(signal.symbol)
                 limit = max(
-                    int(getattr(f, "market_data_limit", 80) or 80)
-                    for f in market_data_filters
+                    int(getattr(f, "market_data_limit", 80) or 80) for f in market_data_filters
                 )
                 ctx["klines"] = await self._exchange.get_klines(
                     signal.symbol,
@@ -142,13 +144,11 @@ class LiveOrderPipeline:
                     ctx.get("klines", []),
                 )
 
-        for f in self._signal_filters:
+        for f in filters:
             try:
                 checker = getattr(f, "check", f)
                 if not await checker(signal, ctx):
-                    name = getattr(f, "name", None) or getattr(
-                        f, "__class__", type(f)
-                    ).__name__
+                    name = getattr(f, "name", None) or getattr(f, "__class__", type(f)).__name__
                     self._observer.record(
                         TradeEvent(
                             kind="signal_filtered",
@@ -156,16 +156,10 @@ class LiveOrderPipeline:
                         )
                     )
                     # Make signal-filter vetoes visible to Prometheus too.
-                    safe_inc(
-                        RISK_REJECTIONS_TOTAL, reason=f"signal_filter:{name}"
-                    )
-                    return Err(
-                        TradeError(stage="filter", reason=f"rejected by {name}")
-                    )
+                    safe_inc(RISK_REJECTIONS_TOTAL, reason=f"signal_filter:{name}")
+                    return Err(TradeError(stage="filter", reason=f"rejected by {name}"))
             except Exception as exc:
-                name = getattr(f, "name", None) or getattr(
-                    f, "__class__", type(f)
-                ).__name__
+                name = getattr(f, "name", None) or getattr(f, "__class__", type(f)).__name__
                 self._observer.record(
                     TradeEvent(
                         kind="signal_filter_error",
@@ -201,9 +195,7 @@ class LiveOrderPipeline:
                             payload={"stage": "price", "error": str(exc)},
                         )
                     )
-                    return Err(
-                        TradeError(stage="place", reason=f"price fetch failed: {exc}")
-                    )
+                    return Err(TradeError(stage="place", reason=f"price fetch failed: {exc}"))
 
             decision = await self._risk_gate.check(signal, price)
             if not decision.allowed:
@@ -214,9 +206,7 @@ class LiveOrderPipeline:
                     )
                 )
                 safe_inc(RISK_REJECTIONS_TOTAL, reason=decision.reason or "unknown")
-                return Err(
-                    TradeError(stage="risk", reason=decision.reason)
-                )
+                return Err(TradeError(stage="risk", reason=decision.reason))
 
             quantity = signal.quantity or 0.001
             sl = signal.stop_loss if signal.stop_loss is not None else decision.stop_loss
@@ -245,9 +235,7 @@ class LiveOrderPipeline:
                     side=signal.action.value,
                     status="failed",
                 )
-                return Err(
-                    TradeError(stage="place", reason=str(exc))
-                )
+                return Err(TradeError(stage="place", reason=str(exc)))
 
             receipt = TradeReceipt(
                 order_id=str(raw.get("order_id") or raw.get("orderId") or ""),
@@ -257,7 +245,9 @@ class LiveOrderPipeline:
                 order_type=signal.order_type,
                 quantity=quantity,
                 price=signal.price,
-                filled_quantity=float(raw.get("filled_quantity", raw.get("executedQty", quantity)) or quantity),
+                filled_quantity=float(
+                    raw.get("filled_quantity", raw.get("executedQty", quantity)) or quantity
+                ),
                 avg_fill_price=raw.get("avg_fill_price") or raw.get("avgPrice") or price,
             )
 

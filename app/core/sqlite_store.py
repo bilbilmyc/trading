@@ -9,13 +9,14 @@ from __future__ import annotations
 
 import json
 import sqlite3
+from datetime import datetime
 from pathlib import Path
 from threading import RLock
 from typing import Any
 
 
 def _json_dumps(value: Any) -> str:
-    return json.dumps(value or {}, ensure_ascii=False, sort_keys=True)
+    return json.dumps({} if value is None else value, ensure_ascii=False, sort_keys=True)
 
 
 def _json_loads(value: str | None) -> dict[str, Any]:
@@ -62,6 +63,53 @@ class SQLiteStore:
                     parameters_json TEXT NOT NULL DEFAULT '{}'
                 );
 
+                CREATE TABLE IF NOT EXISTS strategy_versions (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    strategy_name TEXT NOT NULL,
+                    version INTEGER NOT NULL,
+                    fingerprint TEXT NOT NULL,
+                    class_name TEXT NOT NULL,
+                    exchange TEXT,
+                    symbol TEXT,
+                    interval TEXT NOT NULL,
+                    mode TEXT NOT NULL,
+                    enabled INTEGER NOT NULL DEFAULT 0,
+                    parameters_json TEXT NOT NULL DEFAULT '{}',
+                    created_at TEXT NOT NULL,
+                    reason TEXT NOT NULL DEFAULT 'configuration_change',
+                    UNIQUE(strategy_name, version),
+                    UNIQUE(strategy_name, fingerprint)
+                );
+                CREATE INDEX IF NOT EXISTS idx_strategy_versions_name_version
+                    ON strategy_versions(strategy_name, version DESC);
+
+                CREATE TABLE IF NOT EXISTS strategy_backtest_runs (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    strategy_name TEXT NOT NULL,
+                    strategy_version INTEGER NOT NULL,
+                    kind TEXT NOT NULL,
+                    request_json TEXT NOT NULL DEFAULT '{}',
+                    result_json TEXT NOT NULL DEFAULT '{}',
+                    created_at TEXT NOT NULL
+                );
+                CREATE INDEX IF NOT EXISTS idx_strategy_backtest_runs_name_time
+                    ON strategy_backtest_runs(strategy_name, created_at DESC);
+
+                CREATE TABLE IF NOT EXISTS strategy_promotion_reviews (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    strategy_name TEXT NOT NULL,
+                    strategy_version INTEGER NOT NULL,
+                    status TEXT NOT NULL,
+                    evidence_json TEXT NOT NULL DEFAULT '{}',
+                    thresholds_json TEXT NOT NULL DEFAULT '{}',
+                    requested_at TEXT NOT NULL,
+                    decided_at TEXT,
+                    decided_by TEXT,
+                    decision_note TEXT
+                );
+                CREATE INDEX IF NOT EXISTS idx_strategy_promotion_reviews_name_time
+                    ON strategy_promotion_reviews(strategy_name, requested_at DESC);
+
                 CREATE TABLE IF NOT EXISTS signals (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     exchange TEXT NOT NULL,
@@ -80,6 +128,39 @@ class SQLiteStore:
                 );
                 CREATE INDEX IF NOT EXISTS idx_signals_timestamp ON signals(timestamp);
                 CREATE INDEX IF NOT EXISTS idx_signals_strategy_symbol ON signals(strategy, symbol);
+
+                CREATE TABLE IF NOT EXISTS account_snapshots (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    exchange TEXT NOT NULL,
+                    balances_json TEXT NOT NULL DEFAULT '[]',
+                    positions_json TEXT NOT NULL DEFAULT '[]',
+                    balance_sync_ok INTEGER NOT NULL DEFAULT 0,
+                    position_sync_ok INTEGER,
+                    errors_json TEXT NOT NULL DEFAULT '[]',
+                    created_at TEXT NOT NULL
+                );
+                CREATE INDEX IF NOT EXISTS idx_account_snapshots_exchange_time
+                    ON account_snapshots(exchange, created_at DESC);
+
+                CREATE TABLE IF NOT EXISTS reconciliation_issues (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    exchange TEXT NOT NULL,
+                    issue_key TEXT NOT NULL,
+                    kind TEXT NOT NULL,
+                    severity TEXT NOT NULL,
+                    local_json TEXT,
+                    exchange_json TEXT,
+                    details_json TEXT NOT NULL DEFAULT '{}',
+                    status TEXT NOT NULL DEFAULT 'open',
+                    detected_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL,
+                    resolved_at TEXT,
+                    resolution_note TEXT
+                );
+                CREATE UNIQUE INDEX IF NOT EXISTS idx_reconciliation_issues_open
+                    ON reconciliation_issues(exchange, issue_key, status);
+                CREATE INDEX IF NOT EXISTS idx_reconciliation_issues_status
+                    ON reconciliation_issues(exchange, status, severity);
 
                 CREATE TABLE IF NOT EXISTS paper_account (
                     id INTEGER PRIMARY KEY CHECK (id = 1),
@@ -134,9 +215,268 @@ class SQLiteStore:
                 CREATE INDEX IF NOT EXISTS idx_events_timestamp ON events(timestamp);
                 CREATE INDEX IF NOT EXISTS idx_events_category ON events(category);
                 CREATE INDEX IF NOT EXISTS idx_events_order_id ON events(order_id);
+
+                CREATE TABLE IF NOT EXISTS execution_intents (
+                    client_order_id TEXT PRIMARY KEY,
+                    fingerprint TEXT NOT NULL,
+                    exchange TEXT NOT NULL,
+                    symbol TEXT NOT NULL,
+                    side TEXT NOT NULL,
+                    order_type TEXT NOT NULL,
+                    quantity REAL NOT NULL,
+                    price REAL,
+                    status TEXT NOT NULL,
+                    exchange_order_id TEXT,
+                    request_json TEXT NOT NULL DEFAULT '{}',
+                    response_json TEXT NOT NULL DEFAULT '{}',
+                    last_error TEXT,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
+                );
+                CREATE INDEX IF NOT EXISTS idx_execution_intents_status
+                    ON execution_intents(status, exchange, updated_at);
                 """
             )
             self._conn.commit()
+
+    def record_strategy_version(
+        self,
+        strategy: dict[str, Any],
+        *,
+        fingerprint: str,
+        reason: str = "configuration_change",
+    ) -> dict[str, Any]:
+        """Append an immutable version only when its configuration changed."""
+
+        name = str(strategy["name"])
+        created_at = str(strategy.get("updated_at") or strategy["initialized_at"])
+        with self._lock:
+            existing = self._conn.execute(
+                "SELECT * FROM strategy_versions WHERE strategy_name = ? AND fingerprint = ?",
+                (name, fingerprint),
+            ).fetchone()
+            if existing is None:
+                row = self._conn.execute(
+                    "SELECT COALESCE(MAX(version), 0) AS latest FROM strategy_versions "
+                    "WHERE strategy_name = ?",
+                    (name,),
+                ).fetchone()
+                version = int(row["latest"]) + 1
+                self._conn.execute(
+                    """
+                    INSERT INTO strategy_versions (
+                        strategy_name, version, fingerprint, class_name, exchange, symbol,
+                        interval, mode, enabled, parameters_json, created_at, reason
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        name,
+                        version,
+                        fingerprint,
+                        strategy["class_name"],
+                        strategy.get("exchange"),
+                        strategy.get("symbol"),
+                        strategy.get("interval", "1m"),
+                        strategy.get("mode", "signal"),
+                        1 if strategy.get("running") else 0,
+                        _json_dumps(strategy.get("parameters")),
+                        created_at,
+                        reason,
+                    ),
+                )
+                self._conn.commit()
+                existing = self._conn.execute(
+                    "SELECT * FROM strategy_versions WHERE strategy_name = ? AND version = ?",
+                    (name, version),
+                ).fetchone()
+        return self._strategy_version_row(existing)
+
+    @staticmethod
+    def _strategy_version_row(row: sqlite3.Row) -> dict[str, Any]:
+        return {
+            "id": row["id"],
+            "strategy_name": row["strategy_name"],
+            "version": row["version"],
+            "fingerprint": row["fingerprint"],
+            "class_name": row["class_name"],
+            "exchange": row["exchange"],
+            "symbol": row["symbol"],
+            "interval": row["interval"],
+            "mode": row["mode"],
+            "enabled": bool(row["enabled"]),
+            "parameters": _json_loads(row["parameters_json"]),
+            "created_at": row["created_at"],
+            "reason": row["reason"],
+        }
+
+    def strategy_versions(self, strategy_name: str, limit: int = 50) -> list[dict[str, Any]]:
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT * FROM strategy_versions WHERE strategy_name = ? "
+                "ORDER BY version DESC LIMIT ?",
+                (strategy_name, limit),
+            ).fetchall()
+        return [self._strategy_version_row(row) for row in rows]
+
+    def latest_strategy_version(self, strategy_name: str) -> dict[str, Any] | None:
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT * FROM strategy_versions WHERE strategy_name = ? "
+                "ORDER BY version DESC LIMIT 1",
+                (strategy_name,),
+            ).fetchone()
+        return self._strategy_version_row(row) if row else None
+
+    def save_strategy_backtest_run(
+        self,
+        *,
+        strategy_name: str,
+        strategy_version: int,
+        kind: str,
+        request: dict[str, Any],
+        result: dict[str, Any],
+        created_at: str,
+    ) -> int:
+        with self._lock:
+            cursor = self._conn.execute(
+                """
+                INSERT INTO strategy_backtest_runs (
+                    strategy_name, strategy_version, kind, request_json, result_json, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    strategy_name,
+                    strategy_version,
+                    kind,
+                    _json_dumps(request),
+                    _json_dumps(result),
+                    created_at,
+                ),
+            )
+            self._conn.commit()
+        return int(cursor.lastrowid)
+
+    def recent_strategy_backtest_runs(self, strategy_name: str, limit: int = 20) -> list[dict[str, Any]]:
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT * FROM strategy_backtest_runs WHERE strategy_name = ? "
+                "ORDER BY created_at DESC LIMIT ?",
+                (strategy_name, limit),
+            ).fetchall()
+        return [
+            {
+                "id": row["id"],
+                "strategy_name": row["strategy_name"],
+                "strategy_version": row["strategy_version"],
+                "kind": row["kind"],
+                "request": _json_loads(row["request_json"]),
+                "result": _json_loads(row["result_json"]),
+                "created_at": row["created_at"],
+            }
+            for row in rows
+        ]
+
+    def paper_strategy_performance(self, strategy_name: str) -> dict[str, Any]:
+        """Summarise closed long paper trades for a promotion review."""
+
+        with self._lock:
+            rows = self._conn.execute(
+                """
+                SELECT realized_pnl, fee, timestamp FROM paper_orders
+                WHERE strategy = ? AND lower(side) = 'sell' AND status = 'filled'
+                ORDER BY timestamp ASC
+                """,
+                (strategy_name,),
+            ).fetchall()
+        net_pnls = [float(row["realized_pnl"]) - float(row["fee"]) for row in rows]
+        wins = sum(value > 0 for value in net_pnls)
+        gains = sum(value for value in net_pnls if value > 0)
+        losses = -sum(value for value in net_pnls if value < 0)
+        return {
+            "strategy_name": strategy_name,
+            "closed_trades": len(net_pnls),
+            "wins": wins,
+            "win_rate": round(wins / len(net_pnls), 4) if net_pnls else 0.0,
+            "total_pnl": round(sum(net_pnls), 4),
+            "profit_factor": round(gains / losses, 4) if losses > 0 else None,
+            "first_closed_at": rows[0]["timestamp"] if rows else None,
+            "last_closed_at": rows[-1]["timestamp"] if rows else None,
+        }
+
+    def create_strategy_promotion_review(
+        self,
+        *,
+        strategy_name: str,
+        strategy_version: int,
+        status: str,
+        evidence: dict[str, Any],
+        thresholds: dict[str, Any],
+        requested_at: str,
+    ) -> dict[str, Any]:
+        with self._lock:
+            cursor = self._conn.execute(
+                """
+                INSERT INTO strategy_promotion_reviews (
+                    strategy_name, strategy_version, status, evidence_json, thresholds_json, requested_at
+                ) VALUES (?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    strategy_name,
+                    strategy_version,
+                    status,
+                    _json_dumps(evidence),
+                    _json_dumps(thresholds),
+                    requested_at,
+                ),
+            )
+            self._conn.commit()
+            row = self._conn.execute(
+                "SELECT * FROM strategy_promotion_reviews WHERE id = ?", (cursor.lastrowid,)
+            ).fetchone()
+        return self._promotion_review_row(row)
+
+    @staticmethod
+    def _promotion_review_row(row: sqlite3.Row) -> dict[str, Any]:
+        return {
+            "id": row["id"],
+            "strategy_name": row["strategy_name"],
+            "strategy_version": row["strategy_version"],
+            "status": row["status"],
+            "evidence": _json_loads(row["evidence_json"]),
+            "thresholds": _json_loads(row["thresholds_json"]),
+            "requested_at": row["requested_at"],
+            "decided_at": row["decided_at"],
+            "decided_by": row["decided_by"],
+            "decision_note": row["decision_note"],
+        }
+
+    def decide_strategy_promotion_review(
+        self,
+        review_id: int,
+        *,
+        strategy_name: str,
+        approved: bool,
+        decided_by: str,
+        note: str,
+        decided_at: str,
+    ) -> dict[str, Any] | None:
+        status = "approved" if approved else "rejected"
+        with self._lock:
+            cursor = self._conn.execute(
+                """
+                UPDATE strategy_promotion_reviews
+                SET status = ?, decided_at = ?, decided_by = ?, decision_note = ?
+                WHERE id = ? AND strategy_name = ? AND status = 'eligible'
+                """,
+                (status, decided_at, decided_by, note, review_id, strategy_name),
+            )
+            self._conn.commit()
+            if cursor.rowcount != 1:
+                return None
+            row = self._conn.execute(
+                "SELECT * FROM strategy_promotion_reviews WHERE id = ?", (review_id,)
+            ).fetchone()
+        return self._promotion_review_row(row)
 
     def upsert_strategy(self, strategy: dict[str, Any]) -> None:
         with self._lock:
@@ -339,6 +679,247 @@ class SQLiteStore:
             for row in rows
         ]
 
+    def create_execution_intent(self, intent: dict[str, Any]) -> bool:
+        """Persist a new external order intent exactly once.
+
+        Returns ``True`` only for the caller that won the client-order-id
+        claim. Callers that lose the race must read and replay the stored
+        result instead of submitting another order to the exchange.
+        """
+
+        with self._lock:
+            cursor = self._conn.execute(
+                """
+                INSERT OR IGNORE INTO execution_intents (
+                    client_order_id, fingerprint, exchange, symbol, side,
+                    order_type, quantity, price, status, exchange_order_id,
+                    request_json, response_json, last_error, created_at, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    intent["client_order_id"],
+                    intent["fingerprint"],
+                    intent["exchange"],
+                    intent["symbol"],
+                    intent["side"],
+                    intent["order_type"],
+                    intent["quantity"],
+                    intent.get("price"),
+                    intent.get("status", "submitting"),
+                    intent.get("exchange_order_id"),
+                    _json_dumps(intent.get("request")),
+                    _json_dumps(intent.get("response")),
+                    intent.get("last_error"),
+                    intent["created_at"],
+                    intent.get("updated_at") or intent["created_at"],
+                ),
+            )
+            self._conn.commit()
+        return cursor.rowcount == 1
+
+    def get_execution_intent(self, client_order_id: str) -> dict[str, Any] | None:
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT * FROM execution_intents WHERE client_order_id = ?",
+                (client_order_id,),
+            ).fetchone()
+        return self._execution_intent_row(row) if row is not None else None
+
+    def update_execution_intent(
+        self,
+        client_order_id: str,
+        *,
+        status: str | None = None,
+        exchange_order_id: str | None = None,
+        response: dict[str, Any] | None = None,
+        last_error: str | None = None,
+        clear_error: bool = False,
+    ) -> None:
+        """Update the durable execution state without overwriting request intent."""
+
+        assignments: list[str] = ["updated_at = datetime('now')"]
+        params: list[Any] = []
+        if status is not None:
+            assignments.append("status = ?")
+            params.append(status)
+        if exchange_order_id is not None:
+            assignments.append("exchange_order_id = ?")
+            params.append(exchange_order_id)
+        if response is not None:
+            assignments.append("response_json = ?")
+            params.append(_json_dumps(response))
+        if last_error is not None:
+            assignments.append("last_error = ?")
+            params.append(last_error)
+        elif clear_error:
+            assignments.append("last_error = NULL")
+        params.append(client_order_id)
+        with self._lock:
+            self._conn.execute(
+                f"UPDATE execution_intents SET {', '.join(assignments)} WHERE client_order_id = ?",
+                tuple(params),
+            )
+            self._conn.commit()
+
+    def pending_execution_intents(self, exchange: str | None = None) -> list[dict[str, Any]]:
+        """Return intents which may still need exchange reconciliation."""
+
+        params: list[Any] = ["submitting", "submitted", "unknown", "pending", "partially_filled"]
+        where = "status IN (?, ?, ?, ?, ?)"
+        if exchange:
+            where += " AND exchange = ?"
+            params.append(exchange)
+        with self._lock:
+            rows = self._conn.execute(
+                f"SELECT * FROM execution_intents WHERE {where} ORDER BY created_at ASC",
+                tuple(params),
+            ).fetchall()
+        return [self._execution_intent_row(row) for row in rows]
+
+    @staticmethod
+    def _execution_intent_row(row: sqlite3.Row) -> dict[str, Any]:
+        return {
+            "client_order_id": row["client_order_id"],
+            "fingerprint": row["fingerprint"],
+            "exchange": row["exchange"],
+            "symbol": row["symbol"],
+            "side": row["side"],
+            "order_type": row["order_type"],
+            "quantity": row["quantity"],
+            "price": row["price"],
+            "status": row["status"],
+            "exchange_order_id": row["exchange_order_id"],
+            "request": _json_loads(row["request_json"]),
+            "response": _json_loads(row["response_json"]),
+            "last_error": row["last_error"],
+            "created_at": row["created_at"],
+            "updated_at": row["updated_at"],
+        }
+
+    def append_account_snapshot(self, outcome: dict[str, Any]) -> None:
+        """Persist the exchange-authoritative view from one reconciliation pass."""
+
+        with self._lock:
+            self._conn.execute(
+                """
+                INSERT INTO account_snapshots (
+                    exchange, balances_json, positions_json, balance_sync_ok,
+                    position_sync_ok, errors_json, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    outcome["exchange"],
+                    _json_dumps(outcome.get("balances", [])),
+                    _json_dumps(outcome.get("positions", [])),
+                    int(bool(outcome.get("balance_sync_ok"))),
+                    (
+                        None
+                        if outcome.get("position_sync_ok") is None
+                        else int(bool(outcome.get("position_sync_ok")))
+                    ),
+                    _json_dumps(outcome.get("errors", [])),
+                    outcome.get("completed_at") or datetime.utcnow().isoformat(),
+                ),
+            )
+            self._conn.commit()
+
+    def upsert_reconciliation_issues(self, exchange: str, issues: list[dict[str, Any]]) -> None:
+        """Keep one open record per active discrepancy while retaining history."""
+
+        if not issues:
+            return
+        now = datetime.utcnow().isoformat()
+        with self._lock:
+            for issue in issues:
+                self._conn.execute(
+                    """
+                    INSERT INTO reconciliation_issues (
+                        exchange, issue_key, kind, severity, local_json,
+                        exchange_json, details_json, status, detected_at, updated_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, 'open', ?, ?)
+                    ON CONFLICT(exchange, issue_key, status) DO UPDATE SET
+                        kind = excluded.kind,
+                        severity = excluded.severity,
+                        local_json = excluded.local_json,
+                        exchange_json = excluded.exchange_json,
+                        details_json = excluded.details_json,
+                        updated_at = excluded.updated_at
+                    """,
+                    (
+                        exchange.lower(),
+                        issue["issue_key"],
+                        issue["kind"],
+                        issue["severity"],
+                        _json_dumps(issue.get("local")) if issue.get("local") is not None else None,
+                        _json_dumps(issue.get("exchange"))
+                        if issue.get("exchange") is not None
+                        else None,
+                        _json_dumps({"resource": issue.get("resource")}),
+                        now,
+                        now,
+                    ),
+                )
+            self._conn.commit()
+
+    @staticmethod
+    def _reconciliation_issue_row(row: sqlite3.Row) -> dict[str, Any]:
+        details = _json_loads(row["details_json"])
+        return {
+            "id": row["id"],
+            "exchange": row["exchange"],
+            "issue_key": row["issue_key"],
+            "kind": row["kind"],
+            "severity": row["severity"],
+            "resource": details.get("resource"),
+            "local": _json_loads(row["local_json"]) if row["local_json"] else None,
+            "exchange_state": _json_loads(row["exchange_json"]) if row["exchange_json"] else None,
+            "status": row["status"],
+            "detected_at": row["detected_at"],
+            "updated_at": row["updated_at"],
+            "resolved_at": row["resolved_at"],
+            "resolution_note": row["resolution_note"],
+        }
+
+    def reconciliation_issues(
+        self, exchange: str | None = None, status: str = "open"
+    ) -> list[dict[str, Any]]:
+        where = "status = ?"
+        params: list[Any] = [status]
+        if exchange:
+            where += " AND exchange = ?"
+            params.append(exchange.lower())
+        with self._lock:
+            rows = self._conn.execute(
+                f"SELECT * FROM reconciliation_issues WHERE {where} "
+                "ORDER BY CASE severity WHEN 'critical' THEN 0 ELSE 1 END, detected_at DESC",
+                tuple(params),
+            ).fetchall()
+        return [self._reconciliation_issue_row(row) for row in rows]
+
+    def resolve_reconciliation_issues(self, exchange: str, note: str) -> int:
+        """Resolve all currently open issues after an explicit operator action."""
+
+        with self._lock:
+            cursor = self._conn.execute(
+                """
+                UPDATE reconciliation_issues
+                SET status = 'resolved', resolved_at = datetime('now'),
+                    updated_at = datetime('now'), resolution_note = ?
+                WHERE exchange = ? AND status = 'open'
+                """,
+                (note, exchange.lower()),
+            )
+            self._conn.commit()
+        return cursor.rowcount
+
+    def reconciliation_summary(self, exchange: str | None = None) -> dict[str, Any]:
+        issues = self.reconciliation_issues(exchange)
+        return {
+            "open_count": len(issues),
+            "critical_count": sum(issue["severity"] == "critical" for issue in issues),
+            "warning_count": sum(issue["severity"] == "warning" for issue in issues),
+        }
+
     def save_paper_state(self, summary: dict[str, Any]) -> None:
         with self._lock:
             self._conn.execute(
@@ -388,7 +969,9 @@ class SQLiteStore:
                         position["updated_at"],
                     ),
                 )
-            active_keys = {f"{item['exchange']}:{item['symbol']}" for item in summary.get("positions", [])}
+            active_keys = {
+                f"{item['exchange']}:{item['symbol']}" for item in summary.get("positions", [])
+            }
             if active_keys:
                 placeholders = ",".join("?" for _ in active_keys)
                 self._conn.execute(
@@ -451,8 +1034,7 @@ class SQLiteStore:
         params.append(limit)
         with self._lock:
             rows = self._conn.execute(
-                f"SELECT * FROM paper_orders {where} "
-                f"ORDER BY timestamp DESC LIMIT ?",
+                f"SELECT * FROM paper_orders {where} ORDER BY timestamp DESC LIMIT ?",
                 tuple(params),
             ).fetchall()
         return [dict(r) for r in rows]
@@ -460,7 +1042,9 @@ class SQLiteStore:
     def load_paper_state(self) -> dict[str, Any]:
         with self._lock:
             account = self._conn.execute("SELECT * FROM paper_account WHERE id = 1").fetchone()
-            positions = self._conn.execute("SELECT * FROM paper_positions ORDER BY position_key").fetchall()
+            positions = self._conn.execute(
+                "SELECT * FROM paper_positions ORDER BY position_key"
+            ).fetchall()
             order_rows = self._conn.execute(
                 "SELECT * FROM paper_orders ORDER BY timestamp DESC LIMIT 200"
             ).fetchall()

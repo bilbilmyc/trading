@@ -7,7 +7,6 @@ message instead of a generic error.
 
 from __future__ import annotations
 
-import pytest
 from fastapi.testclient import TestClient
 
 from app.api.server import create_app
@@ -65,6 +64,8 @@ def test_ai_analyze_without_key_returns_api_key_missing() -> None:
         body = response.json()
         assert body.get("error_kind") == "api_key_missing"
         assert body.get("decision") == "hold"
+        # Credential preflight happens before any external ticker/K-line request.
+        assert body.get("candle_count") == 0
 
 
 def test_ai_analyze_response_shape_always_includes_error_kind() -> None:

@@ -25,6 +25,7 @@
 
 import { API_BASE, request } from "./api/_client";
 import { marketApi } from "./api/market";
+import { backtestApi } from "./api/backtest";
 import { ordersApi } from "./api/orders";
 import { engineApi } from "./api/engine";
 import { strategiesApi } from "./api/strategies";
@@ -39,20 +40,27 @@ export type {
 export type {
   Ticker, ContractMarket, RecentTrade, Candle, OpenOrder, FeeRate, CostEstimate,
 } from "./api/market";
+export type {
+  BacktestPayload, BacktestResult, BacktestTrade, WalkForwardPayload, WalkForwardResult,
+} from "./api/backtest";
 export type { ContractOrderPayload, ContractOrderPreview } from "./api/orders";
 export type { EngineStatus, BotStatus } from "./api/engine";
 export type {
   StrategyInfo, PaperSummary, PaperPosition, PaperOrder, StrategySignal,
-  AuditEvent, CreateSMAStrategyPayload, SignalRunnerStatus,
+  AuditEvent, CreateSMAStrategyPayload, SignalRunnerStatus, StrategyVersion, StrategyPromotionReview,
 } from "./api/strategies";
 export type { TradeRecord, EquityPoint, LeaderboardEntry } from "./api/portfolio";
-export type { LLMAnalysisResult } from "./api/ai";
+export type { LLMAnalysisResult, LLMInsights, LLMModelInsight } from "./api/ai";
+export type {
+  ExecutionIntent, ReconciliationIssue, ReconciliationStatus,
+} from "./api/orders";
 export type { KillSwitchStatus } from "./api/risk";
 export type { HealthResponse, AppConfig, ExchangeCapabilities } from "./api/meta";
 
 export const api = {
   baseUrl: API_BASE,
   ...marketApi,
+  ...backtestApi,
   ...ordersApi,
   ...engineApi,
   ...strategiesApi,

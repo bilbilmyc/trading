@@ -71,6 +71,32 @@ export function AIReport({ data, loading }: AIReportProps) {
       </div>
     );
   }
+  if (data.error_kind === "safety_rejected") {
+    return (
+      <div className="ai-report ai-report--error">
+        <h3>AI 建议已被交易安全护栏拒绝</h3>
+        <p>
+          {data.reason || "模型给出的方向、止损或止盈与当前价格不一致，因此系统已安全降级为观望。"}
+        </p>
+      </div>
+    );
+  }
+  if (data.error_kind === "circuit_open") {
+    return (
+      <div className="ai-report ai-report--error">
+        <h3>AI 服务暂时保护中</h3>
+        <p>{data.reason || "模型服务连续失败，系统已暂时熔断以避免重复请求；请稍后重试。"}</p>
+      </div>
+    );
+  }
+  if (data.error_kind === "rate_limited") {
+    return (
+      <div className="ai-report ai-report--error">
+        <h3>AI 调用过于频繁</h3>
+        <p>{data.reason || "系统正在限制请求频率，请稍后重试。"}</p>
+      </div>
+    );
+  }
   if (data.error_kind) {
     return (
       <div className="ai-report ai-report--error">

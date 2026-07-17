@@ -8,6 +8,8 @@ running engine) stay in `server.py`.
 
 from __future__ import annotations
 
+import hashlib
+import json
 import secrets
 from datetime import datetime
 from typing import Any
@@ -44,12 +46,32 @@ def generate_client_order_id() -> str:
     return f"qt{datetime.utcnow():%y%m%d%H%M%S}{secrets.token_hex(5)}"
 
 
+def ensure_client_order_id(request: Any) -> Any:
+    """Return a request with a stable client id, preserving the input type."""
+
+    if getattr(request, "client_order_id", None):
+        return request
+    return request.model_copy(update={"client_order_id": generate_client_order_id()})
+
+
 def ensure_contract_client_order_id(request: ContractOrderRequest) -> ContractOrderRequest:
     """保证合约订单一定带 client_order_id。"""
 
-    if request.client_order_id:
-        return request
-    return request.model_copy(update={"client_order_id": generate_client_order_id()})
+    return ensure_client_order_id(request)
+
+
+def execution_fingerprint(request: Any) -> str:
+    """Hash the economic order intent, excluding its idempotency key.
+
+    A reused client id must describe precisely the same requested trade;
+    otherwise retrying it could accidentally turn a stale request into a
+    different order.
+    """
+
+    payload = request.model_dump(mode="json")
+    payload.pop("client_order_id", None)
+    canonical = json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
 
 def infer_liquidity(order_type: str) -> LiquidityType:
@@ -64,6 +86,8 @@ def infer_liquidity(order_type: str) -> LiquidityType:
 __all__ = [
     "extract_order_id",
     "generate_client_order_id",
+    "ensure_client_order_id",
     "ensure_contract_client_order_id",
+    "execution_fingerprint",
     "infer_liquidity",
 ]

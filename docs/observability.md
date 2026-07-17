@@ -94,6 +94,35 @@ groups:
           summary: "后台 loop P95 > 10s"
 ```
 
+## 订单执行对账
+
+Prometheus 当前不把未决订单意图作为高基数标签暴露；应通过 SQLite 审计和 API 运维视图查看。每次下单会写入持久化 `execution_intents`，其状态包括 `submitting`、`submitted`、`unknown`、`pending`、`partially_filled` 和终态。出现 `*_submission_unknown` 审计事件时，意味着交易所调用在本地没有获得确定结果，操作员应使用同一个 `client_order_id` 查询/同步，而不是创建新订单。
+
+- `GET /api/v1/executions/pending`：查看未终态执行意图及上游错误。
+- `POST /api/v1/sync/orders/{exchange}`：按交易所订单号或客户端订单号触发对账；响应中的 `unresolved` 是仍处于 `submitting` / `unknown` 的数量。
+
+建议为 `unresolved > 0` 配置外部轮询告警，并将 `order` 类别、`*_submission_unknown` 事件接入告警通道。
+
+## 账户与持仓对账运行手册
+
+账户同步不仅更新本地 `PositionManager`，还会为每个交易所持久化余额/持仓快照与差异账本。以下事件应接入现有审计事件流或外部告警：
+
+- `account_reconciliation_blocked`：发现严重仓位差异，交易所级新增风险订单已熔断；
+- `account_reconciliation_blocked_order`：有新订单因该熔断被拒绝；
+- `account_reconciliation_recovered`：操作员完成稳定性校验并填写说明后解除熔断。
+
+余额不一致是 `warning`，不会自动阻止交易；未知仓位、仓位数量/方向差异和本地幽灵仓位是 `critical`，会在进程重启后继续阻止对应交易所的**新增**订单。撤单、减仓、平仓仍保持可用，以便先降低真实风险。
+
+处理顺序：
+
+1. 调用 `GET /api/v1/reconciliation/issues?exchange={exchange}`，并同时核对交易所网页/API、外部交易记录和本地审计事件；
+2. 如需要刷新真源，调用 `POST /api/v1/sync/positions/{exchange}`；该步骤会以交易所状态覆盖本地持仓，但不会自动解除熔断；
+3. 先撤单、减仓或平仓，直到交易所状态稳定。不要通过重启绕过差异；
+4. 调用 `POST /api/v1/reconciliation/{exchange}/recover`，请求体必须包含人工确认说明；服务会连续同步两次，若仍有严重差异则返回 `409`；
+5. 用 `GET /api/v1/reconciliation/status?exchange={exchange}` 验证 `guard.blocked` 为 `false`，再恢复新增订单。
+
+审计页的“账户与持仓对账”卡片显示当前受限交易所、严重差异和余额提醒，并提供填写确认说明后的恢复入口。
+
 ## 集成点
 
 指标通过 `app/engine/metrics.py` 集中定义。所有 hot-path 推荐用
@@ -104,7 +133,7 @@ from app.engine.metrics import ORDERS_TOTAL, safe_inc
 safe_inc(ORDERS_TOTAL, status="filled", exchange="binance_usdm", side="buy")
 ```
 
-`safe_inc` / `safe_observe` / `safe_set` 三个函数都 swallow 所有异常 —
+`safe_inc` / `safe_add` / `safe_observe` / `safe_set` 四个函数都 swallow 所有异常 —
 只在确实需要把底层错误传出去时（比如测试里）才用裸
 `metric.labels(...).inc()`。
 
@@ -122,6 +151,15 @@ safe_observe(
 ```
 
 `render()` 导出 `(body, content_type)` 给 `/metrics` 端点。
+
+### LLM 指标口径
+
+`LLMAnalyzer` 对每次**真实 provider 调用**写入以下 Prometheus 指标：
+
+- `qt_llm_call_duration_seconds{provider,model,status}`：调用结束后的延迟。`status` 为 `success` 或结构化失败类型；当模型返回了不安全的止损/止盈并被交易护栏拒绝时为 `safety_rejected`。
+- `qt_llm_tokens_total{provider,model,type}`：`type=prompt|completion` 的 provider 返回 token。
+
+缺少 API Key、获取行情失败、缓存命中，以及策略实例本地治理产生的 `rate_limited` / `circuit_open` 都不会写入这两条 provider 指标，因为没有发生模型请求。对应的 AI 请求健康情况仍会记录为 SQLite 审计事件，并可通过 `GET /api/v1/ai/insights`（或审计页的 “AI 模型健康” 卡片）查询。连续真实 Provider 失败达到阈值后，LLM 策略会在冷却期内以 `circuit_open` 安全降级；安全护栏拒绝代表 Provider 已正常响应，不计入该可用性故障链路。
 
 ## Bot 调用怎么从 access log 中识别
 

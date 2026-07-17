@@ -150,6 +150,10 @@ class BinanceExchange(ExchangeBase):
             'newOrderRespType': 'FULL',
         }
 
+        if kwargs.get("client_order_id"):
+            # Binance keeps this id searchable across retries and order queries.
+            params["newClientOrderId"] = str(kwargs["client_order_id"])
+
         if order_type.lower() == 'market':
             # Binance 市价买入既可以按基础币数量 quantity，也可以按计价币金额 quoteOrderQty。
             # 两条路径都保留，调用方可以选择“买 0.01 BTC”或“买 100 USDT 的 BTC”。

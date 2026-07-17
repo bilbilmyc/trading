@@ -31,6 +31,9 @@ class OrderRequest(BaseModel):
     quantity: float = Field(..., gt=0)
     price: float | None = Field(None, gt=0)
     quote_order_qty: float | None = Field(None, gt=0)
+    # Optional caller-supplied idempotency key. The server creates one when
+    # omitted and returns it in the response so an ambiguous retry is safe.
+    client_order_id: str | None = Field(None, min_length=4, max_length=64)
 
 
 # ── Strategy management ───────────────────────────────────────────
@@ -134,13 +137,50 @@ class SizingRequest(BaseModel):
 
 
 class BacktestRequest(BaseModel):
-    """Backtest request body — klines are supplied inline; no exchange call."""
+    """SMA backtest request; all execution assumptions are explicit."""
 
-    klines: list[dict[str, Any]] = Field(..., min_length=1)
+    klines: list[dict[str, Any]] = Field(..., min_length=1, max_length=10_000)
     short_window: int = Field(5, gt=0)
     long_window: int = Field(20, gt=0)
     initial_capital: float = Field(10_000.0, gt=0)
     position_size_pct: float = Field(1.0, gt=0, le=1.0)
+    fee_rate: float = Field(0.001, ge=0.0, lt=1.0)
+    slippage_rate: float = Field(0.0, ge=0.0, lt=1.0)
+    stop_loss_pct: float | None = Field(None, gt=0.0, lt=1.0)
+    take_profit_pct: float | None = Field(None, gt=0.0, lt=1.0)
+
+
+class WalkForwardCandidate(BaseModel):
+    """One SMA pair evaluated only within each walk-forward training segment."""
+
+    short_window: int = Field(..., gt=0)
+    long_window: int = Field(..., gt=0)
+
+
+class WalkForwardRequest(BacktestRequest):
+    """Strictly out-of-sample walk-forward validation request."""
+
+    train_size: int = Field(..., ge=3, le=9_000)
+    test_size: int = Field(..., ge=3, le=9_000)
+    step_size: int | None = Field(None, ge=1, le=9_000)
+    candidate_parameters: list[WalkForwardCandidate] = Field(default_factory=list, max_length=24)
+
+
+class StrategyPromotionEvaluateRequest(BaseModel):
+    """Operator-selected minimum paper-trading evidence for a promotion review."""
+
+    min_closed_trades: int = Field(10, ge=1, le=10_000)
+    min_win_rate: float = Field(0.45, ge=0.0, le=1.0)
+    min_profit_factor: float = Field(1.05, gt=0.0, le=100.0)
+    min_total_pnl: float = Field(0.0)
+
+
+class StrategyPromotionDecisionRequest(BaseModel):
+    """A manual decision on an eligible promotion review; never changes live mode."""
+
+    approved: bool
+    decided_by: str = Field("operator", min_length=1, max_length=80)
+    note: str = Field(..., min_length=3, max_length=300)
 
 
 class SuggestRequest(BaseModel):
@@ -160,6 +200,12 @@ class ClosePositionRequest(BaseModel):
     exchange: str
     exit_quantity: float | None = Field(default=None, gt=0)
     position_size_pct: float = Field(1.0, gt=0, le=1.0)
+
+
+class ReconciliationRecoveryRequest(BaseModel):
+    """Explicit operator acknowledgement after account/position reconciliation."""
+
+    note: str = Field(..., min_length=3, max_length=300)
 
 
 class CustomSourceRequest(BaseModel):
@@ -184,7 +230,12 @@ __all__ = [
     "AIAnalyzeRequest",
     "SizingRequest",
     "BacktestRequest",
+    "WalkForwardCandidate",
+    "WalkForwardRequest",
+    "StrategyPromotionEvaluateRequest",
+    "StrategyPromotionDecisionRequest",
     "SuggestRequest",
     "ClosePositionRequest",
+    "ReconciliationRecoveryRequest",
     "CustomSourceRequest",
 ]

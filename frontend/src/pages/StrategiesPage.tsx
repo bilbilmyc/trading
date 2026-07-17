@@ -3,7 +3,9 @@ import { Sigma } from "lucide-react";
 
 import { useEngine } from "../contexts/EngineContext";
 import { api } from "../api";
-import type { LLMAnalysisResult } from "../api";
+import type {
+  BacktestResult, ExchangeName, LLMAnalysisResult, StrategyPromotionReview, WalkForwardResult,
+} from "../api";
 import { AIReport } from "../components/AIReport";
 import { AutocompleteInput } from "../components/AutocompleteInput";
 import { Card } from "../components/Card";
@@ -33,6 +35,20 @@ export function StrategiesPage() {
   const [aiError, setAiError] = useState("");
   const [aiExpanded, setAiExpanded] = useState(false);
 
+  const [backtestSymbol, setBacktestSymbol] = useState("BTCUSDT");
+  const [backtestExchange, setBacktestExchange] = useState<ExchangeName>("binance_usdm");
+  const [backtestInterval, setBacktestInterval] = useState("1h");
+  const [backtestShortWindow, setBacktestShortWindow] = useState("5");
+  const [backtestLongWindow, setBacktestLongWindow] = useState("20");
+  const [backtestResult, setBacktestResult] = useState<BacktestResult | null>(null);
+  const [backtestBusy, setBacktestBusy] = useState(false);
+  const [backtestError, setBacktestError] = useState("");
+  const [governanceStrategy, setGovernanceStrategy] = useState("");
+  const [governanceBusy, setGovernanceBusy] = useState("");
+  const [governanceError, setGovernanceError] = useState("");
+  const [walkForwardResult, setWalkForwardResult] = useState<WalkForwardResult | null>(null);
+  const [promotionReview, setPromotionReview] = useState<StrategyPromotionReview | null>(null);
+
   const visibleStrategies = strategies.slice(0, 6);
   const visibleSignals = signals.slice(0, 6);
 
@@ -51,6 +67,113 @@ export function StrategiesPage() {
       setAiError(err instanceof Error ? err.message : "AI 分析失败");
     } finally {
       setAiBusy(false);
+    }
+  }
+
+  async function runBacktest() {
+    const short = Number(backtestShortWindow);
+    const long = Number(backtestLongWindow);
+    if (!Number.isInteger(short) || !Number.isInteger(long) || short <= 0 || short >= long) {
+      setBacktestError("短窗口必须为正整数，且小于长窗口");
+      return;
+    }
+
+    setBacktestBusy(true);
+    setBacktestError("");
+    try {
+      const klines = await api.klines(backtestExchange, backtestSymbol, backtestInterval, 300);
+      const result = await api.run({
+        klines,
+        short_window: short,
+        long_window: long,
+        fee_rate: 0.001,
+        slippage_rate: 0.0005,
+      });
+      setBacktestResult(result);
+    } catch (err) {
+      setBacktestError(err instanceof Error ? err.message : "回测失败");
+    } finally {
+      setBacktestBusy(false);
+    }
+  }
+
+  const governedStrategy = strategies.find((strategy) => strategy.name === governanceStrategy)
+    ?? strategies[0]
+    ?? null;
+
+  async function runWalkForward() {
+    if (!governedStrategy) {
+      setGovernanceError("请先创建或加载一个策略");
+      return;
+    }
+    setGovernanceBusy("walk-forward");
+    setGovernanceError("");
+    try {
+      const short = Number(governedStrategy.parameters.short_window ?? backtestShortWindow);
+      const long = Number(governedStrategy.parameters.long_window ?? backtestLongWindow);
+      if (!Number.isInteger(short) || !Number.isInteger(long) || short <= 0 || short >= long) {
+        throw new Error("当前策略不是可验证的 SMA 参数组合");
+      }
+      const klines = await api.klines(
+        (governedStrategy.exchange as ExchangeName | undefined) ?? backtestExchange,
+        governedStrategy.symbol ?? backtestSymbol,
+        governedStrategy.interval ?? backtestInterval,
+        300,
+      );
+      const response = await api.runWalkForward(governedStrategy.name, {
+        klines,
+        short_window: short,
+        long_window: long,
+        train_size: 180,
+        test_size: 60,
+        step_size: 60,
+        candidate_parameters: [
+          { short_window: Math.max(2, short - 2), long_window: Math.max(short + 1, long - 5) },
+          { short_window: short, long_window: long },
+          { short_window: short + 2, long_window: long + 5 },
+        ],
+        fee_rate: 0.001,
+        slippage_rate: 0.0005,
+      });
+      setWalkForwardResult(response.result);
+      await refresh();
+    } catch (err) {
+      setGovernanceError(err instanceof Error ? err.message : "滚动回测失败");
+    } finally {
+      setGovernanceBusy("");
+    }
+  }
+
+  async function evaluatePromotion() {
+    if (!governedStrategy) return;
+    setGovernanceBusy("promotion");
+    setGovernanceError("");
+    try {
+      const response = await api.evaluatePromotion(governedStrategy.name);
+      setPromotionReview(response.review);
+    } catch (err) {
+      setGovernanceError(err instanceof Error ? err.message : "模拟盘评审失败");
+    } finally {
+      setGovernanceBusy("");
+    }
+  }
+
+  async function decidePromotion() {
+    if (!governedStrategy || !promotionReview || promotionReview.status !== "eligible") return;
+    const note = window.prompt("确认已复核样本外回测与模拟盘成交。填写审批说明：", "已复核风险与模拟盘证据");
+    if (!note) return;
+    setGovernanceBusy("decision");
+    setGovernanceError("");
+    try {
+      const response = await api.decidePromotion(governedStrategy.name, promotionReview.id, {
+        approved: true,
+        note,
+      });
+      setPromotionReview(response.review);
+    } catch (err) {
+      setGovernanceError(err instanceof Error ? err.message : "审批记录失败");
+    } finally {
+      setGovernanceBusy("");
     }
   }
 
@@ -257,6 +380,185 @@ export function StrategiesPage() {
           </div>
         </Card>
       </div>
+
+      <Card
+        title="SMA 回测"
+        subtitle="下一根 K 线开盘成交 · 含 0.10% 手续费与 0.05% 不利滑点"
+        trailing={
+          <button
+            type="button"
+            className="action action--primary action--xs"
+            onClick={runBacktest}
+            disabled={backtestBusy}
+          >
+            {backtestBusy ? "回测中..." : "运行回测"}
+          </button>
+        }
+      >
+        <div className="form-grid form-grid--inline">
+          <label className="field">
+            <span>合约</span>
+            <AutocompleteInput
+              value={backtestSymbol}
+              onChange={(value) => setBacktestSymbol(value.toUpperCase())}
+              options={SYMBOL_OPTIONS}
+              aria-label="回测合约"
+            />
+          </label>
+          <label className="field">
+            <span>交易所</span>
+            <select
+              value={backtestExchange}
+              onChange={(e) => setBacktestExchange(e.target.value as ExchangeName)}
+            >
+              <option value="binance_usdm">Binance USDⓈ-M</option>
+              <option value="bitget_usdt_futures">Bitget USDT Futures</option>
+              <option value="okx_swap">OKX Swap</option>
+            </select>
+          </label>
+          <label className="field">
+            <span>周期</span>
+            <select value={backtestInterval} onChange={(e) => setBacktestInterval(e.target.value)}>
+              <option value="15m">15m</option>
+              <option value="1h">1h</option>
+              <option value="4h">4h</option>
+              <option value="1d">1d</option>
+            </select>
+          </label>
+          <label className="field">
+            <span>短 / 长窗口</span>
+            <div className="inline-input-pair">
+              <input
+                value={backtestShortWindow}
+                onChange={(e) => setBacktestShortWindow(e.target.value)}
+                inputMode="numeric"
+                aria-label="回测短窗口"
+              />
+              <input
+                value={backtestLongWindow}
+                onChange={(e) => setBacktestLongWindow(e.target.value)}
+                inputMode="numeric"
+                aria-label="回测长窗口"
+              />
+            </div>
+          </label>
+        </div>
+        {backtestError ? <div className="notice notice--error">{backtestError}</div> : null}
+        {backtestResult ? (
+          <div className="metric-grid backtest-metrics">
+            <div className={`metric ${backtestResult.total_pnl >= 0 ? "metric--positive" : "metric--negative"}`}>
+              <span className="metric__label">净收益</span>
+              <strong className="metric__value">${backtestResult.total_pnl.toFixed(2)}</strong>
+              <span className="metric__hint">{backtestResult.total_return_pct.toFixed(2)}%</span>
+            </div>
+            <div className="metric">
+              <span className="metric__label">最终权益</span>
+              <strong className="metric__value">${backtestResult.final_equity.toFixed(2)}</strong>
+              <span className="metric__hint">{backtestResult.trades} 笔已完成交易</span>
+            </div>
+            <div className="metric metric--warning">
+              <span className="metric__label">最大回撤</span>
+              <strong className="metric__value">{(backtestResult.max_drawdown * 100).toFixed(2)}%</strong>
+              <span className="metric__hint">手续费 ${backtestResult.total_fees.toFixed(2)}</span>
+            </div>
+            <div className="metric">
+              <span className="metric__label">胜率 / 盈亏比</span>
+              <strong className="metric__value">{(backtestResult.win_rate * 100).toFixed(1)}%</strong>
+              <span className="metric__hint">
+                {backtestResult.profit_factor === null
+                  ? "盈亏比 —"
+                  : `盈亏比 ${backtestResult.profit_factor.toFixed(2)}`}
+              </span>
+            </div>
+          </div>
+        ) : null}
+      </Card>
+
+      <Card
+        title="策略治理"
+        subtitle="版本留痕 · 严格样本外 Walk-Forward · 模拟盘人工晋级（不会自动切换实盘）"
+      >
+        <div className="form-grid form-grid--inline">
+          <label className="field">
+            <span>目标策略</span>
+            <select
+              value={governanceStrategy || governedStrategy?.name || ""}
+              onChange={(event) => setGovernanceStrategy(event.target.value)}
+              disabled={strategies.length === 0}
+            >
+              {strategies.map((strategy) => (
+                <option key={strategy.name} value={strategy.name}>
+                  {strategy.name} · v{strategy.version ?? "—"} · {strategy.mode === "paper" ? "模拟" : strategy.mode}
+                </option>
+              ))}
+            </select>
+          </label>
+          <div className="field">
+            <span>当前版本</span>
+            <strong>v{governedStrategy?.version ?? "—"}</strong>
+          </div>
+          <div className="field">
+            <span>&nbsp;</span>
+            <button
+              type="button"
+              className="action action--primary"
+              onClick={runWalkForward}
+              disabled={!governedStrategy || Boolean(governanceBusy)}
+            >
+              {governanceBusy === "walk-forward" ? "验证中..." : "运行 Walk-Forward"}
+            </button>
+          </div>
+          <div className="field">
+            <span>&nbsp;</span>
+            <button
+              type="button"
+              className="action action--ghost"
+              onClick={evaluatePromotion}
+              disabled={!governedStrategy || Boolean(governanceBusy)}
+            >
+              {governanceBusy === "promotion" ? "评审中..." : "评审模拟盘"}
+            </button>
+          </div>
+        </div>
+        {governanceError ? <div className="notice notice--error">{governanceError}</div> : null}
+        {walkForwardResult ? (
+          <div className="metric-grid">
+            <div className="metric">
+              <span className="metric__label">样本外收益</span>
+              <strong className={walkForwardResult.total_return_pct >= 0 ? "text-positive" : "text-negative"}>
+                {walkForwardResult.total_return_pct >= 0 ? "+" : ""}{walkForwardResult.total_return_pct.toFixed(2)}%
+              </strong>
+              <span className="metric__hint">{walkForwardResult.folds.length} 个独立窗口</span>
+            </div>
+            <div className="metric">
+              <span className="metric__label">稳定性</span>
+              <strong>{(walkForwardResult.profitable_fold_ratio * 100).toFixed(0)}%</strong>
+              <span className="metric__hint">正收益窗口 · 波动 {walkForwardResult.return_stddev_pct.toFixed(2)}%</span>
+            </div>
+            <div className="metric metric--warning">
+              <span className="metric__label">样本外最大回撤</span>
+              <strong>{(walkForwardResult.max_drawdown * 100).toFixed(2)}%</strong>
+              <span className="metric__hint">{walkForwardResult.trades} 笔已平仓交易</span>
+            </div>
+          </div>
+        ) : null}
+        {promotionReview ? (
+          <div className={`notice ${promotionReview.status === "eligible" || promotionReview.status === "approved" ? "notice--success" : "notice--warning"}`}>
+            <strong>模拟盘评审：{promotionReview.status}</strong>
+            <span> · 版本 v{promotionReview.strategy_version} · 仅生成审计决策，不变更实盘模式。</span>
+            {promotionReview.status === "eligible" ? (
+              <button
+                type="button"
+                className="action action--xs action--ghost"
+                onClick={decidePromotion}
+                disabled={Boolean(governanceBusy)}
+              >
+                {governanceBusy === "decision" ? "记录中..." : "人工批准"}
+              </button>
+            ) : null}
+          </div>
+        ) : null}
+      </Card>
 
       <div className="page__grid page__grid--two-thirds">
         <Card

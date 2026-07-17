@@ -102,33 +102,110 @@ def test_kill_switch_correct_key_passes_auth(tmp_path) -> None:
 # Endpoints that mutate state and must require auth when enabled.
 # Each tuple is (method, path, json_body, description).
 DANGEROUS_ENDPOINTS = [
-    ("POST",   "/api/v1/risk/kill-switch",       {"enabled": False, "reason": "t"}, "kill-switch"),
-    ("POST",   "/api/v1/order",                  {
-        "exchange": "binance_usdm", "symbol": "BTCUSDT",
-        "side": "buy", "order_type": "market", "quantity": 0.001,
-    }, "place spot order"),
-    ("POST",   "/api/v1/contracts/order",        {
-        "exchange": "binance_usdm", "symbol": "BTCUSDT",
-        "intent": "open_long", "order_type": "market", "quantity": 0.001,
-    }, "place contract order"),
+    ("POST", "/api/v1/risk/kill-switch", {"enabled": False, "reason": "t"}, "kill-switch"),
+    (
+        "POST",
+        "/api/v1/order",
+        {
+            "exchange": "binance_usdm",
+            "symbol": "BTCUSDT",
+            "side": "buy",
+            "order_type": "market",
+            "quantity": 0.001,
+        },
+        "place spot order",
+    ),
+    (
+        "POST",
+        "/api/v1/contracts/order",
+        {
+            "exchange": "binance_usdm",
+            "symbol": "BTCUSDT",
+            "intent": "open_long",
+            "order_type": "market",
+            "quantity": 0.001,
+        },
+        "place contract order",
+    ),
     ("DELETE", "/api/v1/order/binance_usdm/BTCUSDT/abc123", None, "cancel order"),
-    ("DELETE", "/api/v1/orders/binance_usdm/open",          None, "cancel all"),
-    ("POST",   "/api/v1/contracts/binance_usdm/BTCUSDT/leverage",
-                                                  {"leverage": 3}, "set leverage"),
-    ("POST",   "/api/v1/paper/reset",            {}, "paper reset"),
-    ("POST",   "/api/v1/runner/start",           {}, "runner start"),
-    ("POST",   "/api/v1/runner/stop",            {}, "runner stop"),
-    ("POST",   "/api/v1/strategies/sma",         {
-        "exchange": "binance_usdm", "symbol": "BTCUSDT", "interval": "1m",
-        "short_window": 5, "long_window": 20,
-    }, "create SMA strategy"),
-    ("POST",   "/api/v1/ai/analyze",             {
-        "exchange": "binance_usdm", "symbol": "BTCUSDT", "interval": "1h", "limit": 30,
-    }, "ai analyze"),
-    ("POST",   "/api/v1/positions/close",        {
-        "exchange": "binance_usdm", "symbol": "BTCUSDT",
-    }, "close position"),
-    ("POST",   "/api/v1/strategies/llm-filter/attach", None, "attach LLM filter"),
+    ("DELETE", "/api/v1/orders/binance_usdm/open", None, "cancel all"),
+    ("POST", "/api/v1/contracts/binance_usdm/BTCUSDT/leverage", {"leverage": 3}, "set leverage"),
+    ("POST", "/api/v1/paper/reset", {}, "paper reset"),
+    ("POST", "/api/v1/runner/start", {}, "runner start"),
+    ("POST", "/api/v1/runner/stop", {}, "runner stop"),
+    (
+        "POST",
+        "/api/v1/strategies/sma",
+        {
+            "exchange": "binance_usdm",
+            "symbol": "BTCUSDT",
+            "interval": "1m",
+            "short_window": 5,
+            "long_window": 20,
+        },
+        "create SMA strategy",
+    ),
+    ("POST", "/api/v1/runner/run-once", {}, "run signal cycle"),
+    ("POST", "/api/v1/strategies/sma_5_20_btcusdt/start", {}, "start strategy"),
+    ("POST", "/api/v1/strategies/sma_5_20_btcusdt/stop", {}, "stop strategy"),
+    (
+        "POST",
+        "/api/v1/strategies/sma_5_20_btcusdt/mode",
+        {"mode": "signal"},
+        "change strategy mode",
+    ),
+    ("DELETE", "/api/v1/strategies/sma_5_20_btcusdt", None, "delete strategy"),
+    ("POST", "/api/v1/engine/strategy/sma", {}, "legacy create strategy"),
+    ("POST", "/api/v1/strategies/llm", {}, "create LLM strategy"),
+    ("POST", "/api/v1/sources", {}, "create data source"),
+    ("DELETE", "/api/v1/sources/test-source", None, "delete data source"),
+    ("POST", "/api/v1/sync/orders/binance_usdm", {}, "sync orders"),
+    ("POST", "/api/v1/sync/positions/binance_usdm", {}, "sync positions"),
+    (
+        "POST",
+        "/api/v1/reconciliation/binance_usdm/recover",
+        {"note": "operator confirmation"},
+        "recover reconciliation",
+    ),
+    (
+        "POST",
+        "/api/v1/ai/analyze",
+        {
+            "exchange": "binance_usdm",
+            "symbol": "BTCUSDT",
+            "interval": "1h",
+            "limit": 30,
+        },
+        "ai analyze",
+    ),
+    (
+        "POST",
+        "/api/v1/positions/close",
+        {
+            "exchange": "binance_usdm",
+            "symbol": "BTCUSDT",
+        },
+        "close position",
+    ),
+    (
+        "POST",
+        "/api/v1/strategies/sma_5_20_btcusdt/backtests/walk-forward",
+        {"klines": [], "train_size": 3, "test_size": 3},
+        "run versioned walk-forward",
+    ),
+    (
+        "POST",
+        "/api/v1/strategies/sma_5_20_btcusdt/promotion/evaluate",
+        {},
+        "evaluate paper promotion",
+    ),
+    (
+        "POST",
+        "/api/v1/strategies/sma_5_20_btcusdt/promotion/1/decision",
+        {"approved": True, "note": "reviewed"},
+        "decide paper promotion",
+    ),
+    ("POST", "/api/v1/strategies/llm-filter/attach", None, "attach LLM filter"),
 ]
 
 
@@ -188,4 +265,6 @@ def test_dangerous_endpoints_passthrough_when_auth_disabled(
             r = c.delete(path)
         else:
             pytest.fail(f"unsupported method in test fixture: {method}")
-        assert r.status_code != 401, f"{label}: auth disabled should not 401, got {r.status_code} {r.text}"
+        assert r.status_code != 401, (
+            f"{label}: auth disabled should not 401, got {r.status_code} {r.text}"
+        )

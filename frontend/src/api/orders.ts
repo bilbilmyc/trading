@@ -25,6 +25,60 @@ export interface ContractOrderPayload {
   client_order_id?: string;
 }
 
+export interface ExecutionIntent {
+  client_order_id: string;
+  exchange: string;
+  symbol: string;
+  side: string;
+  order_type: string;
+  quantity: number;
+  price?: number | null;
+  status: "submitting" | "submitted" | "unknown" | "pending" | "partially_filled";
+  exchange_order_id?: string | null;
+  last_error?: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface ReconciliationIssue {
+  id: number;
+  exchange: string;
+  issue_key: string;
+  kind: string;
+  severity: "critical" | "warning";
+  resource?: string | null;
+  local?: Record<string, unknown> | null;
+  exchange_state?: Record<string, unknown> | null;
+  status: "open" | "resolved";
+  detected_at: string;
+  updated_at: string;
+  resolved_at?: string | null;
+  resolution_note?: string | null;
+}
+
+export interface ReconciliationGuardStatus {
+  blocked: boolean;
+  blocked_count?: number;
+  blocked_exchanges?: Array<{
+    exchange: string;
+    reason: string;
+    critical_count: number;
+    blocked_at: string;
+  }>;
+  exchange?: string;
+  block?: {
+    exchange: string;
+    reason: string;
+    critical_count: number;
+    blocked_at: string;
+  } | null;
+}
+
+export interface ReconciliationStatus {
+  guard: ReconciliationGuardStatus;
+  summary: { open_count: number; critical_count: number; warning_count: number };
+}
+
 export interface ContractOrderPreview {
   exchange: ExchangeName;
   symbol: string;
@@ -63,6 +117,27 @@ export const ordersApi = {
       method: "POST",
       body: JSON.stringify(payload),
     }),
+
+  pendingExecutions: (exchange?: string) =>
+    request<{ intents: ExecutionIntent[]; count: number }>(
+      `/api/v1/executions/pending${exchange ? `?exchange=${encodeURIComponent(exchange)}` : ""}`,
+    ),
+
+  reconciliationStatus: (exchange?: string) =>
+    request<ReconciliationStatus>(
+      `/api/v1/reconciliation/status${exchange ? `?exchange=${encodeURIComponent(exchange)}` : ""}`,
+    ),
+
+  reconciliationIssues: (exchange?: string, status: "open" | "resolved" = "open") =>
+    request<{ issues: ReconciliationIssue[]; count: number }>(
+      `/api/v1/reconciliation/issues?status=${status}${exchange ? `&exchange=${encodeURIComponent(exchange)}` : ""}`,
+    ),
+
+  recoverReconciliation: (exchange: string, note: string) =>
+    request<{ exchange: string; released: boolean; resolved_issues: number; guard: ReconciliationGuardStatus }>(
+      `/api/v1/reconciliation/${encodeURIComponent(exchange)}/recover`,
+      { method: "POST", body: JSON.stringify({ note }) },
+    ),
 
   closePosition: (payload: { exchange: string; symbol: string; exit_quantity?: number; position_size_pct?: number }) =>
     request<{ closed_quantity: number; order: Record<string, unknown> }>(

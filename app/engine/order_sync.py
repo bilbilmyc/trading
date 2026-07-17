@@ -1,8 +1,8 @@
-"""
-订单同步模块
+"""订单同步模块。
 
-定时从交易所拉取挂单 / 成交状态，更新本地 Order 记录。
-确保引擎内部的订单视图与交易所实际状态保持一致。
+同步交易所挂单状态，并把本地的执行意图按交易所订单号或客户端订单号重新关联。
+提交超时的订单会保持 ``unknown``，直到交易所侧可证明其结果；绝不因为一次
+open-orders 查询没有返回而把未知订单误判成已撤销。
 """
 
 import asyncio
@@ -14,48 +14,101 @@ from loguru import logger
 from app.exchanges.base import ExchangeBase
 from app.models.order import Order, OrderSide, OrderStatus, OrderType
 
+_TERMINAL_STATUSES = {
+    OrderStatus.FILLED,
+    OrderStatus.CANCELLED,
+    OrderStatus.REJECTED,
+    OrderStatus.EXPIRED,
+}
+
 
 class OrderSync:
-    """订单同步器
-
-    周期性地：
-    1. 拉取交易所所有未成交订单
-    2. 对比本地记录，更新已成交 / 已取消的订单
-    3. 推送状态变更回调
-    """
+    """维护本地订单视图，并从交易所挂单列表进行状态对账。"""
 
     def __init__(self, interval_seconds: int = 10):
         self.interval_seconds = interval_seconds
-        self._local_orders: dict[str, Order] = {}  # 订单号 -> 本地订单模型
+        # Key is either an exchange order id or ``client:<client_order_id>``.
+        self._local_orders: dict[str, Order] = {}
         self._callbacks: list = []
+
+    @staticmethod
+    def _key(order: Order) -> str | None:
+        if order.order_id:
+            return str(order.order_id)
+        if order.client_order_id:
+            return f"client:{order.client_order_id}"
+        return None
+
+    @staticmethod
+    def _exchange_name_matches(order: Order, exchange: ExchangeBase) -> bool:
+        return order.exchange.strip().lower() == exchange.name.strip().lower()
+
+    @staticmethod
+    def _raw_order_id(raw: dict[str, Any]) -> str | None:
+        value = raw.get("order_id") or raw.get("orderId") or raw.get("ordId")
+        return str(value) if value not in (None, "") else None
+
+    @staticmethod
+    def _raw_client_order_id(raw: dict[str, Any]) -> str | None:
+        value = (
+            raw.get("client_order_id")
+            or raw.get("clientOrderId")
+            or raw.get("clientOid")
+            or raw.get("clOrdId")
+        )
+        return str(value) if value not in (None, "") else None
 
     # ── 订单注册 ──────────────────────────────────────────────
 
     def track(self, order: Order) -> None:
-        """登记本进程提交的订单，后续用于同步状态。"""
+        """登记本进程提交或恢复的订单。必须具备至少一个稳定标识。"""
 
-        if order.order_id:
-            self._local_orders[order.order_id] = order
+        key = self._key(order)
+        if key:
+            self._local_orders[key] = order
 
     def forget(self, order_id: str) -> None:
-        """从本地跟踪列表移除已结束订单。"""
+        """按任一订单标识移除已结束订单。"""
 
-        self._local_orders.pop(order_id, None)
+        order = self._local_orders.pop(order_id, None)
+        if order is None:
+            order = self._local_orders.pop(f"client:{order_id}", None)
+        if order is not None:
+            key = self._key(order)
+            if key:
+                self._local_orders.pop(key, None)
 
     def on_sync(self, callback) -> None:
         """注册订单状态变化回调。
 
-        回调签名：``async def callback(order: Order, changed: bool)``
+        回调签名：``async def callback(order: Order, changed: bool)``。
         """
 
         self._callbacks.append(callback)
 
+    def _find_local(self, order_id: str | None, client_order_id: str | None) -> Order | None:
+        if order_id and (local := self._local_orders.get(order_id)) is not None:
+            return local
+        if client_order_id:
+            return self._local_orders.get(f"client:{client_order_id}")
+        return None
+
+    def _bind_exchange_order_id(self, order: Order, order_id: str | None) -> None:
+        if not order_id or order.order_id == order_id:
+            return
+        old_key = self._key(order)
+        order.order_id = order_id
+        if old_key and old_key != order_id:
+            self._local_orders.pop(old_key, None)
+        self._local_orders[order_id] = order
+
     # ── 单次同步 ──────────────────────────────────────────────
 
     async def sync(self, exchange: ExchangeBase, symbol: str | None = None) -> int:
-        """从交易所拉取挂单并更新本地订单记录。
+        """拉取交易所挂单，按订单号/客户端订单号对账。
 
-        返回状态发生变化的订单数量。
+        ``unknown`` / ``submitting`` 订单只会在交易所返回可关联的订单时转为
+        已知状态；它们不在本轮挂单中时保留为未知，避免网络超时后的重复下单。
         """
 
         changed = 0
@@ -65,117 +118,150 @@ class OrderSync:
             logger.warning(f"OrderSync: get_open_orders failed: {exc}")
             return 0
 
-        # 先收集交易所侧仍处于挂单状态的订单 ID。
         exchange_ids: set[str] = set()
         for raw in open_orders:
-            oid = str(raw.get("order_id") or raw.get("orderId") or "")
-            if not oid:
+            if not isinstance(raw, dict):
                 continue
-            exchange_ids.add(oid)
+            order_id = self._raw_order_id(raw)
+            client_order_id = self._raw_client_order_id(raw)
+            if order_id:
+                exchange_ids.add(order_id)
 
-            local = self._local_orders.get(oid)
+            local = self._find_local(order_id, client_order_id)
             raw_status = str(raw.get("status", "")).lower()
+            new_status = self._translate_status(raw_status)
 
             if local is not None:
-                new_status = self._translate_status(raw_status)
+                self._bind_exchange_order_id(local, order_id)
+                if client_order_id and not local.client_order_id:
+                    local.client_order_id = client_order_id
+
+                self._apply_exchange_fields(local, raw)
                 if new_status and local.status != new_status:
                     local.status = new_status
                     local.updated_at = datetime.utcnow()
                     changed += 1
                     await self._notify(local)
 
-                    # 订单进入终态后就不再继续跟踪。
-                    if new_status in (OrderStatus.FILLED, OrderStatus.CANCELLED, OrderStatus.REJECTED, OrderStatus.EXPIRED):
-                        self.forget(oid)
+                if local.status in _TERMINAL_STATUSES:
+                    self.forget(self._key(local) or "")
+                continue
 
-            elif raw_status in ("filled", "partially_filled", "new", "open"):
-                # 本进程不知道的订单，可能来自手动下单或其他进程，先纳入本地跟踪。
+            if new_status in {
+                OrderStatus.PENDING,
+                OrderStatus.PARTIALLY_FILLED,
+                OrderStatus.FILLED,
+            }:
                 parsed = self._parse_exchange_order(raw, exchange.name)
                 if parsed is not None:
-                    self._local_orders[oid] = parsed
+                    self.track(parsed)
                     await self._notify(parsed)
+                    if parsed.status in _TERMINAL_STATUSES:
+                        self.forget(self._key(parsed) or "")
 
-        # 本地还活跃、但交易所挂单列表里消失的订单，按已撤销处理。
-        for oid, local in list(self._local_orders.items()):
-            if local.is_active and oid not in exchange_ids:
+        # Only reconcile orders belonging to this venue. A missing active order is
+        # normally cancelled, except ambiguous submissions where absence is not proof.
+        for key, local in list(self._local_orders.items()):
+            if not self._exchange_name_matches(local, exchange):
+                continue
+            if local.status in {OrderStatus.UNKNOWN, OrderStatus.SUBMITTING}:
+                continue
+            if local.is_active and local.order_id and local.order_id not in exchange_ids:
                 local.status = OrderStatus.CANCELLED
                 local.updated_at = datetime.utcnow()
                 changed += 1
                 await self._notify(local)
-                self.forget(oid)
+                self.forget(key)
 
         return changed
 
     # ── 内部 ──────────────────────────────────────────────────
 
-    async def _notify(self, order: Order) -> None:
-        """触发单个订单的同步回调。"""
-
-        for cb in self._callbacks:
+    @staticmethod
+    def _apply_exchange_fields(order: Order, raw: dict[str, Any]) -> None:
+        filled = raw.get("filled_quantity") or raw.get("executedQty") or raw.get("filled")
+        if filled is not None:
             try:
-                if asyncio.iscoroutinefunction(cb):
-                    await cb(order, True)
+                order.filled_quantity = max(0.0, float(filled))
+            except (TypeError, ValueError):
+                pass
+        avg_price = raw.get("avg_fill_price") or raw.get("avgPrice") or raw.get("average")
+        if avg_price is not None:
+            try:
+                order.avg_fill_price = float(avg_price)
+            except (TypeError, ValueError):
+                pass
+
+    async def _notify(self, order: Order) -> None:
+        for callback in self._callbacks:
+            try:
+                if asyncio.iscoroutinefunction(callback):
+                    await callback(order, True)
                 else:
-                    cb(order, True)
+                    callback(order, True)
             except Exception as exc:
                 logger.warning(f"OrderSync callback error: {exc}")
 
     @staticmethod
     def _translate_status(raw: str) -> OrderStatus | None:
-        """把交易所状态字符串映射成统一 OrderStatus。"""
-
         mapping = {
+            "submitting": OrderStatus.SUBMITTING,
+            "submitted": OrderStatus.SUBMITTED,
+            "unknown": OrderStatus.UNKNOWN,
             "new": OrderStatus.PENDING,
             "open": OrderStatus.PENDING,
             "pending": OrderStatus.PENDING,
+            "live": OrderStatus.PENDING,
             "partially_filled": OrderStatus.PARTIALLY_FILLED,
+            "partiallyfilled": OrderStatus.PARTIALLY_FILLED,
+            "partial": OrderStatus.PARTIALLY_FILLED,
             "filled": OrderStatus.FILLED,
-            "canceled": OrderStatus.CANCELLED,
+            "closed": OrderStatus.FILLED,
             "cancelled": OrderStatus.CANCELLED,
+            "canceled": OrderStatus.CANCELLED,
             "rejected": OrderStatus.REJECTED,
             "expired": OrderStatus.EXPIRED,
         }
         return mapping.get(raw)
 
-    @staticmethod
-    def _parse_exchange_order(raw: dict[str, Any], exchange_name: str) -> Order | None:
-        """把交易所原始订单字典转换成本地 Order 模型。"""
-
+    @classmethod
+    def _parse_exchange_order(cls, raw: dict[str, Any], exchange_name: str) -> Order | None:
+        order_id = cls._raw_order_id(raw)
+        client_order_id = cls._raw_client_order_id(raw)
+        if not order_id and not client_order_id:
+            return None
         try:
-            oid = str(raw.get("order_id") or raw.get("orderId") or "")
-            sym = str(raw.get("symbol") or "")
-            side_raw = str(raw.get("side", "")).lower()
-            raw_status = str(raw.get("status", "")).lower()
-            qty = float(raw.get("quantity") or raw.get("origQty") or 0)
-            price = float(raw.get("price") or 0) or None
-
-            if not oid or not sym or not side_raw:
+            side = OrderSide(str(raw.get("side", "buy")).lower())
+            order_type = OrderType(str(raw.get("type") or raw.get("order_type") or "limit").lower())
+            quantity = float(raw.get("quantity") or raw.get("origQty") or raw.get("size") or 0)
+            if quantity <= 0:
                 return None
-
-            side = OrderSide.BUY if side_raw in ("buy", "BUY") else OrderSide.SELL
-            order_type = OrderType.MARKET if str(raw.get("order_type") or raw.get("type", "")).lower() == "market" else OrderType.LIMIT
-            status = OrderSync._translate_status(raw_status) or OrderStatus.PENDING
-
-            return Order(
-                symbol=sym,
+            status = cls._translate_status(str(raw.get("status", "new")).lower()) or OrderStatus.PENDING
+            price_value = raw.get("price")
+            price = float(price_value) if price_value not in (None, "", "0") else None
+            order = Order(
+                order_id=order_id,
+                client_order_id=client_order_id,
                 exchange=exchange_name,
+                symbol=str(raw.get("symbol") or raw.get("instId") or "UNKNOWN"),
                 side=side,
                 order_type=order_type,
-                quantity=qty,
+                quantity=quantity,
                 price=price,
-                order_id=oid,
                 status=status,
-                filled_quantity=float(raw.get("filled_quantity") or raw.get("executedQty") or 0),
-                avg_fill_price=float(raw.get("avg_fill_price") or raw.get("avgPrice") or 0) or None,
             )
-        except Exception as exc:
-            logger.debug(f"OrderSync: failed to parse exchange order: {exc}")
+            cls._apply_exchange_fields(order, raw)
+            return order
+        except (TypeError, ValueError) as exc:
+            logger.debug(f"OrderSync: skip malformed exchange order: {exc}")
             return None
 
     @property
     def tracked_count(self) -> int:
-        return len(self._local_orders)
+        """Number of distinct locally tracked orders."""
+
+        return len({id(order) for order in self._local_orders.values()})
 
     @property
     def open_orders(self) -> list[Order]:
-        return [o for o in self._local_orders.values() if o.is_active]
+        return list({id(order): order for order in self._local_orders.values() if order.is_active}.values())

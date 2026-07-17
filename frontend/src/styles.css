@@ -6017,3 +6017,15 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
   background: var(--sidebar-surface);
   border: 1px solid var(--sidebar-border);
 }
+
+
+/* SMA backtest controls share the standard field and metric system. */
+.inline-input-pair {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px;
+}
+
+.backtest-metrics {
+  margin-top: 14px;
+}

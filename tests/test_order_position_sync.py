@@ -3,19 +3,18 @@ reconciliation between local state and exchange state."""
 
 from __future__ import annotations
 
-from datetime import datetime
-from typing import Any, Dict, List
+from typing import Any
 from unittest.mock import AsyncMock
 
 import pytest
 
 from app.engine.order_sync import OrderSync
-from app.engine.position_sync import PositionSync
 from app.engine.position_manager import PositionManager
+from app.engine.position_sync import PositionSync
 from app.models.order import Order, OrderSide, OrderStatus, OrderType
 
 
-def _exchange_with_open_orders(orders: List[Dict[str, Any]]):
+def _exchange_with_open_orders(orders: list[dict[str, Any]]):
     ex = AsyncMock()
     ex.name = "test_ex"
     ex.get_open_orders = AsyncMock(return_value=orders)
@@ -50,9 +49,11 @@ async def test_order_sync_fills_status() -> None:
     # OrderStatus.PENDING is the default; Pydantic coerces to enum.
     assert order.status == OrderStatus.PENDING
 
-    ex = _exchange_with_open_orders([
-        {"order_id": "o-1", "status": "filled"},
-    ])
+    ex = _exchange_with_open_orders(
+        [
+            {"order_id": "o-1", "status": "filled"},
+        ]
+    )
     n = await sync.sync(ex)
     assert n == 1
     assert order.status == OrderStatus.FILLED
@@ -64,7 +65,7 @@ async def test_order_sync_skips_unknown_exchange_orders() -> None:
     # Local order not present on exchange.
     order = Order(
         symbol="BTCUSDT",
-        exchange="binance_usdm",
+        exchange="test_ex",
         side=OrderSide.BUY,
         order_type=OrderType.LIMIT,
         quantity=0.01,
@@ -76,6 +77,81 @@ async def test_order_sync_skips_unknown_exchange_orders() -> None:
     # Order should be marked CANCELLED since it's no longer on exchange.
     assert n == 1
     assert order.status == OrderStatus.CANCELLED
+
+
+@pytest.mark.asyncio
+async def test_order_sync_reconciles_unknown_order_by_client_order_id() -> None:
+    sync = OrderSync()
+    order = Order(
+        symbol="BTCUSDT",
+        exchange="test_ex",
+        side=OrderSide.BUY,
+        order_type=OrderType.LIMIT,
+        quantity=0.01,
+        client_order_id="client-unknown-1",
+        status=OrderStatus.UNKNOWN,
+    )
+    sync.track(order)
+    ex = _exchange_with_open_orders(
+        [
+            {
+                "order_id": "exchange-42",
+                "client_order_id": "client-unknown-1",
+                "status": "open",
+                "symbol": "BTCUSDT",
+                "side": "buy",
+                "type": "limit",
+                "quantity": "0.01",
+            }
+        ]
+    )
+
+    changed = await sync.sync(ex)
+
+    assert changed == 1
+    assert order.order_id == "exchange-42"
+    assert order.status == OrderStatus.PENDING
+    assert sync.tracked_count == 1
+
+
+@pytest.mark.asyncio
+async def test_order_sync_keeps_unknown_order_when_not_in_open_orders() -> None:
+    sync = OrderSync()
+    order = Order(
+        symbol="BTCUSDT",
+        exchange="test_ex",
+        side=OrderSide.BUY,
+        order_type=OrderType.MARKET,
+        quantity=0.01,
+        client_order_id="client-ambiguous-1",
+        status=OrderStatus.UNKNOWN,
+    )
+    sync.track(order)
+
+    changed = await sync.sync(_exchange_with_open_orders([]))
+
+    assert changed == 0
+    assert order.status == OrderStatus.UNKNOWN
+    assert sync.tracked_count == 1
+
+
+@pytest.mark.asyncio
+async def test_order_sync_does_not_cancel_another_exchange_order() -> None:
+    sync = OrderSync()
+    other = Order(
+        symbol="BTCUSDT",
+        exchange="other_ex",
+        side=OrderSide.BUY,
+        order_type=OrderType.LIMIT,
+        quantity=0.01,
+        order_id="other-order",
+    )
+    sync.track(other)
+
+    changed = await sync.sync(_exchange_with_open_orders([]))
+
+    assert changed == 0
+    assert other.status == OrderStatus.PENDING
 
 
 @pytest.mark.asyncio
@@ -144,14 +220,16 @@ def test_order_sync_on_sync_no_op() -> None:
 def test_order_sync_tracked_count() -> None:
     sync = OrderSync()
     assert sync.tracked_count == 0
-    sync.track(Order(
-        symbol="BTCUSDT",
-        exchange="binance_usdm",
-        side=OrderSide.BUY,
-        order_type=OrderType.MARKET,
-        quantity=0.01,
-        order_id="o-1",
-    ))
+    sync.track(
+        Order(
+            symbol="BTCUSDT",
+            exchange="binance_usdm",
+            side=OrderSide.BUY,
+            order_type=OrderType.MARKET,
+            quantity=0.01,
+            order_id="o-1",
+        )
+    )
     assert sync.tracked_count == 1
 
 

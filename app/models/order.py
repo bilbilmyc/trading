@@ -25,6 +25,9 @@ class OrderType(str, Enum):
 
 class OrderStatus(str, Enum):
     """订单状态"""
+    SUBMITTING = 'submitting'
+    SUBMITTED = 'submitted'
+    UNKNOWN = 'unknown'
     PENDING = 'pending'
     PARTIALLY_FILLED = 'partially_filled'
     FILLED = 'filled'
@@ -88,7 +91,13 @@ class Order(BaseModel):
     @property
     def is_active(self) -> bool:
         """订单是否仍然活跃"""
-        return self.status in [OrderStatus.PENDING, OrderStatus.PARTIALLY_FILLED]
+        return self.status in [
+            OrderStatus.SUBMITTING,
+            OrderStatus.SUBMITTED,
+            OrderStatus.UNKNOWN,
+            OrderStatus.PENDING,
+            OrderStatus.PARTIALLY_FILLED,
+        ]
 
     @property
     def is_filled(self) -> bool:

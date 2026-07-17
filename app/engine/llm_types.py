@@ -24,6 +24,8 @@ class LLMErrorKind(str, Enum):
     PARSE_ERROR = "parse_error"
     RATE_LIMITED = "rate_limited"
     NETWORK = "network"
+    SAFETY_REJECTED = "safety_rejected"
+    CIRCUIT_OPEN = "circuit_open"
 
 
 @dataclass(frozen=True)
