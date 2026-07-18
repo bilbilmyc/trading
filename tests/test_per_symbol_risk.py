@@ -21,6 +21,7 @@ def _risk_manager(caps: dict | None = None) -> RiskManager:
     cfg = RiskConfig(
         max_position_value=10_000_000.0,  # global default: very high
         max_orders_per_minute=100,         # very high so rate doesn't trigger
+        max_leverage=0.0,                    # each test below controls its own leverage cap
         symbol_overrides=caps or {},
     )
     return RiskManager(cfg)

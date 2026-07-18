@@ -246,6 +246,15 @@ class SQLiteStore:
                 CREATE INDEX IF NOT EXISTS idx_bot_autopilot_budget_date
                     ON bot_autopilot_budget_reservations(budget_date);
 
+                CREATE TABLE IF NOT EXISTS risk_daily_notional_reservations (
+                    client_order_id TEXT PRIMARY KEY,
+                    budget_date TEXT NOT NULL,
+                    notional REAL NOT NULL CHECK (notional > 0),
+                    created_at TEXT NOT NULL
+                );
+                CREATE INDEX IF NOT EXISTS idx_risk_daily_notional_date
+                    ON risk_daily_notional_reservations(budget_date);
+
                 CREATE TABLE IF NOT EXISTS execution_intents (
                     client_order_id TEXT PRIMARY KEY,
                     fingerprint TEXT NOT NULL,
@@ -748,6 +757,65 @@ class SQLiteStore:
             )
             self._conn.commit()
 
+    def _reserve_daily_notional(
+        self,
+        *,
+        table_name: str,
+        key_column: str,
+        reservation_key: str,
+        budget_date: str,
+        notional: float,
+        maximum_notional: float,
+        created_at: str,
+    ) -> tuple[bool, float, bool]:
+        """Atomically reserve a daily notional budget using a fixed internal table.
+
+        The table and key-column arguments are only supplied by the two wrappers
+        below, never from an API request. A durable reservation is intentionally
+        retained when exchange submission is uncertain: freeing it could allow a
+        duplicate live order to exceed the daily cap.
+        """
+        if notional <= 0 or maximum_notional <= 0:
+            raise ValueError("notional and maximum_notional must be positive")
+        with self._lock:
+            self._conn.execute("BEGIN IMMEDIATE")
+            try:
+                existing = self._conn.execute(
+                    f"SELECT notional FROM {table_name} WHERE {key_column} = ?",
+                    (reservation_key,),
+                ).fetchone()
+                if existing is not None:
+                    used = float(
+                        self._conn.execute(
+                            f"SELECT COALESCE(SUM(notional), 0) FROM {table_name} "
+                            "WHERE budget_date = ?",
+                            (budget_date,),
+                        ).fetchone()[0]
+                    )
+                    self._conn.commit()
+                    return True, used - float(existing["notional"]), True
+
+                used = float(
+                    self._conn.execute(
+                        f"SELECT COALESCE(SUM(notional), 0) FROM {table_name} "
+                        "WHERE budget_date = ?",
+                        (budget_date,),
+                    ).fetchone()[0]
+                )
+                if used + notional > maximum_notional:
+                    self._conn.rollback()
+                    return False, used, False
+                self._conn.execute(
+                    f"INSERT INTO {table_name} "
+                    f"({key_column}, budget_date, notional, created_at) VALUES (?, ?, ?, ?)",
+                    (reservation_key, budget_date, notional, created_at),
+                )
+                self._conn.commit()
+                return True, used, False
+            except Exception:
+                self._conn.rollback()
+                raise
+
     def reserve_bot_autopilot_notional(
         self,
         *,
@@ -757,52 +825,36 @@ class SQLiteStore:
         maximum_notional: float,
         created_at: str,
     ) -> tuple[bool, float, bool]:
-        """Atomically reserve an unattended-Bot daily notional budget.
+        """Atomically reserve an unattended-Bot daily notional budget."""
+        return self._reserve_daily_notional(
+            table_name="bot_autopilot_budget_reservations",
+            key_column="decision_id",
+            reservation_key=decision_id,
+            budget_date=budget_date,
+            notional=notional,
+            maximum_notional=maximum_notional,
+            created_at=created_at,
+        )
 
-        Returns ``(allowed, used_before, idempotent)``. A decision ID is a
-        durable reservation key, so retrying the same uncertain submission
-        cannot consume budget twice. Reservations are intentionally not
-        released after an exchange error: when submission outcome is unknown,
-        preserving the cap is safer than risking a duplicate live order.
-        """
-        if notional <= 0 or maximum_notional <= 0:
-            raise ValueError("notional and maximum_notional must be positive")
-        with self._lock:
-            self._conn.execute("BEGIN IMMEDIATE")
-            try:
-                existing = self._conn.execute(
-                    "SELECT notional FROM bot_autopilot_budget_reservations WHERE decision_id = ?",
-                    (decision_id,),
-                ).fetchone()
-                if existing is not None:
-                    used_before = self._conn.execute(
-                        "SELECT COALESCE(SUM(notional), 0) FROM bot_autopilot_budget_reservations "
-                        "WHERE budget_date = ?",
-                        (budget_date,),
-                    ).fetchone()[0]
-                    self._conn.commit()
-                    return True, float(used_before) - float(existing["notional"]), True
-
-                used_before = float(
-                    self._conn.execute(
-                        "SELECT COALESCE(SUM(notional), 0) FROM bot_autopilot_budget_reservations "
-                        "WHERE budget_date = ?",
-                        (budget_date,),
-                    ).fetchone()[0]
-                )
-                if used_before + notional > maximum_notional:
-                    self._conn.rollback()
-                    return False, used_before, False
-                self._conn.execute(
-                    "INSERT INTO bot_autopilot_budget_reservations "
-                    "(decision_id, budget_date, notional, created_at) VALUES (?, ?, ?, ?)",
-                    (decision_id, budget_date, notional, created_at),
-                )
-                self._conn.commit()
-                return True, used_before, False
-            except Exception:
-                self._conn.rollback()
-                raise
+    def reserve_risk_daily_notional(
+        self,
+        *,
+        client_order_id: str,
+        budget_date: str,
+        notional: float,
+        maximum_notional: float,
+        created_at: str,
+    ) -> tuple[bool, float, bool]:
+        """Atomically reserve the shared live-trading daily notional budget."""
+        return self._reserve_daily_notional(
+            table_name="risk_daily_notional_reservations",
+            key_column="client_order_id",
+            reservation_key=client_order_id,
+            budget_date=budget_date,
+            notional=notional,
+            maximum_notional=maximum_notional,
+            created_at=created_at,
+        )
 
     def recent_events(
         self,

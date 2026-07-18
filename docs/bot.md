@@ -95,8 +95,9 @@ Telegram 只推送严格共识的候选动作，避免按周期刷屏。
 4. `ENABLE_LIVE_TRADING=true`、全局 Kill Switch 未开启、账户对账没有未解决差异；
 5. 标的在 `BOT_AUTOPILOT_SYMBOLS` 白名单，且 1h / 5h / 24h 同向；
 6. 请求金额不超过 `BOT_AUTOPILOT_MAX_ORDER_NOTIONAL`、当天累计不超过
-   `BOT_AUTOPILOT_MAX_DAILY_NOTIONAL`，并再次通过全局 `MAX_POSITION_VALUE`
-   和 `RiskManager` 检查。
+   `BOT_AUTOPILOT_MAX_DAILY_NOTIONAL`，并再次通过统一预交易闸门：全局
+   `MAX_POSITION_VALUE`、`MAX_DAILY_ORDER_NOTIONAL`、`MAX_LEVERAGE`、单品种限制、
+   黑名单、交易时段和 `RiskManager` 其他规则。
 
 提交时服务端还要求 `decision_id` 对应一条新鲜、同交易所、同标的、同方向的已审计
 分析记录。同一根已闭合 K 线的相同共识有稳定信号指纹；即使调度器重启后产生新的
@@ -133,7 +134,11 @@ uv run python main.py bot
 | `bot_autopilot_cycle_seconds` | `300` | 分析轮询间隔，范围 60–3600 秒 |
 | `bot_autopilot_min_return_pct` | `0.002` | 每个 1h/5h/24h 窗口的最小绝对趋势阈值（0.2%） |
 | `bot_autopilot_max_order_notional` | `25` | 单笔最大名义金额（USDT） |
-| `bot_autopilot_max_daily_notional` | `100` | 当日 Bot 累计最大名义金额（USDT） |
+| `bot_autopilot_max_daily_notional` | `100` | 当日 Bot 专属累计名义金额（USDT）；仍受跨入口 `MAX_DAILY_ORDER_NOTIONAL` 共同限制 |
+
+通用风险配置（如 `MAX_DAILY_ORDER_NOTIONAL`、`MAX_LEVERAGE`、
+`RISK_BLOCKED_SYMBOLS`）详见[安全指南](security.md#统一预交易风控)和
+[`.env.example`](../.env.example)。
 
 
 ## 静默时段策略

@@ -1,5 +1,6 @@
 from typing import Any
 
+import pytest
 from fastapi.testclient import TestClient
 
 from app.api.server import create_app
@@ -206,6 +207,111 @@ def test_contract_order_reuses_idempotency_result(tmp_path, monkeypatch):
     assert second.json()["idempotent_replay"] is True
     assert exchange.place_calls == 1
     assert conflicting.status_code == 409
+
+
+def test_contract_order_risk_gate_blocks_excessive_leverage_and_audits(tmp_path, monkeypatch):
+    exchange = PreviewExchange()
+    monkeypatch.setattr(ExchangeFactory, "get_or_create", lambda *args, **kwargs: exchange)
+    app = create_app(
+        Settings(
+            sqlite_path=str(tmp_path / "risk-leverage.sqlite3"),
+            enable_live_trading=True,
+            max_leverage=3.0,
+            frontend_static_dir=str(tmp_path / "static"),
+        )
+    )
+
+    with TestClient(app) as client:
+        response = client.post(
+            "/api/v1/contracts/order",
+            json={
+                "exchange": "binance_usdm",
+                "symbol": "BTCUSDT",
+                "intent": "open_long",
+                "quantity": 0.002,
+                "order_type": "market",
+                "leverage": 4,
+                "client_order_id": "risk-leverage-001",
+            },
+        )
+        events = client.get("/api/v1/events/recent?event_type=risk_order_blocked").json()["events"]
+
+    assert response.status_code == 422
+    assert exchange.place_calls == 0
+    assert events[-1]["category"] == "risk"
+    assert events[-1]["details"]["action"] == "place_contract_order"
+    assert "杠杆" in events[-1]["details"]["reason"]
+
+
+def test_spot_order_risk_gate_blocks_blacklisted_symbol_before_submission(tmp_path, monkeypatch):
+    exchange = PreviewExchange()
+    monkeypatch.setattr(ExchangeFactory, "get_or_create", lambda *args, **kwargs: exchange)
+    app = create_app(
+        Settings(
+            sqlite_path=str(tmp_path / "risk-blacklist.sqlite3"),
+            enable_live_trading=True,
+            risk_blocked_symbols=["BTCUSDT"],
+            frontend_static_dir=str(tmp_path / "static"),
+        )
+    )
+
+    with TestClient(app) as client:
+        response = client.post(
+            "/api/v1/order",
+            json={
+                "exchange": "binance_usdm",
+                "symbol": "BTCUSDT",
+                "side": "buy",
+                "order_type": "market",
+                "quantity": 0.002,
+                "client_order_id": "risk-blacklist-001",
+            },
+        )
+        events = client.get("/api/v1/events/recent?event_type=risk_order_blocked").json()["events"]
+
+    assert response.status_code == 422
+    assert exchange.place_calls == 0
+    assert events[-1]["details"]["action"] == "place_order"
+    assert "黑名单" in events[-1]["details"]["reason"]
+
+
+def test_contract_orders_share_atomic_daily_risk_budget(tmp_path, monkeypatch):
+    exchange = PreviewExchange()
+    monkeypatch.setattr(ExchangeFactory, "get_or_create", lambda *args, **kwargs: exchange)
+    app = create_app(
+        Settings(
+            sqlite_path=str(tmp_path / "risk-daily-budget.sqlite3"),
+            enable_live_trading=True,
+            max_daily_order_notional=100.0,
+            frontend_static_dir=str(tmp_path / "static"),
+        )
+    )
+    payload = {
+        "exchange": "binance_usdm",
+        "symbol": "BTCUSDT",
+        "intent": "open_long",
+        "quantity": 0.0006,
+        "order_type": "market",
+        "leverage": 2,
+    }
+
+    with TestClient(app) as client:
+        first = client.post(
+            "/api/v1/contracts/order",
+            json={**payload, "client_order_id": "risk-daily-001"},
+        )
+        blocked = client.post(
+            "/api/v1/contracts/order",
+            json={**payload, "client_order_id": "risk-daily-002"},
+        )
+        events = client.get("/api/v1/events/recent?event_type=risk_order_blocked").json()["events"]
+
+    assert first.status_code == 200
+    assert blocked.status_code == 422
+    assert exchange.place_calls == 1
+    assert events[-1]["details"]["action"] == "place_contract_order"
+    assert events[-1]["details"]["daily_notional_before"] == pytest.approx(60.0)
+    assert events[-1]["details"]["daily_notional_limit"] == 100.0
 
 
 class FailingPreviewExchange(PreviewExchange):
