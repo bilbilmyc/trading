@@ -131,6 +131,8 @@ class Settings(BaseSettings):
     port: int = 8000
     frontend_static_dir: str = "static"
     sqlite_path: str = "data/trading.sqlite3"
+    market_data_catalog_path: str = "data/market_data.duckdb"
+    market_data_parquet_dir: str = "data/market_data"
 
     default_exchange: str = "binance_usdm"
     default_symbol: str = "BTCUSDT"

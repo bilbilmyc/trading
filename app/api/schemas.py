@@ -10,9 +10,10 @@ Route handlers stay in `server.py`; the split is gradual and conservative.
 
 from __future__ import annotations
 
+from datetime import datetime
 from typing import Any
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 # ── Trading orders ────────────────────────────────────────────────
 
@@ -136,10 +137,22 @@ class SizingRequest(BaseModel):
     min_quantity: float = Field(0.001, gt=0)
 
 
-class BacktestRequest(BaseModel):
-    """SMA backtest request; all execution assumptions are explicit."""
+class MarketDataImportRequest(BaseModel):
+    """A single source/symbol/timeframe historical OHLCV dataset."""
 
-    klines: list[dict[str, Any]] = Field(..., min_length=1, max_length=10_000)
+    symbol: str = Field(..., min_length=1, max_length=32)
+    timeframe: str = Field(..., pattern=r"^[1-9][0-9]*[mhdwMHDW]$")
+    source: str = Field(..., min_length=1, max_length=100)
+    candles: list[dict[str, Any]] = Field(..., min_length=1, max_length=100_000)
+
+
+class BacktestRequest(BaseModel):
+    """SMA backtest request from inline candles or an immutable data version."""
+
+    klines: list[dict[str, Any]] | None = Field(None, min_length=1, max_length=10_000)
+    data_version: str | None = Field(None, min_length=3, max_length=80)
+    start: datetime | None = None
+    end: datetime | None = None
     short_window: int = Field(5, gt=0)
     long_window: int = Field(20, gt=0)
     initial_capital: float = Field(10_000.0, gt=0)
@@ -149,6 +162,16 @@ class BacktestRequest(BaseModel):
     max_volume_participation: float | None = Field(None, gt=0.0, le=1.0)
     stop_loss_pct: float | None = Field(None, gt=0.0, lt=1.0)
     take_profit_pct: float | None = Field(None, gt=0.0, lt=1.0)
+
+    @model_validator(mode="after")
+    def _has_exactly_one_data_source(self) -> BacktestRequest:
+        if (self.klines is None) == (self.data_version is None):
+            raise ValueError("provide exactly one of klines or data_version")
+        if self.start and self.end and self.start > self.end:
+            raise ValueError("start must be earlier than or equal to end")
+        if self.klines is not None and (self.start is not None or self.end is not None):
+            raise ValueError("start and end are only supported when data_version is provided")
+        return self
 
 
 class WalkForwardCandidate(BaseModel):
@@ -230,6 +253,7 @@ __all__ = [
     "LLMStrategyCreateRequest",
     "AIAnalyzeRequest",
     "SizingRequest",
+    "MarketDataImportRequest",
     "BacktestRequest",
     "WalkForwardCandidate",
     "WalkForwardRequest",

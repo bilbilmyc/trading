@@ -11,14 +11,17 @@ FastAPI HTTP 入口。
 5. 路由函数通常先从 `state` 取 engine/store/exchange，再调用具体业务方法。
 """
 
+import hashlib
+import json
+import platform
 from collections.abc import Awaitable, Callable
 from contextlib import asynccontextmanager
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any, TypeVar
 
 import httpx
-from fastapi import Depends, FastAPI, HTTPException, Query, Request, Response
+from fastapi import Body, Depends, FastAPI, HTTPException, Query, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from fastapi.staticfiles import StaticFiles
@@ -40,6 +43,7 @@ from app.api.schemas import (
     CustomSourceRequest,
     KillSwitchRequest,
     LLMStrategyCreateRequest,
+    MarketDataImportRequest,
     OrderRequest,
     PaperResetRequest,
     ReconciliationRecoveryRequest,
@@ -61,6 +65,12 @@ from app.engine.trader import TradingEngine
 from app.exchanges.base import ExchangeBase
 from app.exchanges.contract_base import ContractExchangeBase
 from app.exchanges.factory import ExchangeFactory
+from app.market_data import (
+    DatasetNotFoundError,
+    DatasetQualityError,
+    MarketDataCatalog,
+    MarketDataError,
+)
 from app.models.contract import ContractOrderRequest, LiquidityType, MarginMode, PositionSide
 from app.models.order import Order, OrderSide, OrderStatus, OrderType
 from app.strategies.sma import SMAStrategy
@@ -104,6 +114,9 @@ class AppState:
     def __init__(self, settings: Settings):
         self.settings = settings
         self.store = SQLiteStore(settings.sqlite_path)
+        self.market_data = MarketDataCatalog(
+            settings.market_data_catalog_path, settings.market_data_parquet_dir
+        )
         self.trading_guard = LiveTradingGuard(live_trading_enabled=settings.enable_live_trading)
         self.engine = TradingEngine(
             risk_config=RiskConfig(**settings.risk.model_dump()),
@@ -140,6 +153,7 @@ class AppState:
         self.custom_sources: dict[str, Any] = {}
         # In-process TTL cache for slow endpoints (config / capabilities / venues).
         # `name` propagates to qt_cache_events_total{cache="config"`.
+
         self.cache = TTLCache(name="config", default_ttl=30.0)
         # Separate cache for ticker snapshots so the heavy `get_ticker`
         # calls on the default exchange don't pile up at the same TTL
@@ -327,6 +341,7 @@ class AppState:
         for exchange in self.exchanges.values():
             await exchange.close()
         self.exchanges.clear()
+        self.market_data.close()
         self.store.close()
 
 
@@ -1759,9 +1774,118 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             "risk_reward_ratio": r.risk_reward_ratio,
         }
 
-    @app.post("/api/v1/backtest")
-    async def backtest_endpoint(request: BacktestRequest):
-        """Run SMA crossover backtest on supplied klines (no exchange call)."""
+    @app.post(
+        "/api/v1/market-data/datasets",
+        dependencies=[Depends(require_api_key)],
+        status_code=201,
+    )
+    async def import_market_dataset(
+        request: MarketDataImportRequest,
+        state: AppState = Depends(get_state),
+    ):
+        """Import canonical JSON candles into the immutable DuckDB/Parquet catalog."""
+
+        try:
+            dataset = state.market_data.import_candles(
+                request.candles,
+                symbol=request.symbol,
+                timeframe=request.timeframe,
+                source=request.source,
+            )
+        except MarketDataError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        return _public_dataset(dataset)
+
+    @app.post(
+        "/api/v1/market-data/datasets/parquet",
+        dependencies=[Depends(require_api_key)],
+        status_code=201,
+    )
+    async def import_market_dataset_parquet(
+        payload: bytes = Body(..., media_type="application/vnd.apache.parquet"),
+        symbol: str = Query(..., min_length=1, max_length=32),
+        timeframe: str = Query(..., pattern=r"^[1-9][0-9]*[mhdwMHDW]$"),
+        source: str = Query(..., min_length=1, max_length=100),
+        state: AppState = Depends(get_state),
+    ):
+        """Import a raw Parquet payload, then retain only its canonical dataset copy."""
+
+        try:
+            dataset = state.market_data.import_parquet_bytes(
+                payload,
+                symbol=symbol,
+                timeframe=timeframe,
+                source=source,
+            )
+        except MarketDataError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        return _public_dataset(dataset)
+
+    @app.get("/api/v1/market-data/datasets")
+    async def market_datasets_endpoint(
+        state: AppState = Depends(get_state),
+        limit: int = Query(100, ge=1, le=500),
+    ):
+        """List immutable historical dataset versions and their quality status."""
+
+        return {"datasets": [_public_dataset(item) for item in state.market_data.datasets(limit=limit)]}
+
+    @app.get("/api/v1/market-data/datasets/{version}")
+    async def market_dataset_endpoint(version: str, state: AppState = Depends(get_state)):
+        """Return provenance, content hash, and quality report for one dataset version."""
+
+        try:
+            return _public_dataset(state.market_data.dataset(version))
+        except DatasetNotFoundError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+    @app.get("/api/v1/market-data/datasets/{version}/candles")
+    async def market_dataset_candles_endpoint(
+        version: str,
+        state: AppState = Depends(get_state),
+        symbol: str | None = Query(None, min_length=1, max_length=32),
+        timeframe: str | None = Query(None, pattern=r"^[1-9][0-9]*[mhdwMHDW]$"),
+        start: datetime | None = None,
+        end: datetime | None = None,
+    ):
+        """Query a dataset's Parquet candles by symbol, timeframe, and UTC time range."""
+
+        try:
+            candles = state.market_data.query_candles(
+                version,
+                symbol=symbol,
+                timeframe=timeframe,
+                start=start,
+                end=end,
+            )
+        except DatasetNotFoundError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except MarketDataError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        return {"version": version, "candles": candles}
+
+    def _public_dataset(dataset: dict[str, Any]) -> dict[str, Any]:
+        return {key: value for key, value in dataset.items() if key != "parquet_path"}
+
+    def _serialize_kline(kline: dict[str, Any]) -> dict[str, Any]:
+        return {
+            key: value.isoformat() if isinstance(value, datetime) else value
+            for key, value in kline.items()
+        }
+
+    def _strategy_version() -> str:
+        from app.engine import backtest as backtest_module
+
+        return hashlib.sha256(Path(backtest_module.__file__).read_bytes()).hexdigest()
+
+    def _run_backtest(
+        request: BacktestRequest,
+        state: AppState,
+        *,
+        persist: bool,
+    ) -> dict[str, Any]:
+        """Run, fingerprint, and optionally persist a deterministic SMA experiment."""
+
         from app.engine.backtest import run_sma_backtest
 
         if request.short_window >= request.long_window:
@@ -1770,8 +1894,26 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 detail="short_window must be smaller than long_window",
             )
         try:
-            r = run_sma_backtest(
-                candles=request.klines,
+            if request.data_version is not None:
+                candles = state.market_data.query_candles(
+                    request.data_version,
+                    start=request.start,
+                    end=request.end,
+                    require_quality=True,
+                )
+            else:
+                candles = request.klines or []
+            if not candles:
+                raise MarketDataError("the requested dataset range contains no candles")
+            # The simulation core uses `open_time`; catalog rows expose the public
+            # canonical name `timestamp`, so adapt at this boundary without changing
+            # the persisted dataset or the API's canonical response schema.
+            backtest_candles = [
+                {**candle, "open_time": candle.get("open_time", candle.get("timestamp"))}
+                for candle in candles
+            ]
+            result = run_sma_backtest(
+                candles=backtest_candles,
                 short_window=request.short_window,
                 long_window=request.long_window,
                 initial_capital=request.initial_capital,
@@ -1782,37 +1924,33 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 stop_loss_pct=request.stop_loss_pct,
                 take_profit_pct=request.take_profit_pct,
             )
-        except (KeyError, ValueError, TypeError) as exc:
+        except DatasetNotFoundError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except DatasetQualityError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        except (KeyError, MarketDataError, ValueError, TypeError) as exc:
             raise HTTPException(status_code=400, detail=f"Invalid kline data: {exc}") from exc
 
-        def _serialize_kline(k: dict) -> dict:
-            out = {}
-            for key, val in k.items():
-                if isinstance(val, datetime):
-                    out[key] = val.isoformat()
-                else:
-                    out[key] = val
-            return out
-
-        return {
-            "initial_capital": r.initial_capital,
-            "final_equity": r.final_equity,
-            "total_pnl": r.total_pnl,
-            "trades": r.trades,
-            "win_rate": r.win_rate,
-            "max_drawdown": r.max_drawdown,
-            "equity_curve": r.equity_curve,
-            "total_fees": r.total_fees,
-            "gross_pnl": r.gross_pnl,
-            "total_return_pct": r.total_return_pct,
-            "profit_factor": r.profit_factor,
-            "execution_model": {
-                "signal_execution": "next_bar_open",
-                "fee_rate": request.fee_rate,
-                "slippage_rate": request.slippage_rate,
-                "max_volume_participation": request.max_volume_participation,
-                "volume_limit_behavior": "partial_fill_then_cancel",
-            },
+        execution_model = {
+            "signal_execution": "next_bar_open",
+            "fee_rate": request.fee_rate,
+            "slippage_rate": request.slippage_rate,
+            "max_volume_participation": request.max_volume_participation,
+            "volume_limit_behavior": "partial_fill_then_cancel",
+        }
+        payload: dict[str, Any] = {
+            "initial_capital": result.initial_capital,
+            "final_equity": result.final_equity,
+            "total_pnl": result.total_pnl,
+            "trades": result.trades,
+            "win_rate": result.win_rate,
+            "max_drawdown": result.max_drawdown,
+            "equity_curve": result.equity_curve,
+            "total_fees": result.total_fees,
+            "gross_pnl": result.gross_pnl,
+            "total_return_pct": result.total_return_pct,
+            "profit_factor": result.profit_factor,
+            "execution_model": execution_model,
             "trade_history": [
                 {
                     "entry_index": trade.entry_index,
@@ -1827,7 +1965,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                     "net_pnl": trade.net_pnl,
                     "exit_reason": trade.exit_reason,
                 }
-                for trade in r.trade_history
+                for trade in result.trade_history
             ],
             "fill_history": [
                 {
@@ -1843,9 +1981,89 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                     "status": fill.status,
                     "reason": fill.reason,
                 }
-                for fill in r.fill_history
+                for fill in result.fill_history
             ],
-            "klines_used": [_serialize_kline(k) for k in request.klines],
+            "klines_used": [_serialize_kline(kline) for kline in candles],
+            "data_version": request.data_version,
+        }
+        result_hash = hashlib.sha256(
+            json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode()
+        ).hexdigest()
+        payload["result_hash"] = result_hash
+
+        if persist:
+            strategy_parameters = {
+                "short_window": request.short_window,
+                "long_window": request.long_window,
+                "initial_capital": request.initial_capital,
+                "position_size_pct": request.position_size_pct,
+            }
+            risk_model = {
+                "stop_loss_pct": request.stop_loss_pct,
+                "take_profit_pct": request.take_profit_pct,
+            }
+            environment = {
+                "app_version": "0.1.0",
+                "python_version": platform.python_version(),
+                "model_version": "not_applicable:sma_rule",
+                "backtest_engine": "event_driven_simulation_v1",
+            }
+            run_id = state.store.save_backtest_experiment(
+                strategy_name="sma_crossover",
+                strategy_version=_strategy_version(),
+                data_version=request.data_version,
+                data_start=str(backtest_candles[0].get("open_time")) if backtest_candles else None,
+                data_end=str(backtest_candles[-1].get("open_time")) if backtest_candles else None,
+                strategy_parameters=strategy_parameters,
+                execution_model=execution_model,
+                risk_model=risk_model,
+                environment=environment,
+                request=request.model_dump(mode="json", exclude_none=True),
+                result=payload,
+                result_hash=result_hash,
+                created_at=datetime.now(UTC).isoformat().replace("+00:00", "Z"),
+            )
+            payload["backtest_run_id"] = run_id
+        return payload
+
+    @app.post("/api/v1/backtest")
+    async def backtest_endpoint(
+        request: BacktestRequest,
+        state: AppState = Depends(get_state),
+    ):
+        """Run SMA backtest from inline candles or a quality-approved data version."""
+
+        return _run_backtest(request, state, persist=True)
+
+    @app.get("/api/v1/backtests/{run_id}", dependencies=[Depends(require_api_key)])
+    async def backtest_experiment_endpoint(run_id: int, state: AppState = Depends(get_state)):
+        """Fetch the immutable metadata needed to audit one backtest run."""
+
+        run = state.store.backtest_experiment(run_id)
+        if run is None:
+            raise HTTPException(status_code=404, detail=f"Backtest run {run_id} was not found")
+        return run
+
+    @app.post("/api/v1/backtests/{run_id}/reproduce", dependencies=[Depends(require_api_key)])
+    async def reproduce_backtest_endpoint(run_id: int, state: AppState = Depends(get_state)):
+        """Replay a version-bound backtest and report whether the result hash matches."""
+
+        run = state.store.backtest_experiment(run_id)
+        if run is None:
+            raise HTTPException(status_code=404, detail=f"Backtest run {run_id} was not found")
+        if not run["data_version"]:
+            raise HTTPException(
+                status_code=409,
+                detail="only data-version-bound backtests can be reproduced through the catalog",
+            )
+        request = BacktestRequest.model_validate(run["request"])
+        replay = _run_backtest(request, state, persist=False)
+        return {
+            "run_id": run_id,
+            "expected_result_hash": run["result_hash"],
+            "actual_result_hash": replay["result_hash"],
+            "reproducible": replay["result_hash"] == run["result_hash"],
+            "result": replay,
         }
 
     @app.get("/api/v1/strategies/{name}/versions", dependencies=[Depends(require_api_key)])

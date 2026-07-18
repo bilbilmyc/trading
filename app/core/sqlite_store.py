@@ -95,6 +95,27 @@ class SQLiteStore:
                 CREATE INDEX IF NOT EXISTS idx_strategy_backtest_runs_name_time
                     ON strategy_backtest_runs(strategy_name, created_at DESC);
 
+                CREATE TABLE IF NOT EXISTS backtest_experiments (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    strategy_name TEXT NOT NULL,
+                    strategy_version TEXT NOT NULL,
+                    data_version TEXT,
+                    data_start TEXT,
+                    data_end TEXT,
+                    strategy_parameters_json TEXT NOT NULL DEFAULT '{}',
+                    execution_model_json TEXT NOT NULL DEFAULT '{}',
+                    risk_model_json TEXT NOT NULL DEFAULT '{}',
+                    environment_json TEXT NOT NULL DEFAULT '{}',
+                    request_json TEXT NOT NULL DEFAULT '{}',
+                    result_json TEXT NOT NULL DEFAULT '{}',
+                    result_hash TEXT NOT NULL,
+                    created_at TEXT NOT NULL
+                );
+                CREATE INDEX IF NOT EXISTS idx_backtest_experiments_created
+                    ON backtest_experiments(created_at DESC);
+                CREATE INDEX IF NOT EXISTS idx_backtest_experiments_data_version
+                    ON backtest_experiments(data_version, created_at DESC);
+
                 CREATE TABLE IF NOT EXISTS strategy_promotion_reviews (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     strategy_name TEXT NOT NULL,
@@ -477,6 +498,79 @@ class SQLiteStore:
                 "SELECT * FROM strategy_promotion_reviews WHERE id = ?", (review_id,)
             ).fetchone()
         return self._promotion_review_row(row)
+
+    def save_backtest_experiment(
+        self,
+        *,
+        strategy_name: str,
+        strategy_version: str,
+        data_version: str | None,
+        data_start: str | None,
+        data_end: str | None,
+        strategy_parameters: dict[str, Any],
+        execution_model: dict[str, Any],
+        risk_model: dict[str, Any],
+        environment: dict[str, Any],
+        request: dict[str, Any],
+        result: dict[str, Any],
+        result_hash: str,
+        created_at: str,
+    ) -> int:
+        """Persist an immutable, reproducible backtest experiment record."""
+
+        with self._lock:
+            cursor = self._conn.execute(
+                """
+                INSERT INTO backtest_experiments (
+                    strategy_name, strategy_version, data_version, data_start, data_end,
+                    strategy_parameters_json, execution_model_json, risk_model_json,
+                    environment_json, request_json, result_json, result_hash, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    strategy_name,
+                    strategy_version,
+                    data_version,
+                    data_start,
+                    data_end,
+                    _json_dumps(strategy_parameters),
+                    _json_dumps(execution_model),
+                    _json_dumps(risk_model),
+                    _json_dumps(environment),
+                    _json_dumps(request),
+                    _json_dumps(result),
+                    result_hash,
+                    created_at,
+                ),
+            )
+            self._conn.commit()
+            return int(cursor.lastrowid)
+
+    @staticmethod
+    def _backtest_experiment_row(row: sqlite3.Row) -> dict[str, Any]:
+        return {
+            "id": int(row["id"]),
+            "strategy_name": row["strategy_name"],
+            "strategy_version": row["strategy_version"],
+            "data_version": row["data_version"],
+            "data_start": row["data_start"],
+            "data_end": row["data_end"],
+            "strategy_parameters": _json_loads(row["strategy_parameters_json"]),
+            "execution_model": _json_loads(row["execution_model_json"]),
+            "risk_model": _json_loads(row["risk_model_json"]),
+            "environment": _json_loads(row["environment_json"]),
+            "request": _json_loads(row["request_json"]),
+            "result": _json_loads(row["result_json"]),
+            "result_hash": row["result_hash"],
+            "created_at": row["created_at"],
+        }
+
+    def backtest_experiment(self, experiment_id: int) -> dict[str, Any] | None:
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT * FROM backtest_experiments WHERE id = ?", (experiment_id,)
+            ).fetchone()
+        return self._backtest_experiment_row(row) if row else None
 
     def upsert_strategy(self, strategy: dict[str, Any]) -> None:
         with self._lock:
