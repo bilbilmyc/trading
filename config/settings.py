@@ -68,6 +68,13 @@ class RiskSettings(BaseModel):
     max_daily_loss: float = 100.0
     max_drawdown_pct: float = 0.20
     max_orders_per_minute: int = 5
+    max_daily_order_notional: float = 5000.0
+    max_leverage: float = 5.0
+    max_consecutive_losses: int = 0
+    blocked_symbols: tuple[str, ...] = ()
+    trading_start_hour_utc: int = 0
+    trading_end_hour_utc: int = 24
+    symbol_overrides: dict[str, dict[str, float]] = Field(default_factory=dict)
 
 
 class MonitorSettings(BaseModel):
@@ -177,6 +184,17 @@ class Settings(BaseSettings):
     max_daily_loss: float = Field(default=100.0, gt=0)
     max_drawdown_pct: float = Field(default=0.20, gt=0, le=1)
     max_orders_per_minute: int = Field(default=5, gt=0)
+    # Cross-request day budget. Set to 0 only to explicitly disable it.
+    max_daily_order_notional: float = Field(default=5000.0, ge=0)
+    # Explicit leverage is capped for contract orders; 0 disables the global cap.
+    max_leverage: float = Field(default=5.0, ge=0)
+    # 0 leaves the consecutive-loss circuit breaker disabled.
+    max_consecutive_losses: int = Field(default=0, ge=0)
+    # JSON environment values, e.g. RISK_BLOCKED_SYMBOLS=["DOGEUSDT"].
+    risk_blocked_symbols: list[str] = Field(default_factory=list)
+    risk_symbol_overrides: dict[str, dict[str, float]] = Field(default_factory=dict)
+    risk_trading_start_hour_utc: int = Field(default=0, ge=0, le=23)
+    risk_trading_end_hour_utc: int = Field(default=24, ge=1, le=24)
 
     # Monitor / sync intervals
     order_sync_interval_seconds: int = 10
@@ -381,6 +399,13 @@ class Settings(BaseSettings):
             max_daily_loss=self.max_daily_loss,
             max_drawdown_pct=self.max_drawdown_pct,
             max_orders_per_minute=self.max_orders_per_minute,
+            max_daily_order_notional=self.max_daily_order_notional,
+            max_leverage=self.max_leverage,
+            max_consecutive_losses=self.max_consecutive_losses,
+            blocked_symbols=tuple(self.risk_blocked_symbols),
+            trading_start_hour_utc=self.risk_trading_start_hour_utc,
+            trading_end_hour_utc=self.risk_trading_end_hour_utc,
+            symbol_overrides=self.risk_symbol_overrides,
         )
 
     def exchange(self, name: str) -> ExchangeSettings | None:

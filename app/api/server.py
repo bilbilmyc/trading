@@ -612,6 +612,120 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             }
         )
 
+    def reject_pretrade_risk(
+        *,
+        action: str,
+        reason: str,
+        exchange: str,
+        symbol: str,
+        details: dict[str, Any],
+        order_id: str | None = None,
+    ) -> None:
+        """Persist a machine-readable pre-trade rejection before returning 422."""
+        record_event(
+            category="risk",
+            event_type="risk_order_blocked",
+            level="warning",
+            exchange=exchange,
+            symbol=symbol,
+            order_id=order_id,
+            message=f"Pre-trade risk blocked {action}: {reason}",
+            details={"action": action, "reason": reason, **details},
+        )
+        raise HTTPException(status_code=422, detail=f"Pre-trade risk check failed: {reason}")
+
+    async def resolve_reference_price(
+        *,
+        client: ExchangeBase,
+        symbol: str,
+        quantity: float,
+        limit_price: float | None,
+        quote_order_qty: float | None = None,
+    ) -> float:
+        """Return a conservative notional reference without trusting caller input alone."""
+        if limit_price is not None:
+            return float(limit_price)
+        if quote_order_qty is not None:
+            return float(quote_order_qty) / quantity
+
+        ticker = await call_exchange(lambda: client.get_ticker(symbol))
+        for field in ("last_price", "price", "last"):
+            try:
+                reference_price = float(ticker.get(field) or 0.0)
+            except (AttributeError, TypeError, ValueError):
+                reference_price = 0.0
+            if reference_price > 0:
+                return reference_price
+        raise HTTPException(status_code=502, detail="Cannot obtain a valid reference price for risk check")
+
+    async def ensure_pretrade_risk(
+        *,
+        action: str,
+        exchange: str,
+        symbol: str,
+        side: str,
+        quantity: float,
+        reference_price: float,
+        details: dict[str, Any],
+        leverage: float | None = None,
+    ) -> None:
+        """Apply the canonical in-memory rules shared by every live order route."""
+        allowed, reason = await state.engine.risk_manager.check_order(
+            symbol=symbol,
+            side=side,
+            quantity=quantity,
+            price=reference_price,
+            leverage=leverage,
+        )
+        if not allowed:
+            reject_pretrade_risk(
+                action=action,
+                reason=reason,
+                exchange=exchange,
+                symbol=symbol,
+                details={
+                    **details,
+                    "reference_price": reference_price,
+                    "notional": quantity * reference_price,
+                    "leverage": leverage,
+                },
+            )
+
+    def reserve_shared_daily_notional(
+        *,
+        action: str,
+        client_order_id: str,
+        exchange: str,
+        symbol: str,
+        notional: float,
+        details: dict[str, Any],
+    ) -> None:
+        """Atomically reserve the configured cross-route daily live-trading budget."""
+        maximum = state.engine.risk_manager.config.max_daily_order_notional
+        if maximum <= 0:
+            return
+        allowed, used_before, _ = state.store.reserve_risk_daily_notional(
+            client_order_id=client_order_id,
+            budget_date=datetime.now(UTC).date().isoformat(),
+            notional=notional,
+            maximum_notional=maximum,
+            created_at=datetime.now(UTC).isoformat(),
+        )
+        if not allowed:
+            reject_pretrade_risk(
+                action=action,
+                reason="触及单日最大下单名义金额限制",
+                exchange=exchange,
+                symbol=symbol,
+                order_id=client_order_id,
+                details={
+                    **details,
+                    "notional": notional,
+                    "daily_notional_before": used_before,
+                    "daily_notional_limit": maximum,
+                },
+            )
+
     def _intent_status_from_response(response: dict[str, Any]) -> str:
         raw = str(response.get("status") or response.get("state") or "submitted").lower()
         mapping = {
@@ -632,6 +746,29 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             "unknown": "unknown",
         }
         return mapping.get(raw, "submitted")
+
+    def _existing_execution_intent(
+        *,
+        client_order_id: str,
+        request: Any,
+    ) -> dict[str, Any] | None:
+        """Return a validated replay before risk checks without creating an intent.
+
+        A newly blocked request must never leave a durable ``submitting`` intent.
+        The actual claim happens only after risk approval and budget reservation.
+        """
+        existing = state.store.get_execution_intent(client_order_id)
+        if existing is None:
+            return None
+        if existing["fingerprint"] != execution_fingerprint(request):
+            raise HTTPException(
+                status_code=409,
+                detail={
+                    "message": "client_order_id was already used for a different order request.",
+                    "client_order_id": client_order_id,
+                },
+            )
+        return existing
 
     def _claim_execution_intent(
         *,
@@ -1213,8 +1350,6 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             raise HTTPException(status_code=403, detail="Bot autopilot exchange or symbol is not allowed")
         if request.notional > bot.autopilot_max_order_notional:
             raise HTTPException(status_code=422, detail="Bot autopilot single-order notional limit exceeded")
-        if request.notional > state.settings.max_position_value:
-            raise HTTPException(status_code=422, detail="Global maximum position value exceeded")
         if not state.settings.enable_live_trading:
             reject_live_disabled(
                 action="bot_autopilot_order",
@@ -1271,14 +1406,15 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         if reference_price <= 0:
             raise HTTPException(status_code=502, detail="Cannot obtain a valid reference price for Bot order")
         quantity = request.notional / reference_price
-        allowed, reason = await state.engine.risk_manager.check_order(
+        await ensure_pretrade_risk(
+            action="bot_autopilot_order",
+            exchange=exchange,
             symbol=symbol,
             side=side,
             quantity=quantity,
-            price=reference_price,
+            reference_price=reference_price,
+            details=request.model_dump(mode="json"),
         )
-        if not allowed:
-            raise HTTPException(status_code=422, detail=f"Bot autopilot risk check failed: {reason}")
 
         budget_date = datetime.now(UTC).date().isoformat()
         budget_allowed, used_notional, budget_idempotent = state.store.reserve_bot_autopilot_notional(
@@ -1289,7 +1425,27 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             created_at=datetime.now(UTC).isoformat(),
         )
         if not budget_allowed:
-            raise HTTPException(status_code=422, detail="Bot autopilot daily notional limit exceeded")
+            reject_pretrade_risk(
+                action="bot_autopilot_order",
+                reason="Bot autopilot daily notional limit exceeded",
+                exchange=exchange,
+                symbol=symbol,
+                order_id=client_order_id,
+                details={
+                    **request.model_dump(mode="json"),
+                    "notional": request.notional,
+                    "daily_notional_before": used_notional,
+                    "daily_notional_limit": bot.autopilot_max_daily_notional,
+                },
+            )
+        reserve_shared_daily_notional(
+            action="bot_autopilot_order",
+            client_order_id=client_order_id,
+            exchange=exchange,
+            symbol=symbol,
+            notional=request.notional,
+            details=request.model_dump(mode="json"),
+        )
 
         order_request = OrderRequest(
             exchange=exchange,
@@ -1556,6 +1712,38 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             details=request.model_dump(mode="json"),
         )
 
+        existing = _existing_execution_intent(
+            client_order_id=request.client_order_id,
+            request=request,
+        )
+        if existing is not None:
+            return _replay_execution_intent(existing)
+
+        client = state.get_exchange(request.exchange)
+        reference_price = await resolve_reference_price(
+            client=client,
+            symbol=request.symbol,
+            quantity=request.quantity,
+            limit_price=request.price,
+            quote_order_qty=request.quote_order_qty,
+        )
+        await ensure_pretrade_risk(
+            action="place_order",
+            exchange=request.exchange,
+            symbol=request.symbol,
+            side=request.side,
+            quantity=request.quantity,
+            reference_price=reference_price,
+            details=request.model_dump(mode="json"),
+        )
+        reserve_shared_daily_notional(
+            action="place_order",
+            client_order_id=request.client_order_id,
+            exchange=request.exchange,
+            symbol=request.symbol,
+            notional=request.quote_order_qty or request.quantity * reference_price,
+            details=request.model_dump(mode="json"),
+        )
         existing = _claim_execution_intent(
             client_order_id=request.client_order_id,
             request=request,
@@ -1563,8 +1751,6 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         )
         if existing is not None:
             return _replay_execution_intent(existing)
-
-        client = state.get_exchange(request.exchange)
         try:
             result = await call_exchange(
                 lambda: client.place_order(
@@ -1647,6 +1833,37 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
         client = state.get_contract_exchange(request.exchange)
         side, _, _ = client.resolve_order_intent(request.intent)
+        existing = _existing_execution_intent(
+            client_order_id=request.client_order_id,
+            request=request,
+        )
+        if existing is not None:
+            return _replay_execution_intent(existing)
+
+        reference_price = await resolve_reference_price(
+            client=client,
+            symbol=request.symbol,
+            quantity=request.quantity,
+            limit_price=request.price,
+        )
+        await ensure_pretrade_risk(
+            action="place_contract_order",
+            exchange=request.exchange,
+            symbol=request.symbol,
+            side=side,
+            quantity=request.quantity,
+            reference_price=reference_price,
+            leverage=request.leverage,
+            details=request.model_dump(mode="json"),
+        )
+        reserve_shared_daily_notional(
+            action="place_contract_order",
+            client_order_id=request.client_order_id,
+            exchange=request.exchange,
+            symbol=request.symbol,
+            notional=request.quantity * reference_price,
+            details=request.model_dump(mode="json"),
+        )
         existing = _claim_execution_intent(
             client_order_id=request.client_order_id,
             request=request,
@@ -1654,7 +1871,6 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         )
         if existing is not None:
             return _replay_execution_intent(existing)
-
         try:
             result = await call_exchange(
                 lambda: client.place_contract_order(request), is_private=True

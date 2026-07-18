@@ -77,6 +77,28 @@ SQLite 文件位置 `data/trading.sqlite3`：
 
 **未加密存储**：交易所 API key 在 `.env`（明文）、SQLite 存交易历史（明文）。如果设备被入侵，攻击者能读到历史交易和当前 key 引用（虽然 key 不在 SQLite 里）。
 
+## 统一预交易风控
+
+所有真实订单入口（现货、合约和受控 Bot）会在创建执行意图、调用交易所前使用同一
+`RiskManager` 校验。它不是收益保证，而是阻止明显超限、失控或不应交易的请求。
+
+| 控制项 | 环境变量 | 默认值 | 行为 |
+| --- | --- | --- | --- |
+| 单笔名义金额 | `MAX_POSITION_VALUE` | `1000` | 数量 × 参考价格不得超过上限。 |
+| 全路由单日预算 | `MAX_DAILY_ORDER_NOTIONAL` | `5000` | SQLite 原子预留，跨现货、合约和 Bot 累计；`0` 关闭。网络结果不明确时预算会保守保留，等待对账而不是冒险释放。 |
+| 最大杠杆 | `MAX_LEVERAGE` | `5` | 合约下单的全局杠杆上限；`0` 关闭，生产环境不建议关闭。 |
+| 单品种覆盖 | `RISK_SYMBOL_OVERRIDES` | `{}` | JSON 对象，可为某标的收紧 `max_leverage` 或 `max_position_value`。 |
+| 禁交易标的 | `RISK_BLOCKED_SYMBOLS` | `[]` | JSON 数组；匹配后拒绝新订单。 |
+| 交易时段 | `RISK_TRADING_START_HOUR_UTC` / `RISK_TRADING_END_HOUR_UTC` | `0` / `24` | UTC 半开区间 `[start, end)`；默认全天。 |
+| 连续亏损暂停 | `MAX_CONSECUTIVE_LOSSES` | `0` | 达到阈值后拒绝新订单；`0` 关闭。需要将成交后的已实现盈亏持续写入风险状态。 |
+
+风险拦截会返回 HTTP `422`，不会创建待提交的执行意图，也会记录 `risk_order_blocked`
+审计事件（含入口、交易所、标的、触发原因和限额上下文）。幂等重放不会重复扣减
+单日额度；所有配置示例以 [`.env.example`](../.env.example) 为准。
+
+> **上线建议**：先在 testnet 设定很小的 `MAX_DAILY_ORDER_NOTIONAL`、正数
+> `MAX_LEVERAGE` 和明确的标的黑名单；确认审计、对账和 Kill Switch 演练正常后，才逐步调整额度。
+
 ## 风控层（LLM 决策的安全网）
 
 LLM 决策经过 5 重保险：
@@ -84,7 +106,7 @@ LLM 决策经过 5 重保险：
 1. **Symbol 白名单**（`.env` 配置 `LLM_ALLOWED_SYMBOLS`）—— 阻止 typo 错传 symbol
 2. **System message 硬约束**（always on）—— 5 条风控规则写死在 prompt
 3. **风险状态注入**（每次重新拉取）—— LLM 看到 Kill Switch / 日亏 / 回撤，违反时降级 hold
-4. **RiskManager 6 端口**—— 滑动窗口、日亏、回撤、per-symbol 限仓
+4. **RiskManager 统一预交易闸门**—— 单笔/单日名义金额、日亏、回撤、频率、单品种限制、杠杆、黑名单与交易时段
 5. **LiveTradingGuard 全局闸门**—— `ENABLE_LIVE_TRADING=false` 时整个实盘路径被拦
 
 详见 [`docs/llm-architecture.svg`](llm-architecture.svg) 和 [`docs/STATUS.md`](STATUS.md)。

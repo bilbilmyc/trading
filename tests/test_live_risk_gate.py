@@ -2,12 +2,10 @@
 
 from __future__ import annotations
 
-import asyncio
-
 import pytest
 
-from app.engine.risk_manager import RiskConfig, RiskManager
 from app.engine.pipeline_types import RiskDecision
+from app.engine.risk_manager import RiskConfig, RiskManager
 from app.strategies.base import Signal, SignalAction
 
 
