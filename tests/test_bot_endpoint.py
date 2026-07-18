@@ -32,6 +32,16 @@ def test_bot_endpoint_default_disabled_shape(tmp_path):
         "quiet_hours": None,
         "min_alert_level": "warning",
         "alert_fingerprint_cooldown_seconds": 300,
+        "autopilot": {
+            "analysis_enabled": False,
+            "live_order_enabled": False,
+            "exchange": "binance_usdm",
+            "symbols": ["BTCUSDT"],
+            "cycle_seconds": 300,
+            "min_return_pct": 0.002,
+            "max_order_notional": 25.0,
+            "max_daily_notional": 100.0,
+        },
     }
 
 
@@ -102,8 +112,33 @@ def test_payload_helper_matches_endpoint_for_default_settings():
         "quiet_hours",
         "min_alert_level",
         "alert_fingerprint_cooldown_seconds",
+        "autopilot",
     }
     # When no token is set, tail is None (not "" or "    ").
     assert payload["token_tail"] is None
     assert payload["quiet_hours"] is None
     assert payload["allowed_chat_ids"] == []
+
+
+def test_bot_endpoint_exposes_safe_autopilot_limits(tmp_path):
+    with _client(
+        tmp_path,
+        bot_autopilot_enabled=True,
+        bot_autopilot_live_order_enabled=True,
+        bot_autopilot_symbols="BTCUSDT,ETHUSDT",
+        bot_autopilot_cycle_seconds=600,
+        bot_autopilot_max_order_notional=12.5,
+        bot_autopilot_max_daily_notional=50.0,
+    ) as client:
+        payload = client.get("/api/v1/bot").json()
+
+    assert payload["autopilot"] == {
+        "analysis_enabled": True,
+        "live_order_enabled": True,
+        "exchange": "binance_usdm",
+        "symbols": ["BTCUSDT", "ETHUSDT"],
+        "cycle_seconds": 600,
+        "min_return_pct": 0.002,
+        "max_order_notional": 12.5,
+        "max_daily_notional": 50.0,
+    }

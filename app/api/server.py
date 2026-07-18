@@ -40,6 +40,7 @@ from app.api.schemas import (
     AIAnalyzeRequest,
     AIDecisionOutcomeRequest,
     BacktestRequest,
+    BotAutopilotOrderRequest,
     ClosePositionRequest,
     CustomSourceRequest,
     KillSwitchRequest,
@@ -57,6 +58,7 @@ from app.api.schemas import (
     SuggestRequest,
     WalkForwardRequest,
 )
+from app.bot.autopilot import analyze_multi_timeframe
 from app.core.logging import setup_logger
 from app.core.sqlite_store import SQLiteStore
 from app.data_sources.generic_http import GenericHttpDataSource
@@ -98,6 +100,16 @@ def _bot_status_payload(settings: Settings) -> dict[str, Any]:
         "quiet_hours": list(bot.quiet_hours) if bot.quiet_hours is not None else None,
         "min_alert_level": bot.min_alert_level,
         "alert_fingerprint_cooldown_seconds": bot.alert_fingerprint_cooldown_seconds,
+        "autopilot": {
+            "analysis_enabled": bool(bot.autopilot_enabled),
+            "live_order_enabled": bool(bot.autopilot_live_order_enabled),
+            "exchange": bot.autopilot_exchange,
+            "symbols": list(bot.autopilot_symbols),
+            "cycle_seconds": bot.autopilot_cycle_seconds,
+            "min_return_pct": bot.autopilot_min_return_pct,
+            "max_order_notional": bot.autopilot_max_order_notional,
+            "max_daily_notional": bot.autopilot_max_daily_notional,
+        },
     }
 
 
@@ -1099,6 +1111,266 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         return await call_exchange(
             lambda: client.get_klines(symbol, interval=interval, limit=limit)
         )
+
+    def _recent_autopilot_decision(
+        decision_id: str,
+        *,
+        exchange: str,
+        symbol: str,
+        side: str,
+    ) -> dict[str, Any] | None:
+        """Return a fresh matching analysis audit record, otherwise fail closed.
+
+        A Bot caller cannot turn an arbitrary REST request into a trade: the
+        order must refer to a just-recorded, same-symbol actionable decision.
+        """
+        cutoff = datetime.now(UTC) - timedelta(seconds=state.settings.bot.autopilot_cycle_seconds * 2)
+        for event in reversed(state.store.recent_events(category="bot", event_type="autopilot_analysis", limit=500)):
+            details = event.get("details") or {}
+            decision = details.get("decision") or {}
+            if decision.get("decision_id") != decision_id:
+                continue
+            if event.get("exchange") != exchange or event.get("symbol") != symbol:
+                continue
+            if decision.get("action") != side:
+                continue
+            try:
+                timestamp = datetime.fromisoformat(str(event["timestamp"]).replace("Z", "+00:00"))
+            except (KeyError, TypeError, ValueError):
+                continue
+            if timestamp.tzinfo is None:
+                timestamp = timestamp.replace(tzinfo=UTC)
+            if timestamp.astimezone(UTC) >= cutoff:
+                return decision
+        return None
+
+    @app.get("/api/v1/bot/autopilot/analysis", dependencies=[Depends(require_api_key)])
+    async def bot_autopilot_analysis(
+        exchange: str = Query(..., min_length=1, max_length=64),
+        symbol: str = Query(..., min_length=1, max_length=32),
+        state: AppState = Depends(get_state),
+    ) -> dict[str, Any]:
+        """Analyze closed 1h candles for Bot 1h/5h/24h consensus.
+
+        This endpoint never submits an order. It deliberately records every
+        result so an automatic order can later prove which analysis authorized
+        it, and so observe/no-trade decisions remain visible to operators.
+        """
+        bot = state.settings.bot
+        normalized_exchange = exchange.lower()
+        normalized_symbol = symbol.upper()
+        if not bot.autopilot_enabled:
+            raise HTTPException(status_code=409, detail="Bot autopilot analysis is disabled")
+        if normalized_exchange != bot.autopilot_exchange.lower():
+            raise HTTPException(status_code=403, detail="Exchange is not allowed for Bot autopilot")
+        if normalized_symbol not in set(bot.autopilot_symbols):
+            raise HTTPException(status_code=403, detail="Symbol is not allowed for Bot autopilot")
+
+        client = state.data_sources.get(normalized_exchange)
+        if client is None:
+            raise HTTPException(status_code=404, detail=f"Data source not configured: {exchange}")
+        candles = await call_exchange(
+            lambda: client.get_klines(normalized_symbol, interval="1h", limit=26)
+        )
+        # Exchange klines commonly include the currently-forming candle. Drop
+        # it unconditionally so the 1h / 5h / 24h decision only sees closes
+        # that existed when the decision was made.
+        decision = analyze_multi_timeframe(
+            candles[:-1],
+            min_return_pct=bot.autopilot_min_return_pct,
+        )
+        payload = decision.to_dict()
+        record_event(
+            category="bot",
+            event_type="autopilot_analysis",
+            message=f"Bot autopilot analysis: {decision.action.upper()} {normalized_symbol}",
+            exchange=normalized_exchange,
+            symbol=normalized_symbol,
+            details={"decision": payload},
+        )
+        return {
+            "exchange": normalized_exchange,
+            "symbol": normalized_symbol,
+            "live_order_allowed": bool(
+                bot.autopilot_live_order_enabled and state.settings.enable_live_trading
+            ),
+            **payload,
+        }
+
+    @app.post("/api/v1/bot/autopilot/order", dependencies=[Depends(require_api_key)])
+    async def bot_autopilot_order(
+        request: BotAutopilotOrderRequest,
+        state: AppState = Depends(get_state),
+    ) -> dict[str, Any]:
+        """Submit one strictly budgeted Bot market order after an audit-backed decision."""
+        bot = state.settings.bot
+        exchange = request.exchange.lower()
+        symbol = request.symbol.upper()
+        side = request.side.lower()
+        if not bot.autopilot_enabled or not bot.autopilot_live_order_enabled:
+            raise HTTPException(status_code=409, detail="Bot autopilot live orders are disabled")
+        if exchange != bot.autopilot_exchange.lower() or symbol not in set(bot.autopilot_symbols):
+            raise HTTPException(status_code=403, detail="Bot autopilot exchange or symbol is not allowed")
+        if request.notional > bot.autopilot_max_order_notional:
+            raise HTTPException(status_code=422, detail="Bot autopilot single-order notional limit exceeded")
+        if request.notional > state.settings.max_position_value:
+            raise HTTPException(status_code=422, detail="Global maximum position value exceeded")
+        if not state.settings.enable_live_trading:
+            reject_live_disabled(
+                action="bot_autopilot_order",
+                detail="Live trading is disabled. Set ENABLE_LIVE_TRADING=true only after testnet validation.",
+                exchange=exchange,
+                symbol=symbol,
+                details=request.model_dump(mode="json"),
+            )
+        ensure_trading_not_killed(
+            action="bot_autopilot_order",
+            exchange=exchange,
+            symbol=symbol,
+            details=request.model_dump(mode="json"),
+        )
+        ensure_account_reconciled(
+            action="bot_autopilot_order",
+            exchange=exchange,
+            symbol=symbol,
+            details=request.model_dump(mode="json"),
+        )
+        decision = _recent_autopilot_decision(
+            request.decision_id, exchange=exchange, symbol=symbol, side=side
+        )
+        if decision is None:
+            raise HTTPException(status_code=409, detail="No fresh matching Bot autopilot decision")
+        signal_key = str(decision.get("signal_key") or "")
+        if len(signal_key) < 16:
+            raise HTTPException(status_code=409, detail="Bot autopilot decision has no stable signal key")
+        # A random decision ID is intentionally not the idempotency key: the
+        # scheduler may restart and re-analyze the same closed candle. Key the
+        # order and budget to the stable consensus instead, so that retrying
+        # one candle can never create a second live trade.
+        client_order_id = "bot-" + hashlib.sha256(
+            f"{exchange}|{symbol}|{side}|{signal_key}".encode()
+        ).hexdigest()[:32]
+        # Replays must return before ticker/risk checks. Otherwise a Bot restart
+        # could consume rate-limit slots while merely recovering an already
+        # submitted or unknown order; this path never contacts the exchange.
+        existing_intent = state.store.get_execution_intent(client_order_id)
+        if existing_intent is not None:
+            return {**_replay_execution_intent(existing_intent), "autopilot": True}
+
+        if exchange not in state.trading_exchanges:
+            raise HTTPException(
+                status_code=403,
+                detail="Bot autopilot requires a configured private trading exchange",
+            )
+        client = state.get_exchange(exchange)
+        ticker = await call_exchange(lambda: client.get_ticker(symbol))
+        try:
+            reference_price = float(ticker.get("last_price") or ticker.get("price") or 0.0)
+        except (TypeError, ValueError):
+            reference_price = 0.0
+        if reference_price <= 0:
+            raise HTTPException(status_code=502, detail="Cannot obtain a valid reference price for Bot order")
+        quantity = request.notional / reference_price
+        allowed, reason = await state.engine.risk_manager.check_order(
+            symbol=symbol,
+            side=side,
+            quantity=quantity,
+            price=reference_price,
+        )
+        if not allowed:
+            raise HTTPException(status_code=422, detail=f"Bot autopilot risk check failed: {reason}")
+
+        budget_date = datetime.now(UTC).date().isoformat()
+        budget_allowed, used_notional, budget_idempotent = state.store.reserve_bot_autopilot_notional(
+            decision_id=client_order_id,
+            budget_date=budget_date,
+            notional=request.notional,
+            maximum_notional=bot.autopilot_max_daily_notional,
+            created_at=datetime.now(UTC).isoformat(),
+        )
+        if not budget_allowed:
+            raise HTTPException(status_code=422, detail="Bot autopilot daily notional limit exceeded")
+
+        order_request = OrderRequest(
+            exchange=exchange,
+            symbol=symbol,
+            side=side,
+            order_type="market",
+            quantity=quantity,
+            client_order_id=client_order_id,
+        )
+        existing = _claim_execution_intent(
+            client_order_id=client_order_id,
+            request=order_request,
+            side=side,
+        )
+        if existing is not None:
+            return {**_replay_execution_intent(existing), "autopilot": True}
+
+        try:
+            result = await call_exchange(
+                lambda: client.place_order(
+                    symbol=symbol,
+                    side=side,
+                    order_type="market",
+                    quantity=quantity,
+                    price=None,
+                    quote_order_qty=None,
+                    client_order_id=client_order_id,
+                ),
+                is_private=True,
+            )
+        except HTTPException as exc:
+            _mark_submission_unknown(request=order_request, action="bot_autopilot_order", error=exc)
+            raise HTTPException(
+                status_code=502,
+                detail={
+                    "message": "Bot order submission outcome is unknown; do not retry with a new decision id.",
+                    "client_order_id": client_order_id,
+                    "reconciliation_required": True,
+                    "exchange_error": exc.detail,
+                },
+            ) from exc
+
+        response = dict(result)
+        order_id = extract_order_id(response)
+        status = _intent_status_from_response(response)
+        state.store.update_execution_intent(
+            client_order_id,
+            status=status,
+            exchange_order_id=order_id,
+            response=response,
+            clear_error=True,
+        )
+        state.track_execution_intent(client_order_id)
+        record_event(
+            category="bot",
+            event_type="autopilot_order_submitted",
+            message=f"Bot autopilot order submitted: {side.upper()} {quantity:.8f} {symbol}",
+            exchange=exchange,
+            symbol=symbol,
+            order_id=order_id or client_order_id,
+            details={
+                "decision_id": request.decision_id,
+                "notional": request.notional,
+                "reference_price": reference_price,
+                "quantity": quantity,
+                "daily_notional_before": used_notional,
+                "daily_notional_limit": bot.autopilot_max_daily_notional,
+                "daily_budget_reservation_idempotent": budget_idempotent,
+                "single_order_notional_limit": bot.autopilot_max_order_notional,
+                "response": response,
+            },
+        )
+        return {
+            **response,
+            "autopilot": True,
+            "client_order_id": client_order_id,
+            "execution_status": status,
+            "idempotent_replay": False,
+            "reference_price": reference_price,
+            "notional": request.notional,
+        }
 
     @app.get("/api/v1/trades/{exchange}/{symbol}")
     async def get_recent_trades(
