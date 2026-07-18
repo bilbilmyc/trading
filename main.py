@@ -129,7 +129,7 @@ async def run_bot(settings: Settings, engine_url: str | None = None) -> None:
     from app.bot.alerts import BotAlertSubscriber
     from app.bot.config import bot_config_from_settings
     from app.bot.runner import TradingBot
-    from app.bot.scheduler import daily_report_job
+    from app.bot.scheduler import autopilot_job, daily_report_job
     from app.bot.telegram import TelegramProvider
 
     cfg = bot_config_from_settings(settings)
@@ -153,7 +153,10 @@ async def run_bot(settings: Settings, engine_url: str | None = None) -> None:
         provider,
         monitor=None,  # bot 单独启时没有 engine.monitor；alert 推送禁用
         alert_subscriber=alert_subscriber,
-        schedule_jobs=[daily_report_job] if cfg.daily_report_enabled else [],
+        schedule_jobs=[
+            *([daily_report_job] if cfg.daily_report_enabled else []),
+            *([autopilot_job] if cfg.autopilot_enabled else []),
+        ],
     )
     try:
         await bot.run_forever()

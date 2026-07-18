@@ -25,6 +25,7 @@ python -c "import secrets; print(secrets.token_urlsafe(32))"
 | 行情（公开） | `/api/v1/ticker`, `/klines`, `/trades`, `/prices`, `/contracts/*` | 10+ | 否 |
 | 历史行情目录 | `/api/v1/market-data/datasets*` | 6 | 导入为**是**；查询为否 |
 | 风险 | `/api/v1/risk/kill-switch` | 1 | **是** |
+| Bot 自动化 | `/api/v1/bot`, `/api/v1/bot/autopilot/*` | 3 | 自动下单端点**是** |
 | 账户（私有） | `/api/v1/balances/*` | 2 | 否（需配置 key） |
 | 下单 | `/api/v1/order`, `/api/v1/contracts/order` | 2 | **是** |
 | 撤单 | `DELETE /api/v1/order/*`, `DELETE /api/v1/orders/*/open` | 2 | **是** |
@@ -112,6 +113,36 @@ MARKET_DATA_PARQUET_DIR=data/market_data
   "client_order_id": "web-20260717-btc-buy-001"
 }
 ```
+
+
+### 无人值守 Bot 多周期分析与受控订单
+
+- `GET /api/v1/bot` 返回不含密钥的 Bot 状态，以及 `autopilot` 的分析开关、交易所、
+  标的白名单、轮询周期、趋势阈值与单笔/单日预算。
+- `GET /api/v1/bot/autopilot/analysis?exchange=binance_usdm&symbol=BTCUSDT`
+  拉取 26 根 1h K 线并丢弃可能仍在形成的最新一根，以 25 根已闭合 K 线，返回 `1h`、`5h`、`24h` 的趋势结果、`decision_id`、
+  `confidence` 与 `buy` / `sell` / `observe`。该调用只分析并记录 `autopilot_analysis`
+  审计事件，不会下单。
+- `POST /api/v1/bot/autopilot/order` 只接受如下受限请求，并要求 Bearer key（如果已设置）：
+
+```json
+{
+  "exchange": "binance_usdm",
+  "symbol": "BTCUSDT",
+  "side": "buy",
+  "notional": 25,
+  "decision_id": "bot-..."
+}
+```
+
+订单端点不会相信客户端自报的分析结论：它会验证该 `decision_id` 是否对应两轮调度
+窗口内的新鲜、同交易所、同标的、同方向审计记录；并依次检查双开关、实盘总开关、
+Kill Switch、账户对账、白名单、Bot 单笔与单日预算、全局仓位价值和 `RiskManager`。
+任何检查失败返回 4xx 且不会调用交易所。同一根已闭合 K 线的相同共识会映射为固定的
+`client_order_id`，即使重启后形成新的 `decision_id` 也只回放原执行意图，不会再次调用
+交易所。提交结果不明时沿用执行意图账本，返回 502 和固定的 `client_order_id`，不得用
+新的决策 ID 盲目重试。
+
 
 ### 账户与持仓真源对账
 

@@ -91,6 +91,20 @@ class KillSwitchRequest(BaseModel):
     reason: str = Field("manual", min_length=1, max_length=200)
 
 
+class BotAutopilotOrderRequest(BaseModel):
+    """无人值守 Bot 的受限市价单请求。
+
+    仅供 ``/api/v1/bot/autopilot/order`` 使用。名义金额而非数量是 API 的
+    核心输入，服务端会用当前 ticker 计算数量，并执行专属预算和统一风控。
+    """
+
+    exchange: str = Field(..., min_length=1, max_length=64)
+    symbol: str = Field(..., min_length=1, max_length=32)
+    side: str = Field(..., pattern="^(buy|sell)$")
+    notional: float = Field(..., gt=0)
+    decision_id: str = Field(..., min_length=8, max_length=80)
+
+
 # ── LLM strategies ───────────────────────────────────────────────
 
 
@@ -262,6 +276,7 @@ __all__ = [
     "SignalRunnerRequest",
     "PaperResetRequest",
     "KillSwitchRequest",
+    "BotAutopilotOrderRequest",
     "LLMStrategyCreateRequest",
     "AIAnalyzeRequest",
     "SizingRequest",

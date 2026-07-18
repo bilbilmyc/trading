@@ -27,6 +27,14 @@ class BotConfig:
     min_alert_level: str = "warning"
     alert_fingerprint_cooldown_seconds: int = 300
     outbound_scope: str = "monitor"
+    autopilot_enabled: bool = False
+    autopilot_live_order_enabled: bool = False
+    autopilot_exchange: str = "binance_usdm"
+    autopilot_symbols: tuple[str, ...] = ()
+    autopilot_cycle_seconds: int = 300
+    autopilot_min_return_pct: float = 0.002
+    autopilot_max_order_notional: float = 25.0
+    autopilot_max_daily_notional: float = 100.0
 
     def is_chat_allowed(self, chat_id: int) -> bool:
         """白名单：空列表 == 允许所有 chat（仅当显式 trust_open 也为真才推荐）。"""
@@ -69,4 +77,12 @@ def bot_config_from_settings(settings) -> BotConfig:
         min_alert_level=str(bot.min_alert_level),
         alert_fingerprint_cooldown_seconds=int(bot.alert_fingerprint_cooldown_seconds),
         outbound_scope=str(bot.outbound_scope),
+        autopilot_enabled=bool(bot.autopilot_enabled),
+        autopilot_live_order_enabled=bool(bot.autopilot_live_order_enabled),
+        autopilot_exchange=str(bot.autopilot_exchange),
+        autopilot_symbols=tuple(bot.autopilot_symbols or ()),
+        autopilot_cycle_seconds=int(bot.autopilot_cycle_seconds),
+        autopilot_min_return_pct=float(bot.autopilot_min_return_pct),
+        autopilot_max_order_notional=float(bot.autopilot_max_order_notional),
+        autopilot_max_daily_notional=float(bot.autopilot_max_daily_notional),
     )

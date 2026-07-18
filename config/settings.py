@@ -117,6 +117,15 @@ class BotSettings(BaseModel):
     alert_fingerprint_cooldown_seconds: int = 300
     # Scope tag for outgoing API calls (recorded by the server in access logs).
     outbound_scope: str = "monitor"
+    # Unattended autopilot stays analysis/alert-only until BOTH switches are enabled.
+    autopilot_enabled: bool = False
+    autopilot_live_order_enabled: bool = False
+    autopilot_exchange: str = "binance_usdm"
+    autopilot_symbols: tuple[str, ...] = ()
+    autopilot_cycle_seconds: int = Field(default=300, ge=60, le=3600)
+    autopilot_min_return_pct: float = Field(default=0.002, gt=0, le=0.2)
+    autopilot_max_order_notional: float = Field(default=25.0, gt=0)
+    autopilot_max_daily_notional: float = Field(default=100.0, gt=0)
 
 
 class Settings(BaseSettings):
@@ -230,6 +239,16 @@ class Settings(BaseSettings):
     bot_min_alert_level: str = "warning"
     bot_alert_fingerprint_cooldown_seconds: int = 300
     bot_outbound_scope: str = "monitor"
+    # Unattended Bot autopilot. These defaults intentionally keep it in
+    # analysis/alert-only mode; live orders require an additional opt-in.
+    bot_autopilot_enabled: bool = False
+    bot_autopilot_live_order_enabled: bool = False
+    bot_autopilot_exchange: str = "binance_usdm"
+    bot_autopilot_symbols: str = ""              # CSV, empty -> default_symbol
+    bot_autopilot_cycle_seconds: int = Field(default=300, ge=60, le=3600)
+    bot_autopilot_min_return_pct: float = Field(default=0.002, gt=0, le=0.2)
+    bot_autopilot_max_order_notional: float = Field(default=25.0, gt=0)
+    bot_autopilot_max_daily_notional: float = Field(default=100.0, gt=0)
 
     model_config = SettingsConfigDict(
         env_file=".env",
@@ -317,6 +336,13 @@ class Settings(BaseSettings):
                 quiet = (int(start), int(end))
             except (ValueError, AttributeError):
                 quiet = None
+        symbols = tuple(
+            symbol.upper()
+            for symbol in (part.strip() for part in (self.bot_autopilot_symbols or "").split(","))
+            if symbol
+        )
+        if not symbols:
+            symbols = (self.default_symbol.upper(),)
         return BotSettings(
             enabled=self.bot_enabled,
             telegram_token=self.bot_telegram_token,
@@ -333,6 +359,14 @@ class Settings(BaseSettings):
             min_alert_level=self.bot_min_alert_level,
             alert_fingerprint_cooldown_seconds=self.bot_alert_fingerprint_cooldown_seconds,
             outbound_scope=self.bot_outbound_scope,
+            autopilot_enabled=self.bot_autopilot_enabled,
+            autopilot_live_order_enabled=self.bot_autopilot_live_order_enabled,
+            autopilot_exchange=self.bot_autopilot_exchange,
+            autopilot_symbols=symbols,
+            autopilot_cycle_seconds=self.bot_autopilot_cycle_seconds,
+            autopilot_min_return_pct=self.bot_autopilot_min_return_pct,
+            autopilot_max_order_notional=self.bot_autopilot_max_order_notional,
+            autopilot_max_daily_notional=self.bot_autopilot_max_daily_notional,
         )
 
     @property

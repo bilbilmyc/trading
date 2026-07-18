@@ -70,6 +70,72 @@ Telegram 机器人：用 `/status` `/pnl` `/kill` 这类命令遥控本机跑的
 | `bot_alert_fingerprint_cooldown_seconds` | `300` | 相同 (level,category,title) 在窗口内只推一次 |
 | `bot_outbound_scope` | `monitor` | 注入到 `X-Bot-Scope` 头，记录到 access 日志 |
 
+
+## 无人值守多周期分析（1h / 5h / 24h）
+
+从 **2026-07-18** 起，`python main.py bot` 可选地启动受控的无人值守
+分析任务。它每轮只读取 **已闭合的 1 小时 K 线**，并分别计算最近 `1h`、`5h`
+和 `24h` 的收益率：
+
+- 只有三个窗口都上涨且每段都超过 `bot_autopilot_min_return_pct`，才产生 `buy` 候选；
+- 只有三个窗口都下跌且每段都超过该绝对阈值，才产生 `sell` 候选；
+- 数据不足、单个窗口波动过小或趋势不一致时一律为 `observe`，**不会下单**。
+
+这是一套可解释的趋势共识/预测信号，不是对未来收益的承诺，也不会把 LLM 的
+原始输出直接转换成订单。每次分析（包括 `observe`）都会写入 SQLite 审计事件，
+Telegram 只推送严格共识的候选动作，避免按周期刷屏。
+
+### 三层开关与预算
+
+默认只有分析与告警能力。自动实盘订单必须同时满足以下全部条件：
+
+1. `BOT_ENABLED=true` 且 Bot 进程正在运行；
+2. `BOT_AUTOPILOT_ENABLED=true`（允许分析任务）；
+3. `BOT_AUTOPILOT_LIVE_ORDER_ENABLED=true`（单独允许 Bot 提交订单）；
+4. `ENABLE_LIVE_TRADING=true`、全局 Kill Switch 未开启、账户对账没有未解决差异；
+5. 标的在 `BOT_AUTOPILOT_SYMBOLS` 白名单，且 1h / 5h / 24h 同向；
+6. 请求金额不超过 `BOT_AUTOPILOT_MAX_ORDER_NOTIONAL`、当天累计不超过
+   `BOT_AUTOPILOT_MAX_DAILY_NOTIONAL`，并再次通过全局 `MAX_POSITION_VALUE`
+   和 `RiskManager` 检查。
+
+提交时服务端还要求 `decision_id` 对应一条新鲜、同交易所、同标的、同方向的已审计
+分析记录。同一根已闭合 K 线的相同共识有稳定信号指纹；即使调度器重启后产生新的
+`decision_id`，服务端也只会回放既有执行意图，绝不会再次触发下单。网络异常后订单会
+进入既有幂等执行意图与对账流程，调度器本轮不会盲目重试。
+
+建议先使用以下**只告警**配置运行至少数日，再在测试网验证订单、撤单与对账流程：
+
+```dotenv
+BOT_ENABLED=true
+BOT_AUTOPILOT_ENABLED=true
+BOT_AUTOPILOT_LIVE_ORDER_ENABLED=false
+BOT_AUTOPILOT_EXCHANGE=binance_usdm
+BOT_AUTOPILOT_SYMBOLS=BTCUSDT,ETHUSDT
+BOT_AUTOPILOT_CYCLE_SECONDS=300
+BOT_AUTOPILOT_MIN_RETURN_PCT=0.002
+BOT_AUTOPILOT_MAX_ORDER_NOTIONAL=25
+BOT_AUTOPILOT_MAX_DAILY_NOTIONAL=100
+```
+
+启动方式为两个独立进程（先 API，后 Bot）：
+
+```bash
+uv run python main.py api
+uv run python main.py bot
+```
+
+| 字段 | 默认 | 说明 |
+| --- | --- | --- |
+| `bot_autopilot_enabled` | `false` | 多周期分析总开关；不等于可下单 |
+| `bot_autopilot_live_order_enabled` | `false` | Bot 自动实盘下单第二开关 |
+| `bot_autopilot_exchange` | `binance_usdm` | 唯一允许的行情/交易所 |
+| `bot_autopilot_symbols` | 默认标的 | CSV 白名单；留空只使用 `default_symbol` |
+| `bot_autopilot_cycle_seconds` | `300` | 分析轮询间隔，范围 60–3600 秒 |
+| `bot_autopilot_min_return_pct` | `0.002` | 每个 1h/5h/24h 窗口的最小绝对趋势阈值（0.2%） |
+| `bot_autopilot_max_order_notional` | `25` | 单笔最大名义金额（USDT） |
+| `bot_autopilot_max_daily_notional` | `100` | 当日 Bot 累计最大名义金额（USDT） |
+
+
 ## 静默时段策略
 
 `bot_quiet_hours` 同时影响两类消息：
@@ -136,7 +202,8 @@ provider。生产部署建议 bot 与 API 解耦，分别进程跑。）
 - `app/bot/commands.py` — `/status` `/kill` 等命令 handler + `dispatch()`
 - `app/bot/formatter.py` — Engine API JSON → HTML 消息
 - `app/bot/alerts.py` — `BotAlertSubscriber` 主动告警订阅
-- `app/bot/scheduler.py` — `daily_report_job` 后台调度
+- `app/bot/scheduler.py` — `daily_report_job` 与 `autopilot_job` 后台调度
+- `app/bot/autopilot.py` — 可测试的 1h / 5h / 24h 多周期共识分析
 - `app/bot/config.py` — `BotConfig` + `bot_config_from_settings`
 - `app/api/middleware.py` — `ScopeContextMiddleware` access 日志
 - `tests/test_bot.py` — 26 个单测（BotConfig / formatter / dispatch /
