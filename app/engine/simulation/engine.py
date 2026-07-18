@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 from app.engine.simulation.broker import DeterministicBarBroker, ExecutionResult
 from app.engine.simulation.events import (
@@ -13,7 +13,10 @@ from app.engine.simulation.events import (
     OrderIntent,
     SignalEvent,
     SimulationEvent,
+    SimulationOrderStatus,
+    SimulationOrderType,
     SimulationSide,
+    SimulationTimeInForce,
 )
 from app.engine.simulation.models import (
     SimulationConfig,
@@ -21,6 +24,8 @@ from app.engine.simulation.models import (
     SimulationResult,
     SimulationTrade,
 )
+from app.engine.trailing_stop import Side as TrailingSide
+from app.engine.trailing_stop import TrailingStop
 
 
 @dataclass(frozen=True)
@@ -35,10 +40,12 @@ SignalModel = Callable[[Sequence[MarketEvent], int, AccountSnapshot], SignalEven
 
 
 class EventDrivenSimulationEngine:
-    """Run a long-only strategy through market, signal, order and fill events.
+    """Run long-only signals through a deterministic exchange-style lifecycle.
 
-    Signals are evaluated after a bar closes. Market orders created from those
-    signals execute on the following bar's open, preventing same-bar lookahead.
+    Signals are evaluated after a bar closes. Orders become eligible on the
+    next bar plus ``additional_latency_bars``. GTC orders remain active across
+    bars after a partial or non-marketable match; IOC/FOK retain their usual
+    terminal semantics. The model is deterministic by design.
     """
 
     def __init__(self, config: SimulationConfig):
@@ -50,7 +57,8 @@ class EventDrivenSimulationEngine:
         self._order_sequence = 0
         cash = self.config.initial_capital
         position = SimulationPosition()
-        pending_order: OrderIntent | None = None
+        working_orders: list[OrderIntent] = []
+        trailing_stop: TrailingStop | None = None
         equity_curve: list[float] = []
         trades: list[SimulationTrade] = []
         fills: list[FillEvent] = []
@@ -61,20 +69,12 @@ class EventDrivenSimulationEngine:
                 raise ValueError("market indices must be contiguous and start at zero")
             events.append(market)
 
-            if pending_order is not None and pending_order.execute_index == index:
-                execution = self.broker.execute(
-                    pending_order,
-                    market,
-                    cash=cash,
-                    position_quantity=position.quantity,
-                )
-                cash += execution.cash_delta
-                self._apply_fill(position, execution, market, trades)
-                fills.append(execution.fill)
-                events.append(execution.fill)
-                pending_order = None
+            cash, working_orders = self._process_working_orders(
+                working_orders, market, cash, position, trades, fills, events
+            )
+            trailing_stop = self._sync_trailing_stop(trailing_stop, position)
 
-            risk_order = self._risk_order(position, market)
+            risk_order = self._risk_order(position, market, trailing_stop)
             if risk_order is not None:
                 order, trigger_price = risk_order
                 events.append(order)
@@ -85,40 +85,50 @@ class EventDrivenSimulationEngine:
                     position_quantity=position.quantity,
                     raw_price=trigger_price,
                 )
-                cash += execution.cash_delta
-                self._apply_fill(position, execution, market, trades)
-                fills.append(execution.fill)
-                events.append(execution.fill)
+                cash = self._record_execution(
+                    execution, market, cash, position, trades, fills, events
+                )
+                trailing_stop = self._sync_trailing_stop(trailing_stop, position)
 
             equity = cash + position.quantity * market.close
             equity_curve.append(equity)
-            equity_event = EquityEvent(
-                index=index,
-                time=market.time,
-                cash=cash,
-                position_quantity=position.quantity,
-                mark_price=market.close,
-                equity=equity,
+            events.append(
+                EquityEvent(
+                    index=index,
+                    time=market.time,
+                    cash=cash,
+                    position_quantity=position.quantity,
+                    mark_price=market.close,
+                    equity=equity,
+                )
             )
-            events.append(equity_event)
-
             if index == len(markets) - 1:
                 continue
-            snapshot = AccountSnapshot(
-                cash=cash,
-                position_quantity=position.quantity,
-                entry_price=position.entry_price,
-                equity=equity,
+
+            signal = signal_model(
+                markets,
+                index,
+                AccountSnapshot(
+                    cash=cash,
+                    position_quantity=position.quantity,
+                    entry_price=position.entry_price,
+                    equity=equity,
+                ),
             )
-            signal = signal_model(markets, index, snapshot)
             if signal is None:
                 continue
             if signal.index != market.index:
                 raise ValueError("signal index must match the market event being evaluated")
             events.append(signal)
-            pending_order = self._order_from_signal(signal, position, index + 1)
-            if pending_order is not None:
-                events.append(pending_order)
+            if signal.action == "cancel":
+                working_orders = self._cancel_order(
+                    working_orders, signal.cancel_order_id or "", market, fills, events
+                )
+                continue
+            order = self._order_from_signal(signal, position)
+            if order is not None:
+                working_orders.append(order)
+                events.append(order)
 
         if markets and position.is_open:
             market = markets[-1]
@@ -138,14 +148,10 @@ class EventDrivenSimulationEngine:
                 raw_price=market.close,
                 ignore_volume_limit=True,
             )
-            cash += execution.cash_delta
-            self._apply_fill(position, execution, market, trades)
-            fills.append(execution.fill)
-            events.append(execution.fill)
+            cash = self._record_execution(execution, market, cash, position, trades, fills, events)
             if equity_curve:
                 equity_curve[-1] = cash
 
-        max_drawdown = self._max_drawdown(equity_curve)
         return SimulationResult(
             initial_capital=self.config.initial_capital,
             final_equity=cash,
@@ -153,15 +159,80 @@ class EventDrivenSimulationEngine:
             trades=trades,
             fills=fills,
             events=events,
-            max_drawdown=max_drawdown,
+            max_drawdown=self._max_drawdown(equity_curve),
         )
 
-    def _order_from_signal(
+    def _process_working_orders(
         self,
-        signal: SignalEvent,
+        working_orders: list[OrderIntent],
+        market: MarketEvent,
+        cash: float,
         position: SimulationPosition,
-        execute_index: int,
+        trades: list[SimulationTrade],
+        fills: list[FillEvent],
+        events: list[SimulationEvent],
+    ) -> tuple[float, list[OrderIntent]]:
+        next_orders: list[OrderIntent] = []
+        for order in working_orders:
+            if order.execute_index > market.index:
+                next_orders.append(order)
+                continue
+            if order.expires_index is not None and market.index > order.expires_index:
+                self._record_terminal(
+                    order, market, SimulationOrderStatus.EXPIRED, "expired", fills, events
+                )
+                continue
+            execution = self.broker.execute(
+                order, market, cash=cash, position_quantity=position.quantity
+            )
+            cash = self._record_execution(execution, market, cash, position, trades, fills, events)
+            fill = execution.fill
+            if fill.status == SimulationOrderStatus.PENDING:
+                next_orders.append(order)
+            elif fill.status == SimulationOrderStatus.PARTIALLY_FILLED:
+                if order.time_in_force == SimulationTimeInForce.GTC:
+                    next_orders.append(
+                        replace(order, quantity=fill.remaining_quantity, cash_fraction=None)
+                    )
+                else:
+                    self._record_terminal(
+                        order,
+                        market,
+                        SimulationOrderStatus.CANCELLED,
+                        "ioc_remainder_cancelled",
+                        fills,
+                        events,
+                        remaining=fill.remaining_quantity,
+                    )
+        return cash, next_orders
+
+    def _cancel_order(
+        self,
+        working_orders: list[OrderIntent],
+        order_id: str,
+        market: MarketEvent,
+        fills: list[FillEvent],
+        events: list[SimulationEvent],
+    ) -> list[OrderIntent]:
+        remaining: list[OrderIntent] = []
+        for order in working_orders:
+            if order.order_id == order_id:
+                self._record_terminal(
+                    order,
+                    market,
+                    SimulationOrderStatus.CANCELLED,
+                    "cancelled_by_signal",
+                    fills,
+                    events,
+                )
+            else:
+                remaining.append(order)
+        return remaining
+
+    def _order_from_signal(
+        self, signal: SignalEvent, position: SimulationPosition
     ) -> OrderIntent | None:
+        execute_index = signal.index + 1 + self.config.execution.additional_latency_bars
         if signal.action == "enter" and not position.is_open:
             return self._new_order(
                 created_index=signal.index,
@@ -169,6 +240,12 @@ class EventDrivenSimulationEngine:
                 side=SimulationSide.BUY,
                 reason=signal.reason,
                 cash_fraction=self.config.position_size_pct,
+                order_type=signal.order_type,
+                limit_price=signal.limit_price,
+                stop_price=signal.stop_price,
+                post_only=signal.post_only,
+                time_in_force=signal.time_in_force,
+                expires_index=signal.expires_index,
             )
         if signal.action == "exit" and position.is_open:
             return self._new_order(
@@ -177,6 +254,12 @@ class EventDrivenSimulationEngine:
                 side=SimulationSide.SELL,
                 reason=signal.reason,
                 quantity=position.quantity,
+                order_type=signal.order_type,
+                limit_price=signal.limit_price,
+                stop_price=signal.stop_price,
+                post_only=signal.post_only,
+                time_in_force=signal.time_in_force,
+                expires_index=signal.expires_index,
             )
         return None
 
@@ -184,6 +267,7 @@ class EventDrivenSimulationEngine:
         self,
         position: SimulationPosition,
         market: MarketEvent,
+        trailing_stop: TrailingStop | None,
     ) -> tuple[OrderIntent, float] | None:
         if not position.is_open:
             return None
@@ -191,31 +275,58 @@ class EventDrivenSimulationEngine:
         take_pct = self.config.risk.take_profit_pct
         stop_price = position.entry_price * (1 - stop_pct) if stop_pct is not None else None
         take_price = position.entry_price * (1 + take_pct) if take_pct is not None else None
-
         if stop_price is not None and market.low <= stop_price:
-            trigger_price = min(market.open, stop_price)
-            return (
-                self._new_order(
-                    created_index=market.index,
-                    execute_index=market.index,
-                    side=SimulationSide.SELL,
-                    reason="stop_loss",
-                    quantity=position.quantity,
-                ),
-                trigger_price,
+            return self._protective_order(
+                position, market, "stop_loss", min(market.open, stop_price)
             )
         if take_price is not None and market.high >= take_price:
-            return (
-                self._new_order(
-                    created_index=market.index,
-                    execute_index=market.index,
-                    side=SimulationSide.SELL,
-                    reason="take_profit",
-                    quantity=position.quantity,
-                ),
-                take_price,
-            )
+            return self._protective_order(position, market, "take_profit", take_price)
+        if trailing_stop is not None:
+            trailing_stop.update(market.high)
+            trailing_price = trailing_stop.current_stop
+            if trailing_price is not None and market.low <= trailing_price:
+                return self._protective_order(
+                    position, market, "trailing_stop", min(market.open, trailing_price)
+                )
         return None
+
+    def _protective_order(
+        self,
+        position: SimulationPosition,
+        market: MarketEvent,
+        reason: str,
+        trigger_price: float,
+    ) -> tuple[OrderIntent, float]:
+        return (
+            self._new_order(
+                created_index=market.index,
+                execute_index=market.index,
+                side=SimulationSide.SELL,
+                reason=reason,
+                quantity=position.quantity,
+                order_type=SimulationOrderType.MARKET,
+            ),
+            trigger_price,
+        )
+
+    def _sync_trailing_stop(
+        self,
+        trailing_stop: TrailingStop | None,
+        position: SimulationPosition,
+    ) -> TrailingStop | None:
+        if not position.is_open:
+            return None
+        if trailing_stop is not None:
+            return trailing_stop
+        stop_pct = self.config.risk.trailing_stop_pct
+        if stop_pct is None:
+            return None
+        return TrailingStop(
+            side=TrailingSide.LONG,
+            entry_price=position.entry_price,
+            ratchet_pct=stop_pct,
+            activation_pct=self.config.risk.trailing_activation_pct,
+        )
 
     def _new_order(
         self,
@@ -226,6 +337,12 @@ class EventDrivenSimulationEngine:
         reason: str,
         quantity: float | None = None,
         cash_fraction: float | None = None,
+        order_type: SimulationOrderType = SimulationOrderType.MARKET,
+        limit_price: float | None = None,
+        stop_price: float | None = None,
+        post_only: bool = False,
+        time_in_force: SimulationTimeInForce = SimulationTimeInForce.IOC,
+        expires_index: int | None = None,
     ) -> OrderIntent:
         self._order_sequence += 1
         return OrderIntent(
@@ -236,7 +353,57 @@ class EventDrivenSimulationEngine:
             reason=reason,
             quantity=quantity,
             cash_fraction=cash_fraction,
+            order_type=order_type,
+            limit_price=limit_price,
+            stop_price=stop_price,
+            post_only=post_only,
+            time_in_force=time_in_force,
+            expires_index=expires_index,
         )
+
+    @staticmethod
+    def _record_execution(
+        execution: ExecutionResult,
+        market: MarketEvent,
+        cash: float,
+        position: SimulationPosition,
+        trades: list[SimulationTrade],
+        fills: list[FillEvent],
+        events: list[SimulationEvent],
+    ) -> float:
+        cash += execution.cash_delta
+        EventDrivenSimulationEngine._apply_fill(position, execution, market, trades)
+        fills.append(execution.fill)
+        events.append(execution.fill)
+        return cash
+
+    @staticmethod
+    def _record_terminal(
+        order: OrderIntent,
+        market: MarketEvent,
+        status: SimulationOrderStatus,
+        reason: str,
+        fills: list[FillEvent],
+        events: list[SimulationEvent],
+        remaining: float | None = None,
+    ) -> None:
+        quantity = (order.quantity or 0.0) if remaining is None else remaining
+        fill = FillEvent(
+            order_id=order.order_id,
+            index=market.index,
+            time=market.time,
+            side=order.side,
+            requested_quantity=quantity,
+            filled_quantity=0.0,
+            price=market.open,
+            fee=0.0,
+            remaining_quantity=quantity,
+            status=status,
+            reason=reason,
+            order_type=order.order_type,
+        )
+        fills.append(fill)
+        events.append(fill)
 
     @staticmethod
     def _max_drawdown(equity_curve: Sequence[float]) -> float:
@@ -290,7 +457,6 @@ class EventDrivenSimulationEngine:
             position.exit_reason = "mixed"
         if position.is_open:
             return
-
         exit_price = position.exit_notional / position.exit_quantity
         gross_pnl = (exit_price - position.entry_price) * position.entry_quantity
         fees = position.entry_fee + position.exit_fee

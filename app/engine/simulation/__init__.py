@@ -1,4 +1,4 @@
-"""Public simulation primitives."""
+"""Shared event-driven simulation primitives."""
 
 from app.engine.simulation.broker import DeterministicBarBroker, ExecutionResult
 from app.engine.simulation.engine import AccountSnapshot, EventDrivenSimulationEngine, SignalModel
@@ -11,7 +11,9 @@ from app.engine.simulation.events import (
     SimulationEvent,
     SimulationEventType,
     SimulationOrderStatus,
+    SimulationOrderType,
     SimulationSide,
+    SimulationTimeInForce,
 )
 from app.engine.simulation.models import (
     ExecutionModelConfig,
@@ -39,8 +41,10 @@ __all__ = [
     "SimulationEvent",
     "SimulationEventType",
     "SimulationOrderStatus",
+    "SimulationOrderType",
     "SimulationPosition",
     "SimulationResult",
     "SimulationSide",
+    "SimulationTimeInForce",
     "SimulationTrade",
 ]
