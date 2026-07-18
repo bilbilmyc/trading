@@ -185,3 +185,7 @@ data/*.sqlite3
 data/*.sqlite3-*
 data/*.db
 .understand-anything/
+
+data/*.duckdb
+data/*.duckdb-*
+data/market_data/

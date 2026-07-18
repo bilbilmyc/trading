@@ -146,3 +146,19 @@ def test_backtest_endpoint_rejects_invalid_volume_participation() -> None:
         )
 
     assert response.status_code == 422
+
+
+def test_backtest_endpoint_rejects_range_for_inline_klines() -> None:
+    app = create_app(_settings())
+    with TestClient(app) as client:
+        response = client.post(
+            "/api/v1/backtest",
+            json={
+                "klines": _klines([100, 100, 100, 110]),
+                "short_window": 2,
+                "long_window": 3,
+                "start": "2026-01-01T00:00:00Z",
+            },
+        )
+
+    assert response.status_code == 422

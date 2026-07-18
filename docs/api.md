@@ -23,6 +23,7 @@ python -c "import secrets; print(secrets.token_urlsafe(32))"
 | 健康 | `/health`, `/api/v1/health` | 2 | 否 |
 | 配置 | `/api/v1/config`, `/api/v1/exchanges` | 2 | 否 |
 | 行情（公开） | `/api/v1/ticker`, `/klines`, `/trades`, `/prices`, `/contracts/*` | 10+ | 否 |
+| 历史行情目录 | `/api/v1/market-data/datasets*` | 6 | 导入为**是**；查询为否 |
 | 风险 | `/api/v1/risk/kill-switch` | 1 | **是** |
 | 账户（私有） | `/api/v1/balances/*` | 2 | 否（需配置 key） |
 | 下单 | `/api/v1/order`, `/api/v1/contracts/order` | 2 | **是** |
@@ -32,27 +33,7 @@ python -c "import secrets; print(secrets.token_urlsafe(32))"
 | 策略 | `/api/v1/strategies/*` | 10+ | **是**（写） |
 | 信号/事件 | `/api/v1/signals/recent`, `/api/v1/events/recent` | 2 | 否 |
 | 风控计算 | `/api/v1/sizing`, `/api/v1/atr-sizing` | 2 | 否 |
-| 回测/推荐 | `/api/v1/backtest`, `/api/v1/strategies/suggest` | 2 | 否 |
-
-
-### 回测执行假设
-
-`POST /api/v1/backtest` 接收内联 K 线并运行 SMA 双均线回测。除了原有的
-`short_window`、`long_window`、`initial_capital` 与 `position_size_pct` 外，还可传入：
-
-- `fee_rate`：每次成交的费率，默认 `0.001`（0.1%）。
-- `slippage_rate`：不利滑点率，默认 `0`；买入价格上调，卖出价格下调。
-- `max_volume_participation`：可选，限制单次成交最多占当根 K 线成交量的比例；启用后可能产生部分成交。
-- `stop_loss_pct` / `take_profit_pct`：可选的入场价百分比保护阈值。
-
-信号在 K 线收盘后生成，并在**下一根 K 线开盘价**执行，避免以未决策时可见的收盘价成交。
-止盈和止损使用当根 K 线的 high/low 判断；若同一根同时触发，回测保守地按止损成交。
-响应在原有权益曲线和收益字段之外，新增 `total_fees`、`gross_pnl`、
-`total_return_pct`、`profit_factor`、执行假设 `execution_model`、完整成交回执
-`fill_history`，以及包含成交价格、费用、原因和 K 线索引的 `trade_history`。
-`fill_history` 会明确给出请求数量、实际成交数量、剩余数量及 `filled` /
-`partially_filled` / `rejected` 状态。当前成交量限制按单根 K 线 IOC 语义处理：
-未成交余量会报告但不会自动带到下一根 K 线。
+| 回测/实验 | `/api/v1/backtest`, `/api/v1/backtests/*`, `/api/v1/strategies/suggest` | 4 | 读取实验为**是** |
 | 投资组合 | `/api/v1/portfolio/*`, `/api/v1/trade-history` | 3 | 否 |
 | AI | `/api/v1/ai/analyze`, `/api/v1/ai/insights` | 2 | **是** |
 | LLM 策略 | `/api/v1/strategies/llm*` | 3 | **是** |
@@ -61,6 +42,39 @@ python -c "import secrets; print(secrets.token_urlsafe(32))"
 | SSE | `/api/v1/stream/events` | 1 | 否 |
 | 平仓（实盘） | `/api/v1/positions/close` | 1 | **是** |
 | 平仓（模拟盘） | `/api/v1/paper/positions/close` | 1 | **是** |
+
+### 历史行情数据目录
+
+历史行情目录把每个导入数据集写入不可变的 Parquet 文件，并将数据集元数据和查询索引保存在 DuckDB。标准 K 线字段为 `symbol`、`timestamp`、`open`、`high`、`low`、`close`、`volume`、`source`、`timeframe`。`timestamp` 必须带明确时区偏移；服务端统一转换为 UTC 并在 API 响应中以 `Z` 表示。
+
+- `POST /api/v1/market-data/datasets`：导入 JSON K 线，需 API key。请求包含 `symbol`、`timeframe`、`source` 与 `candles`；每根 K 线使用标准字段。
+- `POST /api/v1/market-data/datasets/parquet?symbol=BTCUSDT&timeframe=1h&source=binance`：导入 Parquet 原始请求体，需 API key。Parquet 必须包含标准 K 线字段。
+- `GET /api/v1/market-data/datasets`、`GET /api/v1/market-data/datasets/{version}`：列出或读取数据集元数据。
+- `GET /api/v1/market-data/datasets/{version}/candles?symbol=BTCUSDT&timeframe=1h&start=...&end=...`：按品种、周期和 UTC 时间范围读取版本中的 K 线。
+
+版本号格式为 `md-<内容 SHA-256>`，相同的规范化输入会幂等返回同一个版本。导入时会生成质量报告，检测缺失、重复、倒序、间隔、OHLC 关系、非正价格、异常成交量和 24x7 UTC 交易日历对齐。质量不合格的数据集会被保留以便审计，但不能用于回测；引用它会返回 `409`。
+
+默认目录可通过以下环境变量配置：
+
+```dotenv
+MARKET_DATA_CATALOG_PATH=data/market_data.duckdb
+MARKET_DATA_PARQUET_DIR=data/market_data
+```
+
+### 回测执行假设与可复现性
+
+`POST /api/v1/backtest` 运行 SMA 双均线回测。必须二选一提供 `klines`（向后兼容的内联 K 线）或 `data_version`（质量合格的目录版本）；使用 `data_version` 时可再传 `start` 和 `end` 过滤时间范围。内联 K 线不能传这两个范围字段，避免声明了未实际使用的范围。
+
+除了 `short_window`、`long_window`、`initial_capital` 与 `position_size_pct` 外，还可传入：
+
+- `fee_rate`：每次成交的费率，默认 `0.001`（0.1%）。
+- `slippage_rate`：不利滑点率，默认 `0`；买入价格上调，卖出价格下调。
+- `max_volume_participation`：可选，限制单次成交最多占当根 K 线成交量的比例；启用后可能产生部分成交。
+- `stop_loss_pct` / `take_profit_pct`：可选的入场价百分比保护阈值。
+
+信号在 K 线收盘后生成，并在**下一根 K 线开盘价**执行，避免以未决策时可见的收盘价成交。止盈和止损使用当根 K 线的 high/low 判断；若同一根同时触发，回测保守地按止损成交。响应包括 `total_fees`、`gross_pnl`、`total_return_pct`、`profit_factor`、`execution_model`、`fill_history`、`trade_history`、`result_hash` 与 `backtest_run_id`。
+
+每次回测会保存策略源码版本、策略参数、数据版本及实际范围、执行模型、风险模型、Python/引擎版本、原始请求、结果和结果哈希。使用版本化数据集的实验可通过 `GET /api/v1/backtests/{run_id}` 审计，并用 `POST /api/v1/backtests/{run_id}/reproduce`（二者均需 API key）复跑并比较结果哈希。
 
 ### 真实订单：幂等提交与异常对账
 
