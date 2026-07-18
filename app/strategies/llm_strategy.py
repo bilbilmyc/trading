@@ -36,6 +36,14 @@ class LLMContextProvider(Protocol):
         """Return trade history stats for a symbol (win rate, streaks, ...)."""
         ...
 
+    async def get_backtest_performance(self, symbol: str) -> dict[str, Any] | None:
+        """Return the latest compatible backtest summary when available."""
+        ...
+
+    async def get_recent_ai_decisions(self, symbol: str) -> list[dict[str, Any]] | None:
+        """Return recent decisions and outcomes used for prompt grounding."""
+        ...
+
 
 class LLMStrategy(StrategyBase):
     """基于大模型分析的交易策略。
@@ -58,6 +66,7 @@ class LLMStrategy(StrategyBase):
         max_candles: int = 80,
         allowed_symbols: list[str] | None = None,
         context_provider: LLMContextProvider | None = None,
+        fallback_strategy: StrategyBase | None = None,
     ):
         super().__init__(name=name)
         self.analyzer = analyzer
@@ -74,6 +83,9 @@ class LLMStrategy(StrategyBase):
         # None = those blocks are omitted (backward compat for personal use
         # that doesn't want to wire the engine context in).
         self.context_provider: LLMContextProvider | None = context_provider
+        # Optional deterministic strategy used only when the AI call itself
+        # fails or is safety-rejected. A normal hold/observe never invokes it.
+        self.fallback_strategy = fallback_strategy
 
         # 缓存最近的 K 线数据，键为 symbol
         self._klines: dict[str, list[dict[str, Any]]] = {}
@@ -87,11 +99,15 @@ class LLMStrategy(StrategyBase):
         self._klines.clear()
         self._last_result.clear()
         self._last_signal.clear()
+        if self.fallback_strategy is not None:
+            await self.fallback_strategy.start()
 
     async def stop(self):
         self._klines.clear()
         self._last_result.clear()
         self._last_signal.clear()
+        if self.fallback_strategy is not None:
+            await self.fallback_strategy.stop()
 
     # ── 行情处理 ──────────────────────────────────────────────
 
@@ -103,6 +119,8 @@ class LLMStrategy(StrategyBase):
         self._klines[symbol].append(data)
         # 只保留最近 max_candles 根
         self._klines[symbol] = self._klines[symbol][-self.max_candles:]
+        if self.fallback_strategy is not None:
+            await self.fallback_strategy.on_market_data(symbol, data)
 
     # ── 信号生成 ──────────────────────────────────────────────
 
@@ -142,6 +160,8 @@ class LLMStrategy(StrategyBase):
         # can show the LLM what's actually going on.
         risk_context = None
         trade_history = None
+        backtest_performance = None
+        recent_ai_decisions = None
         if self.context_provider is not None:
             try:
                 risk_context = await self.context_provider.get_risk_context()
@@ -151,6 +171,18 @@ class LLMStrategy(StrategyBase):
                 trade_history = await self.context_provider.get_trade_history(symbol)
             except Exception:
                 trade_history = None
+            get_backtest = getattr(self.context_provider, "get_backtest_performance", None)
+            if get_backtest is not None:
+                try:
+                    backtest_performance = await get_backtest(symbol)
+                except Exception:
+                    backtest_performance = None
+            get_recent_ai = getattr(self.context_provider, "get_recent_ai_decisions", None)
+            if get_recent_ai is not None:
+                try:
+                    recent_ai_decisions = await get_recent_ai(symbol)
+                except Exception:
+                    recent_ai_decisions = None
 
         try:
             result = await self.analyzer.analyze_raw(
@@ -161,16 +193,19 @@ class LLMStrategy(StrategyBase):
                 position_context=None,
                 risk_context=risk_context,
                 trade_history=trade_history,
+                backtest_performance=backtest_performance,
+                recent_ai_decisions=recent_ai_decisions,
             )
         except Exception:
             self._last_result[symbol] = None
-            self._last_signal[symbol] = None
-            return None
+            return await self._rule_fallback(symbol, current_price, "llm_exception")
 
         self._last_result[symbol] = result
+        if result.error_kind is not None:
+            return await self._rule_fallback(symbol, current_price, result.error_kind)
 
         # 决策过滤
-        if result.decision == "hold":
+        if result.decision in {"hold", "observe"}:
             self._last_signal[symbol] = None
             return None
 
@@ -205,6 +240,44 @@ class LLMStrategy(StrategyBase):
             },
         )
 
+        self._update_signal_time(symbol)
+        self._last_signal[symbol] = signal
+        return signal
+
+    async def _rule_fallback(
+        self,
+        symbol: str,
+        current_price: float,
+        failure_reason: str,
+    ) -> Signal | None:
+        """Ask the configured deterministic rule strategy for a safe fallback."""
+        if self.fallback_strategy is None:
+            self._last_signal[symbol] = None
+            return None
+        try:
+            fallback = await self.fallback_strategy.generate_signals(symbol)
+        except Exception:
+            self._last_signal[symbol] = None
+            return None
+        if fallback is None or fallback.action == SignalAction.HOLD:
+            self._last_signal[symbol] = None
+            return None
+        quantity = fallback.quantity or round(self.default_order_amount_usdt / current_price, 6)
+        metadata = dict(fallback.metadata)
+        metadata.update(
+            {
+                "source": "rule_strategy_fallback",
+                "fallback_strategy": self.fallback_strategy.name,
+                "llm_failure": failure_reason,
+            }
+        )
+        signal = fallback.model_copy(
+            update={
+                "quantity": quantity,
+                "price": fallback.price or current_price,
+                "metadata": metadata,
+            }
+        )
         self._update_signal_time(symbol)
         self._last_signal[symbol] = signal
         return signal

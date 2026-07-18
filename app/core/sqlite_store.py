@@ -565,6 +565,14 @@ class SQLiteStore:
             "created_at": row["created_at"],
         }
 
+    def recent_backtest_experiments(self, limit: int = 50) -> list[dict[str, Any]]:
+        """Return bounded experiment history for read-only analysis context."""
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT * FROM backtest_experiments ORDER BY id DESC LIMIT ?", (limit,)
+            ).fetchall()
+        return [self._backtest_experiment_row(row) for row in rows]
+
     def backtest_experiment(self, experiment_id: int) -> dict[str, Any] | None:
         with self._lock:
             row = self._conn.execute(

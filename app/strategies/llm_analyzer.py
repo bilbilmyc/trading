@@ -9,6 +9,7 @@ Internally uses `OpenAIProvider` (retry policy, three-state errors) and
 
 from __future__ import annotations
 
+import json
 import math
 import os
 from collections.abc import Awaitable, Callable
@@ -18,6 +19,10 @@ from decimal import Decimal
 from typing import Any
 
 from app.engine.llm_cache import LLMFingerprintCache
+from app.engine.llm_decision_protocol import (
+    downgrade_duplicate_decision,
+    validate_decision_protocol,
+)
 from app.engine.llm_governor import LLMCallGovernor
 from app.engine.llm_guardrails import validate_trade_decision
 from app.engine.llm_technical_analysis import (
@@ -58,8 +63,10 @@ class LLMAnalyzerConfig:
     default_limit: int = 30
     cache_ttl_seconds: float = 30.0
     cache_max_entries: int = 1024
-    prompt_version: str = "v3"  # technical snapshot + full structured analysis
+    prompt_version: str = "v4"  # versioned structured-decision protocol
     max_compact_rows: int = 30  # rows shipped in prompt body
+    min_actionable_confidence: float = 0.55
+    max_position_pct: float = 0.50
 
 
 # ── Backward-compatible result ──────────────────────────────────────
@@ -95,6 +102,15 @@ class LLMAnalysisResult:
     model: str = ""
     analysis_time: str = ""
     raw_response: str | None = None
+    regime: str = "unknown"
+    reasons: tuple[str, ...] = ()
+    risk_factors: tuple[str, ...] = ()
+    position_size: float = 0.0
+    invalidation_conditions: tuple[str, ...] = ()
+    data_timestamp: str = ""
+    model_version: str = ""
+    prompt_version: str = ""
+    interception_reasons: tuple[str, ...] = ()
 
     # v2 additions
     error_kind: str | None = None
@@ -117,6 +133,7 @@ class _PromptTemplate(str):
 
     def format(self, *args: Any, **kwargs: Any) -> str:
         kwargs.setdefault("technical_section", "- (未提供技术指标快照)")
+        kwargs.setdefault("analysis_input_section", "- (未提供统一分析输入)")
         return super().format(*args, **kwargs)
 
 
@@ -152,6 +169,9 @@ PROMPT_TEMPLATE = _PromptTemplate("""你是一位专业的加密货币永续合�
 ### 引擎计算的技术指标（确定性数据，必须作为证据使用）
 {technical_section}
 
+### 统一 AI 分析输入（审计摘要，必须逐项考虑）
+{analysis_input_section}
+
 ### 最近 K 线数据（紧凑编码：t=时间, o=开, h=高, l=低, c=收, v=量）
 ```
 {candle_data}
@@ -168,15 +188,23 @@ PROMPT_TEMPLATE = _PromptTemplate("""你是一位专业的加密货币永续合�
   "summary": "1-2 句核心观察（中文）",
   "key_support": 数字,
   "key_resistance": 数字,
-  "decision": "buy" | "sell" | "hold",
+  "decision": "buy" | "sell" | "hold" | "observe",
   "confidence": 0.0-1.0,
   "entry_zone": "价格区间，例如 95000-96000",
   "stop_loss": 数字,
   "take_profit": 数字,
   "position_pct": 0.0-1.0,
+  "position_size": 0.0-0.5,
+  "regime": "trending" | "ranging" | "volatile" | "breakout" | "unknown",
+  "reasons": ["最多 6 条核心依据"],
+  "risk_factors": ["最多 6 条风险因素"],
   "bullish_factors": ["最多 3 条看多证据"],
   "bearish_factors": ["最多 3 条看空证据"],
   "invalidation_condition": "使当前判断失效的具体价格或条件",
+  "invalidation_conditions": ["最多 6 条失效条件"],
+  "data_timestamp": "必须原样使用统一输入中的 data_timestamp",
+  "model_version": "模型版本标识",
+  "prompt_version": "v4",
   "reason": "综合趋势、动量、量能、波动率和风控后的操作理由（中文）",
   "risk_level": "low" | "medium" | "high",
   "risk_note": "主要风险点（中文，1-2 句）"
@@ -225,7 +253,8 @@ def _system_message() -> str:
         '"reason":"趋势与价格行为偏弱，但量能不足以确认突破，等待关键位",'
         '"risk_level":"medium","risk_note":"如跌破 49500 支撑需警惕进一步下行"}\n'
         "\n"
-        "请严格按上述 JSON 结构输出。"
+        "请严格按上述 JSON 结构输出，并完整返回 decision、confidence、regime、reasons、risk_factors、"
+        "stop_loss、take_profit、position_size、invalidation_conditions、data_timestamp、model_version、prompt_version。"
     )
 
 
@@ -312,6 +341,10 @@ class LLMAnalyzer:
         # caller). Used by traders / API endpoints to persist the
         # decision as an audit event. Errors here are swallowed.
         self._on_decision = on_decision
+        # Bounded in-memory duplicate barrier. The execution engine still owns
+        # durable idempotency; this prevents the same AI conclusion from
+        # becoming two strategy signals before it reaches that layer.
+        self._recent_action_fingerprints: dict[str, None] = {}
 
     def _select_provider(self) -> OpenAIProvider:
         """Pick provider class by config.base_url prefix."""
@@ -367,6 +400,8 @@ class LLMAnalyzer:
         position_context: dict[str, Any] | None = None,
         risk_context: dict[str, Any] | None = None,
         trade_history: dict[str, Any] | None = None,
+        backtest_performance: dict[str, Any] | None = None,
+        recent_ai_decisions: list[dict[str, Any]] | None = None,
     ) -> LLMAnalysisResult:
         interval = interval or self.config.default_interval
         limit = min(
@@ -403,6 +438,8 @@ class LLMAnalyzer:
             position_context=position_context,
             risk_context=risk_context,
             trade_history=trade_history,
+            backtest_performance=backtest_performance,
+            recent_ai_decisions=recent_ai_decisions,
             exchange=exchange,
         )
 
@@ -415,6 +452,8 @@ class LLMAnalyzer:
         position_context: dict[str, Any] | None = None,
         risk_context: dict[str, Any] | None = None,
         trade_history: dict[str, Any] | None = None,
+        backtest_performance: dict[str, Any] | None = None,
+        recent_ai_decisions: list[dict[str, Any]] | None = None,
         exchange: ExchangeBase | None = None,
     ) -> LLMAnalysisResult:
         preflight = self._preflight_failure()
@@ -425,6 +464,16 @@ class LLMAnalyzer:
 
         position_signature = self._position_signature(position_context)
         technical_snapshot = self._technical_snapshot(klines)
+        analysis_input = self._build_analysis_input(
+            ticker=ticker,
+            klines=klines,
+            position_context=position_context,
+            risk_context=risk_context,
+            trade_history=trade_history,
+            backtest_performance=backtest_performance,
+            recent_ai_decisions=recent_ai_decisions,
+            technical_snapshot=technical_snapshot,
+        )
         last_candle = klines[-1] if klines else {}
         cache_key = LLMFingerprintCache.fingerprint(
             symbol=symbol,
@@ -433,7 +482,12 @@ class LLMAnalyzer:
             position_signature=position_signature,
             prompt_version=self.config.prompt_version,
             context_signature=self._analysis_context_signature(
-                ticker, risk_context, trade_history, technical_snapshot
+                ticker,
+                risk_context,
+                trade_history,
+                technical_snapshot,
+                backtest_performance=backtest_performance,
+                recent_ai_decisions=recent_ai_decisions,
             ),
         )
         cached = self._cache.get(cache_key)
@@ -466,7 +520,10 @@ class LLMAnalyzer:
             position_context=position_context,
             risk_context=risk_context,
             trade_history=trade_history,
+            backtest_performance=backtest_performance,
+            recent_ai_decisions=recent_ai_decisions,
             technical_snapshot=technical_snapshot,
+            analysis_input=analysis_input,
         )
         request = LLMRequest(
             model=self.config.model,
@@ -479,7 +536,15 @@ class LLMAnalyzer:
             response_format_json=True,
         )
         response = await self._provider.complete(request)
+        response = validate_decision_protocol(
+            response,
+            min_confidence=self.config.min_actionable_confidence,
+            max_position_pct=self.config.max_position_pct,
+        )
         response = validate_trade_decision(response, current_price=ticker.get("last_price"))
+        response = self._intercept_duplicate(
+            response, symbol=symbol, interval=interval, data_timestamp=analysis_input["data_timestamp"]
+        )
         self._governor.record_provider_response(response)
         self._record_provider_metrics(response)
         if response.is_ok:
@@ -492,6 +557,7 @@ class LLMAnalyzer:
             exchange=exchange,
             current_price=ticker.get("last_price"),
             technical_indicators=technical_snapshot,
+            analysis_input=analysis_input,
         )
 
     def _preflight_failure(self) -> LLMResponse | None:
@@ -557,6 +623,7 @@ class LLMAnalyzer:
         exchange: ExchangeBase | None,
         current_price: Any = None,
         technical_indicators: dict[str, Any] | None = None,
+        analysis_input: dict[str, Any] | None = None,
     ) -> LLMAnalysisResult:
         """Audit and translate a non-cached provider/preflight response."""
         if self._on_decision is not None:
@@ -585,6 +652,18 @@ class LLMAnalyzer:
                         "latency_ms": response.latency_ms,
                         "failed": response.failed.kind.value if response.failed else None,
                         "cache_hit": False,
+                        "data_timestamp": response.decided.data_timestamp if response.decided else None,
+                        "model_version": (
+                            response.decided.model_version if response.decided else self.config.model
+                        ),
+                        "prompt_version": (
+                            response.decided.prompt_version if response.decided else self.config.prompt_version
+                        ),
+                        "interception_reasons": (
+                            response.decided.interception_reasons if response.decided else ()
+                        ),
+                        "input_summary": analysis_input or {},
+                        "output_summary": self._output_summary(response),
                     }
                 )
             except Exception:
@@ -626,10 +705,23 @@ class LLMAnalyzer:
         position_context: dict[str, Any] | None = None,
         risk_context: dict[str, Any] | None = None,
         trade_history: dict[str, Any] | None = None,
+        backtest_performance: dict[str, Any] | None = None,
+        recent_ai_decisions: list[dict[str, Any]] | None = None,
         technical_snapshot: dict[str, Any] | None = None,
+        analysis_input: dict[str, Any] | None = None,
     ) -> str:
         candle_data = self._render_klines_compact(klines)
         technical_snapshot = technical_snapshot or self._technical_snapshot(klines)
+        analysis_input = analysis_input or self._build_analysis_input(
+            ticker=ticker,
+            klines=klines,
+            position_context=position_context,
+            risk_context=risk_context,
+            trade_history=trade_history,
+            backtest_performance=backtest_performance,
+            recent_ai_decisions=recent_ai_decisions,
+            technical_snapshot=technical_snapshot,
+        )
         if position_context:
             pos_lines = [
                 f"- 持仓方向: {position_context.get('side', '无')}",
@@ -660,6 +752,7 @@ class LLMAnalyzer:
             risk_section=risk_section,
             trade_history_section=trade_history_section,
             technical_section=format_technical_section(technical_snapshot),
+            analysis_input_section=json.dumps(analysis_input, ensure_ascii=False, default=str),
             candle_data=candle_data,
         )
 
@@ -687,6 +780,9 @@ class LLMAnalyzer:
         risk_context: dict[str, Any] | None,
         trade_history: dict[str, Any] | None,
         technical_snapshot: dict[str, Any],
+        *,
+        backtest_performance: dict[str, Any] | None = None,
+        recent_ai_decisions: list[dict[str, Any]] | None = None,
     ) -> dict[str, Any]:
         return {
             "ticker": {
@@ -700,7 +796,96 @@ class LLMAnalyzer:
             },
             "risk": risk_context or {},
             "history": trade_history or {},
+            "backtest": backtest_performance or {},
+            "recent_ai_decisions": recent_ai_decisions or [],
             "technical": technical_snapshot,
+        }
+
+    @staticmethod
+    def _build_analysis_input(
+        *,
+        ticker: dict[str, Any],
+        klines: list[dict[str, Any]],
+        position_context: dict[str, Any] | None,
+        risk_context: dict[str, Any] | None,
+        trade_history: dict[str, Any] | None,
+        backtest_performance: dict[str, Any] | None,
+        recent_ai_decisions: list[dict[str, Any]] | None,
+        technical_snapshot: dict[str, Any],
+    ) -> dict[str, Any]:
+        """Create one serializable, auditable analysis-input envelope."""
+        last_candle = klines[-1] if klines else {}
+        timestamp = last_candle.get("open_time") or ticker.get("timestamp") or datetime.now(UTC).isoformat()
+        atr_pct = technical_snapshot.get("atr_pct")
+        volatility_state = "unknown"
+        try:
+            volatility_state = "high" if float(atr_pct) >= 3 else "low" if float(atr_pct) < 1 else "medium"
+        except (TypeError, ValueError):
+            pass
+        volume_ratio = technical_snapshot.get("volume_ratio")
+        volume_state = "unknown"
+        try:
+            volume_state = "high" if float(volume_ratio) >= 1.2 else "low" if float(volume_ratio) < 0.8 else "normal"
+        except (TypeError, ValueError):
+            pass
+        trend_state = str(technical_snapshot.get("trend_bias") or "neutral")
+        regime = "volatile" if volatility_state == "high" else "trending" if trend_state != "neutral" else "ranging"
+        return {
+            "data_timestamp": str(timestamp),
+            "market_data": {
+                key: ticker.get(key)
+                for key in ("last_price", "price_change_pct_24h", "volume_24h", "quote_volume_24h")
+            },
+            "technical_indicators": technical_snapshot,
+            "trend_state": trend_state,
+            "volatility_state": volatility_state,
+            "volume_state": volume_state,
+            "position": position_context or {"side": "flat", "quantity": 0},
+            "account_risk": risk_context or {},
+            "historical_trade_performance": trade_history or {},
+            "historical_backtest_performance": backtest_performance or {},
+            "market_regime": regime,
+            "recent_ai_decisions": list(recent_ai_decisions or [])[:10],
+        }
+
+    def _intercept_duplicate(
+        self,
+        response: LLMResponse,
+        *,
+        symbol: str,
+        interval: str,
+        data_timestamp: str,
+    ) -> LLMResponse:
+        if response.is_failed or response.decided is None or response.decided.decision not in {"buy", "sell"}:
+            return response
+        decision = response.decided
+        fingerprint = "|".join(
+            (symbol, interval, data_timestamp, decision.decision, str(decision.stop_loss), str(decision.take_profit))
+        )
+        if fingerprint in self._recent_action_fingerprints:
+            return downgrade_duplicate_decision(response)
+        self._recent_action_fingerprints[fingerprint] = None
+        if len(self._recent_action_fingerprints) > 1024:
+            self._recent_action_fingerprints.pop(next(iter(self._recent_action_fingerprints)))
+        return response
+
+    @staticmethod
+    def _output_summary(response: LLMResponse) -> dict[str, Any]:
+        if response.failed:
+            return {"failed": response.failed.kind.value, "reason": response.failed.message}
+        if response.decided is None:
+            return {}
+        decision = response.decided
+        return {
+            "decision": decision.decision,
+            "confidence": decision.confidence,
+            "regime": decision.regime,
+            "reasons": decision.reasons,
+            "risk_factors": decision.risk_factors,
+            "stop_loss": decision.stop_loss,
+            "take_profit": decision.take_profit,
+            "position_size": decision.position_size,
+            "invalidation_conditions": decision.invalidation_conditions,
         }
 
     def _render_klines_compact(self, klines: list[dict[str, Any]]) -> str:
@@ -843,6 +1028,15 @@ class LLMAnalyzer:
             model=d.model,
             analysis_time=now,
             raw_response=d.raw_response,
+            regime=d.regime,
+            reasons=d.reasons,
+            risk_factors=d.risk_factors,
+            position_size=d.position_size,
+            invalidation_conditions=d.invalidation_conditions,
+            data_timestamp=d.data_timestamp,
+            model_version=d.model_version,
+            prompt_version=d.prompt_version,
+            interception_reasons=d.interception_reasons,
             cache_hit=cache_hit,
         )
 

@@ -62,6 +62,17 @@ class LLMDecided:
     invalidation_condition: str = ""
     model: str = ""
     raw_response: str | None = None
+    # Phase 3 structured-decision protocol.  The legacy fields above stay
+    # intact so older providers and API clients keep their existing shape.
+    regime: str = "unknown"
+    reasons: tuple[str, ...] = ()
+    risk_factors: tuple[str, ...] = ()
+    position_size: float = 0.0
+    invalidation_conditions: tuple[str, ...] = ()
+    data_timestamp: str = ""
+    model_version: str = ""
+    prompt_version: str = ""
+    interception_reasons: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)

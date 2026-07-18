@@ -21,7 +21,9 @@ def _client(tmp_path) -> TestClient:
     )
 
 
-def _append_llm_event(store, *, timestamp: str, details: dict) -> None:
+def _append_llm_event(
+    store, *, timestamp: str, details: dict, symbol: str | None = None
+) -> None:
     store.append_event(
         {
             "category": "llm",
@@ -29,6 +31,7 @@ def _append_llm_event(store, *, timestamp: str, details: dict) -> None:
             "level": "warning" if details.get("failed") else "info",
             "message": "LLM audit event",
             "details": details,
+            "symbol": symbol,
             "timestamp": timestamp,
         }
     )
@@ -176,3 +179,52 @@ def test_llm_insights_requires_bearer_token_when_auth_is_enabled(tmp_path) -> No
 
     assert denied.status_code == 401
     assert allowed.status_code == 200
+
+
+def test_ai_decision_history_replay_and_outcome_are_immutable(tmp_path) -> None:
+    with _client(tmp_path) as client:
+        store = client.app.state.trading.store
+        _append_llm_event(
+            store,
+            timestamp=datetime.utcnow().isoformat(),
+            details={
+                "provider": "openai",
+                "model": "gpt-4o-mini",
+                "model_version": "gpt-4o-mini-2026-07",
+                "decision": "buy",
+                "confidence": 0.82,
+                "input_summary": {"symbol": "BTCUSDT"},
+                "output_summary": {"decision": "buy"},
+                "failed": None,
+            },
+            symbol="BTCUSDT",
+        )
+
+        history = client.get("/api/v1/ai/decisions?symbol=BTCUSDT")
+        assert history.status_code == 200, history.text
+        event = history.json()["items"][0]
+        event_id = event["id"]
+
+        outcome = client.post(
+            f"/api/v1/ai/decisions/{event_id}/outcome",
+            json={
+                "outcome_return_pct": 1.25,
+                "mfe_pct": 2.1,
+                "mae_pct": -0.4,
+                "estimated_cost_usd": 0.02,
+                "observation_window": "4h",
+            },
+        )
+        assert outcome.status_code == 200, outcome.text
+        assert outcome.json() == {"decision_event_id": event_id, "recorded": True}
+
+        replay = client.get(f"/api/v1/ai/decisions/{event_id}/replay")
+        assert replay.status_code == 200, replay.text
+        assert replay.json()["decision"]["details"] == event["details"]
+        assert replay.json()["outcome"]["details"]["decision_event_id"] == event_id
+
+        insights = client.get("/api/v1/ai/insights?minutes=60")
+
+    assert insights.status_code == 200, insights.text
+    assert insights.json()["effectiveness"]["evaluated_signals"] == 1
+    assert insights.json()["effectiveness"]["signal_hit_rate"] == 100.0

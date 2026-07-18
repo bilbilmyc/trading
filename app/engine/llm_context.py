@@ -120,3 +120,52 @@ class DefaultLLMContextProvider:
             "max_consecutive_wins": max_w,
             "max_consecutive_losses": max_l,
         }
+
+    async def get_backtest_performance(self, symbol: str) -> dict[str, Any] | None:
+        """Return the newest matching immutable backtest summary for the symbol."""
+        try:
+            runs = self._store.recent_backtest_experiments(limit=50)
+        except Exception:
+            return None
+        for run in runs:
+            request = run.get("request") if isinstance(run.get("request"), dict) else {}
+            if str(request.get("symbol") or "").upper() != symbol.upper():
+                continue
+            result = run.get("result") if isinstance(run.get("result"), dict) else {}
+            return {
+                "experiment_id": run.get("id"),
+                "strategy_name": run.get("strategy_name"),
+                "strategy_version": run.get("strategy_version"),
+                "created_at": run.get("created_at"),
+                "result": result,
+            }
+        return None
+
+    async def get_recent_ai_decisions(self, symbol: str) -> list[dict[str, Any]] | None:
+        """Return a compact, restart-safe AI decision history for prompt context."""
+        try:
+            events = self._store.recent_events(
+                category="llm", event_type="llm_decision", limit=100
+            )
+        except Exception:
+            return None
+        decisions: list[dict[str, Any]] = []
+        for event in reversed(events):
+            if event.get("symbol") != symbol:
+                continue
+            details = event.get("details") if isinstance(event.get("details"), dict) else {}
+            decisions.append(
+                {
+                    "timestamp": event.get("timestamp"),
+                    "decision": details.get("decision"),
+                    "confidence": details.get("confidence"),
+                    "regime": details.get("output_summary", {}).get("regime")
+                    if isinstance(details.get("output_summary"), dict)
+                    else None,
+                    "outcome_return_pct": details.get("outcome_return_pct"),
+                    "failed": details.get("failed"),
+                }
+            )
+            if len(decisions) >= 10:
+                break
+        return decisions or None
