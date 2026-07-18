@@ -13,14 +13,18 @@ from app.engine.simulation.events import FillEvent, SimulationEvent
 class ExecutionModelConfig:
     """Deterministic bar execution assumptions.
 
-    ``max_volume_participation`` is disabled by default to preserve the legacy
-    candle backtest behavior. Set it to a value in ``(0, 1]`` to cap each fill
-    to that fraction of a candle's reported volume.
+    Depth and queue inputs are intentionally conservative synthetic-book
+    controls. They make OHLCV backtests reproducible; they are not a claim to
+    reconstruct a historical exchange order book without L2 data.
     """
 
     fee_rate: float = 0.001
     slippage_rate: float = 0.0
     max_volume_participation: float | None = None
+    additional_latency_bars: int = 0
+    volatile_slippage_multiplier: float = 1.5
+    stressed_slippage_multiplier: float = 2.5
+    queue_position_fraction: float = 0.0
 
     def __post_init__(self) -> None:
         for name, value in (("fee_rate", self.fee_rate), ("slippage_rate", self.slippage_rate)):
@@ -31,20 +35,37 @@ class ExecutionModelConfig:
             not isfinite(participation) or not 0 < participation <= 1
         ):
             raise ValueError("max_volume_participation must be between 0 (exclusive) and 1")
+        if not isinstance(self.additional_latency_bars, int) or self.additional_latency_bars < 0:
+            raise ValueError("additional_latency_bars must be a non-negative integer")
+        for name, value in (
+            ("volatile_slippage_multiplier", self.volatile_slippage_multiplier),
+            ("stressed_slippage_multiplier", self.stressed_slippage_multiplier),
+        ):
+            if not isfinite(value) or value < 1:
+                raise ValueError(f"{name} must be at least 1")
+        if not isfinite(self.queue_position_fraction) or not 0 <= self.queue_position_fraction < 1:
+            raise ValueError("queue_position_fraction must be between 0 and 1")
 
 
 @dataclass(frozen=True)
 class RiskModelConfig:
     stop_loss_pct: float | None = None
     take_profit_pct: float | None = None
+    trailing_stop_pct: float | None = None
+    trailing_activation_pct: float = 0.0
 
     def __post_init__(self) -> None:
         for name, value in (
             ("stop_loss_pct", self.stop_loss_pct),
             ("take_profit_pct", self.take_profit_pct),
+            ("trailing_stop_pct", self.trailing_stop_pct),
         ):
             if value is not None and (not isfinite(value) or not 0 < value < 1):
                 raise ValueError(f"{name} must be between 0 (exclusive) and 1")
+        if not isfinite(self.trailing_activation_pct) or not 0 <= self.trailing_activation_pct < 1:
+            raise ValueError("trailing_activation_pct must be between 0 and 1")
+        if self.trailing_stop_pct is None and self.trailing_activation_pct != 0:
+            raise ValueError("trailing_activation_pct requires trailing_stop_pct")
 
 
 @dataclass(frozen=True)

@@ -61,6 +61,19 @@ MARKET_DATA_CATALOG_PATH=data/market_data.duckdb
 MARKET_DATA_PARQUET_DIR=data/market_data
 ```
 
+### 订单执行仿真内核
+
+`app.engine.simulation` 提供回测、模拟盘适配器共用的确定性订单生命周期。除 SMA 回测默认使用的下一根 K 线 IOC 市价单外，策略可通过 `SignalEvent` 指定以下订单语义：
+
+- 订单类型：`market`、`limit`、`stop_market`、`take_profit_market`；限价单在触及价格时给予价格改善，条件单按照 K 线高低价触发。
+- 有效期：`ioc`、`fok`、`gtc`，以及绝对 `expires_index`。GTC 未成交或部分成交的剩余数量会进入下一根 K 线继续管理；IOC 剩余数量会取消，FOK 在不能全额成交时拒绝。
+- `post_only`：仅限限价单。若限价在当前买一/卖一处会立即吃单，订单会以 `post_only_would_take` 拒绝。
+- 订单取消：策略可发出 `SignalEvent(action="cancel", cancel_order_id="...")`，得到明确的 `cancelled` 状态。
+- 执行成本：`ExecutionModelConfig.additional_latency_bars` 增加信号到可撮合之间的 K 线延迟；`market_regime` 为 `normal`、`volatile` 或 `stressed`，后两种状态可通过滑点乘数放大不利滑点。
+- 流动性：优先使用 `bid_size` / `ask_size` 作为 L1 深度，并可叠加 `max_volume_participation` 成交量上限。被动限价单通过 `queue_position_fraction` 预留前方队列占用的流动性，作为可重复的价格—时间优先级近似。
+
+该模型对齐了主流交易所的核心订单状态和 TIF/Post-only 语义，但不声称在缺少交易所规则版本及历史 L2/L3 逐笔数据时重建真实队列。回测输出应被视为保守、可复现的执行假设，而不是历史撮合逐笔复刻。
+
 ### 回测执行假设与可复现性
 
 `POST /api/v1/backtest` 运行 SMA 双均线回测。必须二选一提供 `klines`（向后兼容的内联 K 线）或 `data_version`（质量合格的目录版本）；使用 `data_version` 时可再传 `start` 和 `end` 过滤时间范围。内联 K 线不能传这两个范围字段，避免声明了未实际使用的范围。
