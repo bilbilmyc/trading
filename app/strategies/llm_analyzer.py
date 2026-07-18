@@ -9,16 +9,24 @@ Internally uses `OpenAIProvider` (retry policy, three-state errors) and
 
 from __future__ import annotations
 
+import math
 import os
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import UTC, datetime
 from decimal import Decimal
 from typing import Any
 
 from app.engine.llm_cache import LLMFingerprintCache
 from app.engine.llm_governor import LLMCallGovernor
 from app.engine.llm_guardrails import validate_trade_decision
+from app.engine.llm_technical_analysis import (
+    format_technical_section,
+    kline_summary,
+    technical_snapshot,
+    true_ranges,
+    valid_klines,
+)
 from app.engine.llm_types import (
     LLMError,
     LLMErrorKind,
@@ -50,7 +58,7 @@ class LLMAnalyzerConfig:
     default_limit: int = 30
     cache_ttl_seconds: float = 30.0
     cache_max_entries: int = 1024
-    prompt_version: str = "v2"  # bumped: compact k-line + system/user split
+    prompt_version: str = "v3"  # technical snapshot + full structured analysis
     max_compact_rows: int = 30  # rows shipped in prompt body
 
 
@@ -69,6 +77,18 @@ class LLMAnalysisResult:
     take_profit: float | None = None
     risk_level: str = "medium"
     risk_note: str = ""
+    trend: str = "neutral"
+    volatility: str = "medium"
+    summary: str = ""
+    key_support: float | None = None
+    key_resistance: float | None = None
+    entry_zone: str = ""
+    position_pct: float = 0.0
+    bullish_factors: tuple[str, ...] = ()
+    bearish_factors: tuple[str, ...] = ()
+    invalidation_condition: str = ""
+    risk_reward_ratio: float | None = None
+    technical_indicators: dict[str, Any] | None = None
     analyzed_symbol: str = ""
     analyzed_interval: str = ""
     candle_count: int = 0
@@ -89,10 +109,18 @@ class LLMAnalysisResult:
         return out
 
 
-# ── Prompt (unchanged from v1 for now; future: compact + split) ────
+# ── Prompt: deterministic indicators + structured model judgment ───
 
 
-PROMPT_TEMPLATE = """你是一位专业的加密货币永续合约交易分析师。请根据以下市场数据给出**结构化的中文交易建议**。
+class _PromptTemplate(str):
+    """Keep direct ``PROMPT_TEMPLATE.format(...)`` calls backward compatible."""
+
+    def format(self, *args: Any, **kwargs: Any) -> str:
+        kwargs.setdefault("technical_section", "- (未提供技术指标快照)")
+        return super().format(*args, **kwargs)
+
+
+PROMPT_TEMPLATE = _PromptTemplate("""你是一位专业的加密货币永续合约交易分析师。请根据以下市场数据给出**结构化的中文交易建议**。
 
 ## 交易规则
 - 只交易 USDT 本位永续合约
@@ -121,6 +149,9 @@ PROMPT_TEMPLATE = """你是一位专业的加密货币永续合约交易分析�
 ### 近期交易表现
 {trade_history_section}
 
+### 引擎计算的技术指标（确定性数据，必须作为证据使用）
+{technical_section}
+
 ### 最近 K 线数据（紧凑编码：t=时间, o=开, h=高, l=低, c=收, v=量）
 ```
 {candle_data}
@@ -143,13 +174,20 @@ PROMPT_TEMPLATE = """你是一位专业的加密货币永续合约交易分析�
   "stop_loss": 数字,
   "take_profit": 数字,
   "position_pct": 0.0-1.0,
-  "reason": "1-2 句操作理由（中文）",
+  "bullish_factors": ["最多 3 条看多证据"],
+  "bearish_factors": ["最多 3 条看空证据"],
+  "invalidation_condition": "使当前判断失效的具体价格或条件",
+  "reason": "综合趋势、动量、量能、波动率和风控后的操作理由（中文）",
   "risk_level": "low" | "medium" | "high",
   "risk_note": "主要风险点（中文，1-2 句）"
 }}
 ```
 
-**重要**: 每条建议必须有具体数字。`stop_loss` / `take_profit` / `key_support` / `key_resistance` 必须是 JSON number（不是字符串）。"""
+**重要**:
+- 先区分“市场观察”和“交易决策”，不能只凭单一指标下结论。
+- `confidence >= 0.7` 必须至少有趋势、动量、量能三类证据中的两类同向。
+- buy/sell 必须给出具体止损、止盈、失效条件，并确保风险收益比合理；证据冲突时返回 hold。
+- `stop_loss` / `take_profit` / `key_support` / `key_resistance` 必须是 JSON number（不是字符串）。""")
 
 
 def _system_message() -> str:
@@ -171,6 +209,9 @@ def _system_message() -> str:
         "3. 当日已实现亏损 ≥ max_daily_loss 时，所有 decision 必须为 hold\n"
         "4. 当前回撤 ≥ max_drawdown_pct 时，建议降级为 hold 或大幅降低 position_pct\n"
         "5. 关键价位（止损/止盈）必须基于近期 K 线高低点，不能凭空给数字\n"
+        "6. 必须交叉验证趋势、动量、成交量和波动率；证据冲突时 decision=hold\n"
+        "7. confidence >= 0.7 时，bullish_factors / bearish_factors 中必须给出至少两条同向证据\n"
+        "8. buy/sell 必须给出明确 invalidation_condition，且不得把预测描述成确定事实\n"
         "\n"
         "## 示例\n"
         "输入摘要：BTCUSDT 1h，价格 50000 附近，连续 3 根 K 线收阴，成交量下降，"
@@ -179,7 +220,9 @@ def _system_message() -> str:
         '{"trend":"bearish","volatility":"medium","summary":"短期趋势转弱，量能不足",'
         '"key_support":49500,"key_resistance":50500,"decision":"hold",'
         '"confidence":0.4,"entry_zone":"--","stop_loss":null,"take_profit":null,'
-        '"position_pct":0.0,"reason":"趋势信号不够明确，等待回调到支撑位再观察",'
+        '"position_pct":0.0,"bullish_factors":[],"bearish_factors":["短期均线向下",'
+        '"连续收阴"],"invalidation_condition":"重新站稳 50500 后弱势判断失效",'
+        '"reason":"趋势与价格行为偏弱，但量能不足以确认突破，等待关键位",'
         '"risk_level":"medium","risk_note":"如跌破 49500 支撑需警惕进一步下行"}\n'
         "\n"
         "请严格按上述 JSON 结构输出。"
@@ -381,6 +424,7 @@ class LLMAnalyzer:
             )
 
         position_signature = self._position_signature(position_context)
+        technical_snapshot = self._technical_snapshot(klines)
         last_candle = klines[-1] if klines else {}
         cache_key = LLMFingerprintCache.fingerprint(
             symbol=symbol,
@@ -388,10 +432,21 @@ class LLMAnalyzer:
             last_candle=last_candle,
             position_signature=position_signature,
             prompt_version=self.config.prompt_version,
+            context_signature=self._analysis_context_signature(
+                ticker, risk_context, trade_history, technical_snapshot
+            ),
         )
         cached = self._cache.get(cache_key)
         if cached is not None and cached.is_ok:
-            return self._translate(cached, symbol, interval, len(klines), cache_hit=True)
+            return self._translate(
+                cached,
+                symbol,
+                interval,
+                len(klines),
+                cache_hit=True,
+                current_price=ticker.get("last_price"),
+                technical_indicators=technical_snapshot,
+            )
 
         governor_failure = self._governor.before_provider_call()
         if governor_failure is not None:
@@ -411,6 +466,7 @@ class LLMAnalyzer:
             position_context=position_context,
             risk_context=risk_context,
             trade_history=trade_history,
+            technical_snapshot=technical_snapshot,
         )
         request = LLMRequest(
             model=self.config.model,
@@ -429,7 +485,13 @@ class LLMAnalyzer:
         if response.is_ok:
             self._cache.put(cache_key, response)
         return await self._finalize_fresh_response(
-            response, symbol, interval, candle_count=len(klines), exchange=exchange
+            response,
+            symbol,
+            interval,
+            candle_count=len(klines),
+            exchange=exchange,
+            current_price=ticker.get("last_price"),
+            technical_indicators=technical_snapshot,
         )
 
     def _preflight_failure(self) -> LLMResponse | None:
@@ -493,6 +555,8 @@ class LLMAnalyzer:
         *,
         candle_count: int,
         exchange: ExchangeBase | None,
+        current_price: Any = None,
+        technical_indicators: dict[str, Any] | None = None,
     ) -> LLMAnalysisResult:
         """Audit and translate a non-cached provider/preflight response."""
         if self._on_decision is not None:
@@ -526,7 +590,15 @@ class LLMAnalyzer:
             except Exception:
                 # Audit failures must never break the trading path.
                 pass
-        return self._translate(response, symbol, interval, candle_count, cache_hit=False)
+        return self._translate(
+            response,
+            symbol,
+            interval,
+            candle_count,
+            cache_hit=False,
+            current_price=current_price,
+            technical_indicators=technical_indicators,
+        )
 
     # ── Internals ──────────────────────────────────────────────
 
@@ -554,8 +626,10 @@ class LLMAnalyzer:
         position_context: dict[str, Any] | None = None,
         risk_context: dict[str, Any] | None = None,
         trade_history: dict[str, Any] | None = None,
+        technical_snapshot: dict[str, Any] | None = None,
     ) -> str:
         candle_data = self._render_klines_compact(klines)
+        technical_snapshot = technical_snapshot or self._technical_snapshot(klines)
         if position_context:
             pos_lines = [
                 f"- 持仓方向: {position_context.get('side', '无')}",
@@ -585,37 +659,48 @@ class LLMAnalyzer:
             position_info=pos_info,
             risk_section=risk_section,
             trade_history_section=trade_history_section,
+            technical_section=format_technical_section(technical_snapshot),
             candle_data=candle_data,
         )
 
     # ── Compact K-line encoding ──────────────────────────────────
 
     @staticmethod
+    def _valid_klines(klines: list[dict[str, Any]]) -> list[dict[str, float | Any]]:
+        return valid_klines(klines)
+
+    @staticmethod
+    def _true_ranges(ordered: list[dict[str, float | Any]]) -> list[float]:
+        return true_ranges(ordered)
+
+    @staticmethod
+    def _technical_snapshot(klines: list[dict[str, Any]]) -> dict[str, Any]:
+        return technical_snapshot(klines)
+
+    @staticmethod
     def _kline_summary(klines: list[dict[str, Any]]) -> dict[str, float]:
-        """Aggregate stats - gives the LLM orientation in 1 line."""
-        if not klines:
-            return {"count": 0}
-        ordered = sorted(klines, key=lambda k: k.get("open_time", ""))
-        closes = [float(k.get("close", 0)) for k in ordered]
-        highs = [float(k.get("high", 0)) for k in ordered]
-        lows = [float(k.get("low", 0)) for k in ordered]
-        n = len(ordered)
-        # Average True Range (rough)
-        trs = []
-        for k in ordered:
-            tr = max(
-                float(k.get("high", 0)) - float(k.get("low", 0)),
-                abs(float(k.get("high", 0)) - float(k.get("close", 0))),
-                abs(float(k.get("low", 0)) - float(k.get("close", 0))),
-            )
-            trs.append(tr)
+        return kline_summary(klines)
+
+    @staticmethod
+    def _analysis_context_signature(
+        ticker: dict[str, Any],
+        risk_context: dict[str, Any] | None,
+        trade_history: dict[str, Any] | None,
+        technical_snapshot: dict[str, Any],
+    ) -> dict[str, Any]:
         return {
-            "count": n,
-            "first_close": closes[0],
-            "last_close": closes[-1],
-            "max_high": max(highs),
-            "min_low": min(lows),
-            "atr": sum(trs) / n if n else 0.0,
+            "ticker": {
+                key: ticker.get(key)
+                for key in (
+                    "last_price",
+                    "price_change_pct_24h",
+                    "volume_24h",
+                    "quote_volume_24h",
+                )
+            },
+            "risk": risk_context or {},
+            "history": trade_history or {},
+            "technical": technical_snapshot,
         }
 
     def _render_klines_compact(self, klines: list[dict[str, Any]]) -> str:
@@ -629,11 +714,12 @@ class LLMAnalyzer:
         Summary header + up to max_compact_rows body lines. Roughly half the
         size of the old aligned-table format.
         """
-        if not klines:
+        valid = self._valid_klines(klines)
+        if not valid:
             return ""
-        ordered = sorted(klines, key=lambda k: k.get("open_time", ""), reverse=True)
+        ordered = sorted(valid, key=lambda k: str(k.get("open_time", "")), reverse=True)
         rows = ordered[: self.config.max_compact_rows]
-        summary = self._kline_summary(klines)
+        summary = self._kline_summary(valid)
         header = (
             f"#K n={summary['count']} "
             f"first={summary['first_close']:.2f} "
@@ -668,14 +754,41 @@ class LLMAnalyzer:
         return f"{side}:{qty}:{avg}"
 
     @staticmethod
+    def _risk_reward_ratio(
+        decision: str, current_price: Any, stop_loss: Any, take_profit: Any
+    ) -> float | None:
+        try:
+            price = float(current_price)
+            stop = float(stop_loss)
+            target = float(take_profit)
+        except (TypeError, ValueError):
+            return None
+        if not all(math.isfinite(value) for value in (price, stop, target)):
+            return None
+        if min(price, stop, target) <= 0:
+            return None
+        if decision == "buy" and stop < price < target:
+            risk = price - stop
+            reward = target - price
+        elif decision == "sell" and target < price < stop:
+            risk = stop - price
+            reward = price - target
+        else:
+            return None
+        return round(reward / risk, 2) if risk > 0 else None
+
+    @staticmethod
     def _translate(
         response: LLMResponse,
         symbol: str,
         interval: str,
         candle_count: int,
         cache_hit: bool,
+        *,
+        current_price: Any = None,
+        technical_indicators: dict[str, Any] | None = None,
     ) -> LLMAnalysisResult:
-        now = datetime.utcnow().isoformat()
+        now = datetime.now(UTC).isoformat()
         if response.is_failed:
             err = response.failed
             return LLMAnalysisResult(
@@ -684,6 +797,7 @@ class LLMAnalyzer:
                 reason=f"[{err.kind.value}] {err.message}",
                 risk_level="high",
                 risk_note="API 异常" if err.kind != LLMErrorKind.API_KEY_MISSING else "未配置",
+                technical_indicators=technical_indicators,
                 analyzed_symbol=symbol,
                 analyzed_interval=interval,
                 candle_count=candle_count,
@@ -691,14 +805,38 @@ class LLMAnalyzer:
                 error_kind=err.kind.value,
             )
         d = response.decided
+        try:
+            suggested_price = float(current_price)
+        except (TypeError, ValueError):
+            suggested_price = None
+        if suggested_price is not None and (
+            not math.isfinite(suggested_price) or suggested_price <= 0
+        ):
+            suggested_price = None
         return LLMAnalysisResult(
             decision=d.decision,
             confidence=d.confidence,
             reason=d.reason,
+            suggested_action=d.decision,
+            suggested_price=suggested_price,
             stop_loss=d.stop_loss,
             take_profit=d.take_profit,
             risk_level=d.risk_level,
             risk_note=d.risk_note,
+            trend=d.trend,
+            volatility=d.volatility,
+            summary=d.summary,
+            key_support=d.key_support,
+            key_resistance=d.key_resistance,
+            entry_zone=d.entry_zone,
+            position_pct=d.position_pct,
+            bullish_factors=d.bullish_factors,
+            bearish_factors=d.bearish_factors,
+            invalidation_condition=d.invalidation_condition,
+            risk_reward_ratio=LLMAnalyzer._risk_reward_ratio(
+                d.decision, current_price, d.stop_loss, d.take_profit
+            ),
+            technical_indicators=technical_indicators,
             analyzed_symbol=symbol,
             analyzed_interval=interval,
             candle_count=candle_count,

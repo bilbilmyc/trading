@@ -9,12 +9,12 @@ field rather than as a message in the messages array.
 from __future__ import annotations
 
 import asyncio
-import json
 import time
 from typing import Any
 
 import httpx
 
+from app.engine.llm_decision_parser import parse_llm_decision
 from app.engine.llm_types import (
     LLMDecided,
     LLMError,
@@ -162,46 +162,7 @@ class AnthropicProvider:
 
     @staticmethod
     def _parse_decision(raw: str, model: str) -> LLMDecided:
-        cleaned = raw.strip()
-        if cleaned.startswith("```"):
-            cleaned = cleaned.split("\n", 1)[-1].rsplit("\n```", 1)[0].strip()
-        try:
-            data = json.loads(cleaned)
-        except (json.JSONDecodeError, ValueError):
-            return LLMDecided(
-                decision="hold",
-                confidence=0.0,
-                reason=f"LLM 返回格式异常: {raw[:200]}",
-                risk_level="high",
-                risk_note="解析失败",
-                model=model,
-                raw_response=raw,
-            )
-
-        def _safe_float(v: Any) -> float | None:
-            if v is None:
-                return None
-            try:
-                f = float(v)
-                return f if f > 0 else None
-            except (ValueError, TypeError):
-                return None
-
-        decision = str(data.get("decision", "hold")).lower()
-        if decision not in ("buy", "sell", "hold"):
-            decision = "hold"
-
-        return LLMDecided(
-            decision=decision,
-            confidence=max(0.0, min(1.0, float(data.get("confidence", 0.5)))),
-            reason=str(data.get("reason", "")),
-            stop_loss=_safe_float(data.get("stop_loss")),
-            take_profit=_safe_float(data.get("take_profit")),
-            risk_level=str(data.get("risk_level", "medium")).lower(),
-            risk_note=str(data.get("risk_note", "")),
-            model=model,
-            raw_response=raw,
-        )
+        return parse_llm_decision(raw, model)
 
 
 __all__ = ["AnthropicProvider"]

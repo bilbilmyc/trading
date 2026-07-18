@@ -8,9 +8,20 @@ and exit prices also include configurable taker fees and adverse slippage.
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 from math import isfinite
 from typing import Any
+
+from app.engine.simulation import (
+    AccountSnapshot,
+    EventDrivenSimulationEngine,
+    ExecutionModelConfig,
+    MarketEvent,
+    RiskModelConfig,
+    SignalEvent,
+    SimulationConfig,
+)
 
 
 @dataclass(frozen=True)
@@ -30,6 +41,23 @@ class BacktestTrade:
     exit_reason: str
 
 
+@dataclass(frozen=True)
+class BacktestFill:
+    """One simulated order fill, including partial-fill information."""
+
+    order_id: str
+    index: int
+    time: Any | None
+    side: str
+    requested_quantity: float
+    filled_quantity: float
+    price: float
+    fee: float
+    remaining_quantity: float
+    status: str
+    reason: str
+
+
 @dataclass
 class BacktestResult:
     initial_capital: float
@@ -44,6 +72,7 @@ class BacktestResult:
     total_return_pct: float = 0.0
     profit_factor: float | None = None
     trade_history: list[BacktestTrade] = field(default_factory=list)
+    fill_history: list[BacktestFill] = field(default_factory=list)
 
 
 def _sma(values: list[float], window: int) -> list[float]:
@@ -89,9 +118,14 @@ def _validate_inputs(
     for name, value in (("fee_rate", fee_rate), ("slippage_rate", slippage_rate)):
         if not isfinite(value) or not 0 <= value < 1:
             raise ValueError(f"{name} must be between 0 and 1")
-    for name, value in (("stop_loss_pct", stop_loss_pct), ("take_profit_pct", take_profit_pct)):
-        if value is not None and (not isfinite(value) or not 0 < value < 1):
-            raise ValueError(f"{name} must be between 0 (exclusive) and 1")
+    for risk_name, risk_value in (
+        ("stop_loss_pct", stop_loss_pct),
+        ("take_profit_pct", take_profit_pct),
+    ):
+        if risk_value is not None and (
+            not isfinite(risk_value) or not 0 < risk_value < 1
+        ):
+            raise ValueError(f"{risk_name} must be between 0 (exclusive) and 1")
     for index, candle in enumerate(candles):
         if not isinstance(candle, dict):
             raise ValueError(f"candle {index} must be an object")
@@ -101,11 +135,6 @@ def _validate_inputs(
         close = _price(candle, "close", index)
         if low > high or not low <= open_price <= high or not low <= close <= high:
             raise ValueError(f"candle {index} has inconsistent OHLC prices")
-
-
-def _apply_slippage(price: float, side: str, slippage_rate: float) -> float:
-    """Apply adverse slippage: buys cost more and sells receive less."""
-    return price * (1 + slippage_rate) if side == "buy" else price * (1 - slippage_rate)
 
 
 def run_sma_backtest(
@@ -118,13 +147,18 @@ def run_sma_backtest(
     slippage_rate: float = 0.0,
     stop_loss_pct: float | None = None,
     take_profit_pct: float | None = None,
+    max_volume_participation: float | None = None,
 ) -> BacktestResult:
-    """Run a long-only SMA crossover backtest with realistic execution costs.
+    """Run a long-only SMA crossover through the shared simulation engine.
 
     A cross detected on candle ``i`` creates an order for candle ``i + 1``'s
-    open.  Optional stop loss and take profit triggers inspect each candle's
-    high/low after entry.  When both triggers are reachable in the same candle,
+    open. Optional stop loss and take profit triggers inspect each candle's
+    high/low after entry. When both triggers are reachable in the same candle,
     the stop loss wins as the conservative assumption.
+
+    ``max_volume_participation`` can cap fills to a fraction of candle volume.
+    It is disabled by default so existing callers retain their historical
+    behavior while the shared engine can model partial fills when requested.
     """
     _validate_inputs(
         candles,
@@ -136,6 +170,21 @@ def run_sma_backtest(
         slippage_rate,
         stop_loss_pct,
         take_profit_pct,
+    )
+
+    execution = ExecutionModelConfig(
+        fee_rate=fee_rate,
+        slippage_rate=slippage_rate,
+        max_volume_participation=max_volume_participation,
+    )
+    config = SimulationConfig(
+        initial_capital=initial_capital,
+        position_size_pct=position_size_pct,
+        execution=execution,
+        risk=RiskModelConfig(
+            stop_loss_pct=stop_loss_pct,
+            take_profit_pct=take_profit_pct,
+        ),
     )
 
     closes = [_price(candle, "close", index) for index, candle in enumerate(candles)]
@@ -151,121 +200,64 @@ def run_sma_backtest(
             equity_curve=[initial_capital] * candle_count,
         )
 
+    markets = [
+        MarketEvent(
+            index=index,
+            time=candle.get("open_time"),
+            open=_price(candle, "open", index),
+            high=_price(candle, "high", index),
+            low=_price(candle, "low", index),
+            close=closes[index],
+            volume=_volume(candle),
+        )
+        for index, candle in enumerate(candles)
+    ]
     short_sma = _sma(closes, short_window)
     long_sma = _sma(closes, long_window)
-    cash = initial_capital
-    quantity = 0.0
-    entry_price = 0.0
-    entry_index = -1
-    entry_time: Any | None = None
-    entry_fee = 0.0
-    pending_action: str | None = None
-    equity_curve: list[float] = []
-    trade_history: list[BacktestTrade] = []
-    peak = initial_capital
-    max_drawdown = 0.0
 
-    def close_position(index: int, raw_price: float, reason: str) -> None:
-        nonlocal cash, quantity, entry_price, entry_index, entry_time, entry_fee
-        exit_price = _apply_slippage(raw_price, "sell", slippage_rate)
-        exit_notional = quantity * exit_price
-        exit_fee = exit_notional * fee_rate
-        cash += exit_notional - exit_fee
-        gross_pnl = (exit_price - entry_price) * quantity
-        fees = entry_fee + exit_fee
-        trade_history.append(
-            BacktestTrade(
-                entry_index=entry_index,
-                exit_index=index,
-                entry_time=entry_time,
-                exit_time=candles[index].get("open_time"),
-                quantity=quantity,
-                entry_price=entry_price,
-                exit_price=exit_price,
-                gross_pnl=gross_pnl,
-                fees=fees,
-                net_pnl=gross_pnl - fees,
-                exit_reason=reason,
-            )
-        )
-        quantity = 0.0
-        entry_price = 0.0
-        entry_index = -1
-        entry_time = None
-        entry_fee = 0.0
-
-    for index, candle in enumerate(candles):
-        open_price = _price(candle, "open", index)
-
-        # A signal based on the prior close can only be filled at this open.
-        if pending_action == "enter" and quantity == 0:
-            execution_price = _apply_slippage(open_price, "buy", slippage_rate)
-            allocation = cash * position_size_pct
-            quantity = allocation / (execution_price * (1 + fee_rate))
-            entry_price = execution_price
-            entry_index = index
-            entry_time = candle.get("open_time")
-            entry_fee = quantity * entry_price * fee_rate
-            cash -= quantity * entry_price + entry_fee
-        elif pending_action == "exit" and quantity > 0:
-            close_position(index, open_price, "signal")
-        pending_action = None
-
-        if quantity > 0:
-            low = _price(candle, "low", index)
-            high = _price(candle, "high", index)
-            stop_price = entry_price * (1 - stop_loss_pct) if stop_loss_pct is not None else None
-            take_price = (
-                entry_price * (1 + take_profit_pct) if take_profit_pct is not None else None
-            )
-            # OHLC cannot reveal the intrabar path. Choose the protective stop
-            # whenever both levels were touched to avoid optimistic results.
-            if stop_price is not None and low <= stop_price:
-                # A gap below the stop cannot be filled at the more favorable
-                # trigger price; use the opening price in that case.
-                close_position(index, min(open_price, stop_price), "stop_loss")
-            elif take_price is not None and high >= take_price:
-                close_position(index, take_price, "take_profit")
-
-        close = closes[index]
-        equity = cash + quantity * close
-        equity_curve.append(equity)
-        peak = max(peak, equity)
-        max_drawdown = max(max_drawdown, (peak - equity) / peak if peak else 0.0)
-
-        # Signals use data known at this close, and are executed at next open.
-        if index < long_window or index == candle_count - 1:
-            continue
+    def sma_signal_model(
+        market_events: Sequence[MarketEvent],
+        index: int,
+        account: AccountSnapshot,
+    ) -> SignalEvent | None:
+        if index < long_window:
+            return None
         in_long = short_sma[index] > long_sma[index]
         was_in_long = short_sma[index - 1] > long_sma[index - 1]
-        if in_long and not was_in_long and quantity == 0:
-            pending_action = "enter"
-        elif not in_long and quantity > 0:
-            pending_action = "exit"
+        if in_long and not was_in_long and account.position_quantity <= 1e-12:
+            return SignalEvent(
+                index=index,
+                time=market_events[index].time,
+                action="enter",
+                reason="signal",
+            )
+        if not in_long and account.position_quantity > 1e-12:
+            return SignalEvent(
+                index=index,
+                time=market_events[index].time,
+                action="exit",
+                reason="signal",
+            )
+        return None
 
-    # There is no next open after the final candle; close the remaining position
-    # at its known close rather than silently dropping its P&L from the result.
-    if quantity > 0:
-        close_position(candle_count - 1, closes[-1], "end_of_data")
-        equity_curve[-1] = cash
-
-    gross_pnl = sum(trade.gross_pnl for trade in trade_history)
-    total_fees = sum(trade.fees for trade in trade_history)
-    net_pnls = [trade.net_pnl for trade in trade_history]
+    simulation = EventDrivenSimulationEngine(config).run(markets, sma_signal_model)
+    gross_pnl = sum(trade.gross_pnl for trade in simulation.trades)
+    total_fees = sum(trade.fees for trade in simulation.trades)
+    net_pnls = [trade.net_pnl for trade in simulation.trades]
     wins = sum(1 for pnl in net_pnls if pnl > 0)
     losses = -sum(pnl for pnl in net_pnls if pnl < 0)
     gains = sum(pnl for pnl in net_pnls if pnl > 0)
     profit_factor = round(gains / losses, 4) if losses > 0 else None
-    final_equity = cash
+    final_equity = simulation.final_equity
 
     return BacktestResult(
         initial_capital=round(initial_capital, 4),
         final_equity=round(final_equity, 4),
         total_pnl=round(final_equity - initial_capital, 4),
-        trades=len(trade_history),
-        win_rate=round(wins / len(trade_history), 4) if trade_history else 0.0,
-        max_drawdown=round(max_drawdown, 4),
-        equity_curve=[round(value, 4) for value in equity_curve],
+        trades=len(simulation.trades),
+        win_rate=round(wins / len(simulation.trades), 4) if simulation.trades else 0.0,
+        max_drawdown=round(simulation.max_drawdown, 4),
+        equity_curve=[round(value, 4) for value in simulation.equity_curve],
         total_fees=round(total_fees, 4),
         gross_pnl=round(gross_pnl, 4),
         total_return_pct=round((final_equity / initial_capital - 1) * 100, 4),
@@ -284,9 +276,36 @@ def run_sma_backtest(
                 net_pnl=round(trade.net_pnl, 4),
                 exit_reason=trade.exit_reason,
             )
-            for trade in trade_history
+            for trade in simulation.trades
+        ],
+        fill_history=[
+            BacktestFill(
+                order_id=fill.order_id,
+                index=fill.index,
+                time=fill.time,
+                side=fill.side.value,
+                requested_quantity=round(fill.requested_quantity, 8),
+                filled_quantity=round(fill.filled_quantity, 8),
+                price=round(fill.price, 8),
+                fee=round(fill.fee, 4),
+                remaining_quantity=round(fill.remaining_quantity, 8),
+                status=fill.status.value,
+                reason=fill.reason,
+            )
+            for fill in simulation.fills
         ],
     )
 
 
-__all__ = ["BacktestResult", "BacktestTrade", "run_sma_backtest"]
+def _volume(candle: dict[str, Any]) -> float | None:
+    raw_volume = candle.get("volume")
+    if raw_volume is None:
+        return None
+    try:
+        volume = float(raw_volume)
+    except (TypeError, ValueError):
+        return None
+    return volume if isfinite(volume) and volume >= 0 else None
+
+
+__all__ = ["BacktestFill", "BacktestResult", "BacktestTrade", "run_sma_backtest"]

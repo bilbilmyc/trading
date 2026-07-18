@@ -50,7 +50,12 @@ export type {
   AuditEvent, CreateSMAStrategyPayload, SignalRunnerStatus, StrategyVersion, StrategyPromotionReview,
 } from "./api/strategies";
 export type { TradeRecord, EquityPoint, LeaderboardEntry } from "./api/portfolio";
-export type { LLMAnalysisResult, LLMInsights, LLMModelInsight } from "./api/ai";
+export type {
+  LLMAnalysisResult,
+  LLMInsights,
+  LLMModelInsight,
+  LLMTechnicalIndicators,
+} from "./api/ai";
 export type {
   ExecutionIntent, ReconciliationIssue, ReconciliationStatus,
 } from "./api/orders";

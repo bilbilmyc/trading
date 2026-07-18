@@ -1778,6 +1778,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 position_size_pct=request.position_size_pct,
                 fee_rate=request.fee_rate,
                 slippage_rate=request.slippage_rate,
+                max_volume_participation=request.max_volume_participation,
                 stop_loss_pct=request.stop_loss_pct,
                 take_profit_pct=request.take_profit_pct,
             )
@@ -1805,6 +1806,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             "gross_pnl": r.gross_pnl,
             "total_return_pct": r.total_return_pct,
             "profit_factor": r.profit_factor,
+            "execution_model": {
+                "signal_execution": "next_bar_open",
+                "fee_rate": request.fee_rate,
+                "slippage_rate": request.slippage_rate,
+                "max_volume_participation": request.max_volume_participation,
+                "volume_limit_behavior": "partial_fill_then_cancel",
+            },
             "trade_history": [
                 {
                     "entry_index": trade.entry_index,
@@ -1820,6 +1828,22 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                     "exit_reason": trade.exit_reason,
                 }
                 for trade in r.trade_history
+            ],
+            "fill_history": [
+                {
+                    "order_id": fill.order_id,
+                    "index": fill.index,
+                    "time": _serialize_kline({"value": fill.time})["value"],
+                    "side": fill.side,
+                    "requested_quantity": fill.requested_quantity,
+                    "filled_quantity": fill.filled_quantity,
+                    "price": fill.price,
+                    "fee": fill.fee,
+                    "remaining_quantity": fill.remaining_quantity,
+                    "status": fill.status,
+                    "reason": fill.reason,
+                }
+                for fill in r.fill_history
             ],
             "klines_used": [_serialize_kline(k) for k in request.klines],
         }
@@ -1878,6 +1902,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 position_size_pct=request.position_size_pct,
                 fee_rate=request.fee_rate,
                 slippage_rate=request.slippage_rate,
+                max_volume_participation=request.max_volume_participation,
                 stop_loss_pct=request.stop_loss_pct,
                 take_profit_pct=request.take_profit_pct,
             )

@@ -50,6 +50,16 @@ class LLMDecided:
     take_profit: float | None = None
     risk_level: str = "medium"
     risk_note: str = ""
+    trend: str = "neutral"
+    volatility: str = "medium"
+    summary: str = ""
+    key_support: float | None = None
+    key_resistance: float | None = None
+    entry_zone: str = ""
+    position_pct: float = 0.0
+    bullish_factors: tuple[str, ...] = ()
+    bearish_factors: tuple[str, ...] = ()
+    invalidation_condition: str = ""
     model: str = ""
     raw_response: str | None = None
 

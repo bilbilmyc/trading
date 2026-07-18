@@ -119,6 +119,7 @@ def run_walk_forward_backtest(
     position_size_pct: float = 1.0,
     fee_rate: float = 0.001,
     slippage_rate: float = 0.0,
+    max_volume_participation: float | None = None,
     stop_loss_pct: float | None = None,
     take_profit_pct: float | None = None,
 ) -> WalkForwardResult:
@@ -144,11 +145,12 @@ def run_walk_forward_backtest(
         if candidate.short_window <= 0 or candidate.long_window <= candidate.short_window:
             raise ValueError("each candidate must have short_window < long_window")
 
-    execution = {
+    execution: dict[str, Any] = {
         "initial_capital": initial_capital,
         "position_size_pct": position_size_pct,
         "fee_rate": fee_rate,
         "slippage_rate": slippage_rate,
+        "max_volume_participation": max_volume_participation,
         "stop_loss_pct": stop_loss_pct,
         "take_profit_pct": take_profit_pct,
     }

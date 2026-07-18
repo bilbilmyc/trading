@@ -42,13 +42,17 @@ python -c "import secrets; print(secrets.token_urlsafe(32))"
 
 - `fee_rate`：每次成交的费率，默认 `0.001`（0.1%）。
 - `slippage_rate`：不利滑点率，默认 `0`；买入价格上调，卖出价格下调。
+- `max_volume_participation`：可选，限制单次成交最多占当根 K 线成交量的比例；启用后可能产生部分成交。
 - `stop_loss_pct` / `take_profit_pct`：可选的入场价百分比保护阈值。
 
 信号在 K 线收盘后生成，并在**下一根 K 线开盘价**执行，避免以未决策时可见的收盘价成交。
 止盈和止损使用当根 K 线的 high/low 判断；若同一根同时触发，回测保守地按止损成交。
 响应在原有权益曲线和收益字段之外，新增 `total_fees`、`gross_pnl`、
-`total_return_pct`、`profit_factor` 以及包含成交价格、费用、原因和 K 线索引的
-`trade_history`。
+`total_return_pct`、`profit_factor`、执行假设 `execution_model`、完整成交回执
+`fill_history`，以及包含成交价格、费用、原因和 K 线索引的 `trade_history`。
+`fill_history` 会明确给出请求数量、实际成交数量、剩余数量及 `filled` /
+`partially_filled` / `rejected` 状态。当前成交量限制按单根 K 线 IOC 语义处理：
+未成交余量会报告但不会自动带到下一根 K 线。
 | 投资组合 | `/api/v1/portfolio/*`, `/api/v1/trade-history` | 3 | 否 |
 | AI | `/api/v1/ai/analyze`, `/api/v1/ai/insights` | 2 | **是** |
 | LLM 策略 | `/api/v1/strategies/llm*` | 3 | **是** |
@@ -112,6 +116,8 @@ python -c "import secrets; print(secrets.token_urlsafe(32))"
 ### AI 分析安全护栏
 
 `POST /api/v1/ai/analyze` 在 LLM API Key 未配置时会先返回 `decision: "hold"` 与 `error_kind: "api_key_missing"`，不会为了无效请求访问外部行情源。行情获取失败也会转换为 `decision: "hold"` 与 `error_kind: "network"`，避免把上游网络错误暴露为服务端 500。对可执行的 `buy` / `sell` 建议，系统要求同时有正数止损和止盈，并校验其与最新价格的相对关系：做多必须为 `stop_loss < price < take_profit`，做空必须为 `take_profit < price < stop_loss`。不满足时返回 `decision: "hold"` 与 `error_kind: "safety_rejected"`；该结果不会进入自动策略或下单链路。
+
+分析器会先在本地计算 SMA5/SMA20、RSI14、5/20 周期动量、ATR14、量比与 20 周期支撑/阻力，再将这些确定性指标与行情、仓位、风控状态和交易历史一并交给模型做交叉验证。响应除 `decision`、`confidence`、止损止盈外，还包含 `trend`、`volatility`、`summary`、`key_support`、`key_resistance`、`entry_zone`、`position_pct`、多空证据、失效条件、风险收益比和 `technical_indicators`。缓存指纹同时包含行情、技术指标、风控和历史上下文，风险状态变化后不会复用旧建议。
 
 ### LLM 策略调用治理
 
@@ -196,7 +202,8 @@ python -c "import secrets; print(secrets.token_urlsafe(32))"
     {"short_window": 5, "long_window": 20}
   ],
   "fee_rate": 0.001,
-  "slippage_rate": 0.0005
+  "slippage_rate": 0.0005,
+  "max_volume_participation": 0.1
 }
 ```
 

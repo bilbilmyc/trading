@@ -20,14 +20,46 @@ export type LLMErrorKind =
 
 // ── Types ─────────────────────────────────────────────────────────
 
+export interface LLMTechnicalIndicators {
+  count?: number;
+  data_quality?: "sufficient" | "limited" | "unavailable";
+  trend_bias?: "bullish" | "bearish" | "neutral";
+  sma_5?: number | null;
+  sma_20?: number | null;
+  rsi_14?: number | null;
+  momentum_5_pct?: number | null;
+  momentum_20_pct?: number | null;
+  atr_14?: number | null;
+  atr_pct?: number | null;
+  volume_ratio?: number | null;
+  support_20?: number | null;
+  resistance_20?: number | null;
+}
+
 export interface LLMAnalysisResult {
-  decision: string;
+  decision: "buy" | "sell" | "hold" | string;
   confidence: number;
   reason: string;
+  suggested_action?: string | null;
+  suggested_price?: number | null;
   stop_loss?: number | null;
   take_profit?: number | null;
-  risk_level: string;
+  risk_level: "low" | "medium" | "high" | string;
   risk_note: string;
+  trend?: "bullish" | "bearish" | "neutral";
+  volatility?: "low" | "medium" | "high";
+  summary?: string;
+  key_support?: number | null;
+  key_resistance?: number | null;
+  entry_zone?: string;
+  position_pct?: number;
+  bullish_factors?: string[];
+  bearish_factors?: string[];
+  invalidation_condition?: string;
+  risk_reward_ratio?: number | null;
+  technical_indicators?: LLMTechnicalIndicators | null;
+  analyzed_symbol?: string;
+  analyzed_interval?: string;
   model?: string;
   analysis_time?: string;
   candle_count?: number;

@@ -106,3 +106,43 @@ def test_backtest_endpoint_rejects_invalid_execution_rate() -> None:
         )
 
     assert response.status_code == 422
+
+def test_backtest_endpoint_exposes_partial_fill_details() -> None:
+    app = create_app(_settings())
+    with TestClient(app) as client:
+        response = client.post(
+            "/api/v1/backtest",
+            json={
+                "klines": _klines([100, 100, 100, 110, 120, 125]),
+                "short_window": 2,
+                "long_window": 3,
+                "initial_capital": 1_000,
+                "fee_rate": 0,
+                "max_volume_participation": 0.25,
+            },
+        )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["execution_model"]["signal_execution"] == "next_bar_open"
+    assert body["execution_model"]["max_volume_participation"] == 0.25
+    partial_fills = [fill for fill in body["fill_history"] if fill["status"] == "partially_filled"]
+    assert len(partial_fills) == 1
+    assert partial_fills[0]["filled_quantity"] == 0.25
+    assert partial_fills[0]["remaining_quantity"] > 0
+
+
+def test_backtest_endpoint_rejects_invalid_volume_participation() -> None:
+    app = create_app(_settings())
+    with TestClient(app) as client:
+        response = client.post(
+            "/api/v1/backtest",
+            json={
+                "klines": _klines([100, 100, 100, 110]),
+                "short_window": 2,
+                "long_window": 3,
+                "max_volume_participation": 0,
+            },
+        )
+
+    assert response.status_code == 422

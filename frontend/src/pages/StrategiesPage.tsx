@@ -219,9 +219,9 @@ export function StrategiesPage() {
   }
 
   const aiDecisionText =
-    aiReport?.decision === "long"
+    aiReport?.decision === "buy"
       ? "做多"
-      : aiReport?.decision === "short"
+      : aiReport?.decision === "sell"
         ? "做空"
         : aiReport
           ? "观望"
@@ -320,7 +320,7 @@ export function StrategiesPage() {
             </div>
             {aiError ? <div className="notice notice--error">{aiError}</div> : null}
             <div className={`scroll-cap scroll-cap--md${aiExpanded ? " is-expanded" : ""}`}>
-              <AIReport data={aiReport as any} loading={aiBusy} />
+              <AIReport data={aiReport} loading={aiBusy} />
             </div>
             {aiReport ? (
               <div className="expandable-foot">

@@ -146,6 +146,7 @@ class BacktestRequest(BaseModel):
     position_size_pct: float = Field(1.0, gt=0, le=1.0)
     fee_rate: float = Field(0.001, ge=0.0, lt=1.0)
     slippage_rate: float = Field(0.0, ge=0.0, lt=1.0)
+    max_volume_participation: float | None = Field(None, gt=0.0, le=1.0)
     stop_loss_pct: float | None = Field(None, gt=0.0, lt=1.0)
     take_profit_pct: float | None = Field(None, gt=0.0, lt=1.0)
 

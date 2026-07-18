@@ -1,7 +1,8 @@
 """Fingerprint cache for LLM responses.
 
-Key = sha256(symbol + interval + last_candle_hash + position_signature + prompt_version).
-Hit returns cached Decided; miss computes fresh.
+Key = sha256(symbol + interval + last candle + position + analysis context + prompt version).
+Hit returns cached Decided; miss computes fresh. Risk and performance context are
+part of the fingerprint so a stale recommendation cannot survive a safety-state change.
 """
 
 from __future__ import annotations
@@ -38,12 +39,14 @@ class LLMFingerprintCache:
         last_candle: dict[str, Any],
         position_signature: str,
         prompt_version: str,
+        context_signature: Any = "",
     ) -> str:
         payload = {
             "symbol": symbol,
             "interval": interval,
             "candle": last_candle,
             "pos": position_signature,
+            "context": context_signature,
             "v": prompt_version,
         }
         raw = json.dumps(payload, sort_keys=True, default=str)
