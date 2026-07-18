@@ -21,7 +21,7 @@ def validate_trade_decision(
 ) -> LLMResponse:
     """Return a fail-closed response when an actionable decision is unsafe.
 
-    ``hold`` decisions cannot create an order and are left unchanged.  For
+    ``hold`` and ``observe`` decisions cannot create an order and are left unchanged.  For
     ``buy`` and ``sell`` decisions, both stop-loss and take-profit are
     required and must be positioned on the protective/profitable side of the
     latest price.  The original token and latency telemetry is retained for
@@ -31,7 +31,7 @@ def validate_trade_decision(
         return response
 
     decision = response.decided
-    if decision.decision == "hold":
+    if decision.decision in {"hold", "observe"}:
         return response
 
     price = _positive_finite(current_price)

@@ -119,6 +119,18 @@ class AIAnalyzeRequest(BaseModel):
     limit: int = Field(30, ge=10, le=100)
 
 
+class AIDecisionOutcomeRequest(BaseModel):
+    """Immutable post-signal outcome used by AI effectiveness reports."""
+
+    outcome_return_pct: float
+    mfe_pct: float | None = None
+    mae_pct: float | None = None
+    estimated_cost_usd: float | None = Field(None, ge=0)
+    strategy_type: str = Field("ai", pattern="^(ai|rule)$")
+    observation_window: str = Field("", max_length=64)
+
+
+
 class SizingRequest(BaseModel):
     """Position-sizing request body.
 

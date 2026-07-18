@@ -35,7 +35,7 @@ python -c "import secrets; print(secrets.token_urlsafe(32))"
 | 风控计算 | `/api/v1/sizing`, `/api/v1/atr-sizing` | 2 | 否 |
 | 回测/实验 | `/api/v1/backtest`, `/api/v1/backtests/*`, `/api/v1/strategies/suggest` | 4 | 读取实验为**是** |
 | 投资组合 | `/api/v1/portfolio/*`, `/api/v1/trade-history` | 3 | 否 |
-| AI | `/api/v1/ai/analyze`, `/api/v1/ai/insights` | 2 | **是** |
+| AI | `/api/v1/ai/analyze`, `/api/v1/ai/insights`, `/api/v1/ai/decisions*` | 5 | **是** |
 | LLM 策略 | `/api/v1/strategies/llm*` | 3 | **是** |
 | 监控/同步/对账 | `/api/v1/monitor/*`, `/api/v1/sync/*`, `/api/v1/reconciliation/*` | 8+ | 读取与恢复均需 **是** |
 | 数据源 | `/api/v1/sources` | 3 | **是**（写） |
@@ -145,6 +145,17 @@ MARKET_DATA_PARQUET_DIR=data/market_data
 `POST /api/v1/ai/analyze` 在 LLM API Key 未配置时会先返回 `decision: "hold"` 与 `error_kind: "api_key_missing"`，不会为了无效请求访问外部行情源。行情获取失败也会转换为 `decision: "hold"` 与 `error_kind: "network"`，避免把上游网络错误暴露为服务端 500。对可执行的 `buy` / `sell` 建议，系统要求同时有正数止损和止盈，并校验其与最新价格的相对关系：做多必须为 `stop_loss < price < take_profit`，做空必须为 `take_profit < price < stop_loss`。不满足时返回 `decision: "hold"` 与 `error_kind: "safety_rejected"`；该结果不会进入自动策略或下单链路。
 
 分析器会先在本地计算 SMA5/SMA20、RSI14、5/20 周期动量、ATR14、量比与 20 周期支撑/阻力，再将这些确定性指标与行情、仓位、风控状态和交易历史一并交给模型做交叉验证。响应除 `decision`、`confidence`、止损止盈外，还包含 `trend`、`volatility`、`summary`、`key_support`、`key_resistance`、`entry_zone`、`position_pct`、多空证据、失效条件、风险收益比和 `technical_indicators`。缓存指纹同时包含行情、技术指标、风控和历史上下文，风险状态变化后不会复用旧建议。
+
+### AI 决策协议、审计与效果评估
+
+AI 分析器使用版本化 `v4` 协议。协议包含 `decision`（`buy` / `sell` / `hold` / `observe`）、`confidence`、`regime`、`reasons`、`risk_factors`、`stop_loss`、`take_profit`、`position_size`、`invalidation_conditions`、`data_timestamp`、`model_version` 与 `prompt_version`。对声明协议版本的输出，服务端会在交易策略路径上执行 JSON Schema 风格的字段/枚举/范围校验；未来时间戳、超限仓位、无效止损止盈和重复建议均会被安全拦截，低置信度的可执行建议会降级为 `observe`。
+
+审计事件保存完整的输入与输出摘要、Provider、模型、耗时、版本及拦截原因：
+
+- `GET /api/v1/ai/decisions?symbol=BTCUSDT&limit=100`：查询历史 AI 决策。
+- `GET /api/v1/ai/decisions/{event_id}/replay`：返回决策的不可变输入/输出与已记录结果，用于复盘。
+- `POST /api/v1/ai/decisions/{event_id}/outcome`：追加后验结果；请求包含方向收益 `outcome_return_pct`，并可选填 `mfe_pct`、`mae_pct`、`estimated_cost_usd`、`strategy_type` 与观察窗口。原始决策不会被修改。
+- `GET /api/v1/ai/insights`：除基础调用统计外，新增命中率、置信度分桶收益、MFE/MAE、AI/规则策略对比、已知成本覆盖率及模型版本表现。后验指标仅基于 outcome 审计事件，未记录结果的决策不会被计入收益统计。
 
 ### LLM 策略调用治理
 

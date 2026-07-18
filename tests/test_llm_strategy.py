@@ -81,6 +81,17 @@ async def test_hold_decision_emits_no_signal() -> None:
 
 
 @pytest.mark.asyncio
+async def test_observe_decision_emits_no_signal_even_when_confident() -> None:
+    analyzer = AsyncMock()
+    analyzer.analyze_raw = AsyncMock(return_value=_result("observe", confidence=0.9))
+    s = _strategy(analyzer=analyzer)
+    for candle in _candles([100] * 30):
+        await s.on_market_data("BTCUSDT", candle)
+
+    assert await s.generate_signals("BTCUSDT") is None
+
+
+@pytest.mark.asyncio
 async def test_low_confidence_emits_no_signal() -> None:
     analyzer = AsyncMock()
     analyzer.analyze_raw = AsyncMock(return_value=_result("buy", confidence=0.3))

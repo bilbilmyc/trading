@@ -80,7 +80,7 @@ def parse_llm_decision(raw: str, model: str) -> LLMDecided:
             raw_response=raw,
         )
 
-    decision = _enum_value(data.get("decision"), {"buy", "sell", "hold"}, "hold")
+    decision = _enum_value(data.get("decision"), {"buy", "sell", "hold", "observe"}, "hold")
     return LLMDecided(
         decision=decision,
         confidence=_bounded_float(
@@ -105,6 +105,26 @@ def parse_llm_decision(raw: str, model: str) -> LLMDecided:
         invalidation_condition=_text(data.get("invalidation_condition"), limit=500),
         model=model,
         raw_response=raw,
+        regime=_enum_value(
+            data.get("regime"),
+            {"trending", "ranging", "volatile", "breakout", "unknown"},
+            "unknown",
+        ),
+        reasons=_text_list(data.get("reasons")) or _text_list([data.get("reason")]),
+        risk_factors=_text_list(data.get("risk_factors")),
+        position_size=_bounded_float(
+            data.get("position_size", data.get("position_pct")),
+            default=0.0,
+            minimum=0.0,
+            maximum=1.0,
+        ),
+        invalidation_conditions=(
+            _text_list(data.get("invalidation_conditions"))
+            or _text_list([data.get("invalidation_condition")])
+        ),
+        data_timestamp=_text(data.get("data_timestamp"), limit=64),
+        model_version=_text(data.get("model_version"), limit=120) or model,
+        prompt_version=_text(data.get("prompt_version"), limit=64),
     )
 
 

@@ -38,6 +38,7 @@ from app.api.helpers import (
 from app.api.middleware import ScopeContextMiddleware
 from app.api.schemas import (
     AIAnalyzeRequest,
+    AIDecisionOutcomeRequest,
     BacktestRequest,
     ClosePositionRequest,
     CustomSourceRequest,
@@ -60,6 +61,7 @@ from app.core.logging import setup_logger
 from app.core.sqlite_store import SQLiteStore
 from app.data_sources.generic_http import GenericHttpDataSource
 from app.engine.live_trading_guard import LiveTradingGuard
+from app.engine.llm_decision_metrics import effectiveness_summary
 from app.engine.risk_manager import RiskConfig
 from app.engine.trader import TradingEngine
 from app.exchanges.base import ExchangeBase
@@ -758,6 +760,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                     "latency_ms": payload.get("latency_ms"),
                     "failed": payload.get("failed"),
                     "cache_hit": payload.get("cache_hit"),
+                    "data_timestamp": payload.get("data_timestamp"),
+                    "model_version": payload.get("model_version"),
+                    "prompt_version": payload.get("prompt_version"),
+                    "interception_reasons": payload.get("interception_reasons"),
+                    "input_summary": payload.get("input_summary"),
+                    "output_summary": payload.get("output_summary"),
                 },
             )
         except Exception:
@@ -2423,6 +2431,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         cutoff = (datetime.utcnow() - timedelta(minutes=minutes)).isoformat()
         events = state.store.recent_events(category="llm", event_type="llm_decision", limit=limit)
         events = [event for event in events if event.get("timestamp", "") >= cutoff]
+        outcome_events = state.store.recent_events(
+            category="llm", event_type="llm_decision_outcome", limit=limit
+        )
+        outcome_events = [event for event in outcome_events if event.get("timestamp", "") >= cutoff]
 
         def as_non_negative_int(value: Any) -> int:
             try:
@@ -2529,7 +2541,61 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             "decisions": decisions,
             "failures": failures,
             "models": models,
+            "effectiveness": effectiveness_summary(events, outcome_events),
         }
+
+    @app.get("/api/v1/ai/decisions", dependencies=[Depends(require_api_key)])
+    async def llm_decision_history(
+        symbol: str | None = Query(None, min_length=1, max_length=32),
+        limit: int = Query(100, ge=1, le=1_000),
+        state: AppState = Depends(get_state),
+    ):
+        """Return persisted AI input/output summaries for audit and replay."""
+        events = state.store.recent_events(category="llm", event_type="llm_decision", limit=limit)
+        if symbol:
+            events = [event for event in events if event.get("symbol") == symbol]
+        return {"items": events, "count": len(events)}
+
+    @app.get("/api/v1/ai/decisions/{event_id}/replay", dependencies=[Depends(require_api_key)])
+    async def llm_decision_replay(event_id: int, state: AppState = Depends(get_state)):
+        """Replay a historical decision's immutable input/output audit payload."""
+        events = state.store.recent_events(category="llm", event_type="llm_decision", limit=5_000)
+        event = next((item for item in events if item.get("id") == event_id), None)
+        if event is None:
+            raise HTTPException(status_code=404, detail=f"AI decision {event_id} was not found")
+        outcomes = state.store.recent_events(
+            category="llm", event_type="llm_decision_outcome", limit=5_000
+        )
+        outcome = next(
+            (
+                item for item in outcomes
+                if isinstance(item.get("details"), dict)
+                and item["details"].get("decision_event_id") == event_id
+            ),
+            None,
+        )
+        return {"decision": event, "outcome": outcome}
+
+    @app.post("/api/v1/ai/decisions/{event_id}/outcome", dependencies=[Depends(require_api_key)])
+    async def record_llm_decision_outcome(
+        event_id: int,
+        request: AIDecisionOutcomeRequest,
+        state: AppState = Depends(get_state),
+    ):
+        """Append an outcome event without mutating the original AI decision."""
+        events = state.store.recent_events(category="llm", event_type="llm_decision", limit=5_000)
+        decision = next((item for item in events if item.get("id") == event_id), None)
+        if decision is None:
+            raise HTTPException(status_code=404, detail=f"AI decision {event_id} was not found")
+        record_event(
+            category="llm",
+            event_type="llm_decision_outcome",
+            message=f"AI decision {event_id} outcome recorded",
+            exchange=decision.get("exchange"),
+            symbol=decision.get("symbol"),
+            details={"decision_event_id": event_id, **request.model_dump(mode="json")},
+        )
+        return {"decision_event_id": event_id, "recorded": True}
 
     @app.post("/api/v1/ai/analyze", dependencies=[Depends(require_api_key)])
     async def ai_analyze(
@@ -2538,6 +2604,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     ):
         """调用大模型分析市场并返回开单建议（不自动下单）。"""
 
+        from app.engine.llm_context import DefaultLLMContextProvider
         from app.strategies.llm_analyzer import LLMAnalyzer, LLMAnalyzerConfig
 
         llm_config = LLMAnalyzerConfig(
@@ -2576,14 +2643,25 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 + state.engine.paper_account.summary().get("unrealized_pnl", 0),
             }
 
+        context_provider = DefaultLLMContextProvider(
+            risk_manager=state.engine.risk_manager, store=state.store
+        )
         analyzer = LLMAnalyzer(llm_config, on_decision=_on_llm_decision)
         try:
+            risk_context = await context_provider.get_risk_context()
+            trade_history = await context_provider.get_trade_history(request.symbol)
+            backtest_performance = await context_provider.get_backtest_performance(request.symbol)
+            recent_ai_decisions = await context_provider.get_recent_ai_decisions(request.symbol)
             result = await analyzer.analyze(
                 exchange=client,
                 symbol=request.symbol,
                 interval=request.interval,
                 limit=request.limit,
                 position_context=position_ctx,
+                risk_context=risk_context,
+                trade_history=trade_history,
+                backtest_performance=backtest_performance,
+                recent_ai_decisions=recent_ai_decisions,
             )
             return result.to_dict()
         finally:
@@ -2641,6 +2719,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             min_confidence=request.min_confidence,
             allowed_symbols=state.settings.llm_allowed_symbols or None,
             context_provider=context_provider,
+            fallback_strategy=SMAStrategy(name=f"{strategy_name}_rule_fallback"),
         )
         state.engine.add_strategy(
             strategy_name,
