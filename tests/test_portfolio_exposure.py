@@ -6,6 +6,7 @@ import pytest
 
 from app.engine.portfolio_exposure import PortfolioExposure
 from app.engine.risk_manager import RiskConfig, RiskManager
+from config.settings import Settings
 
 
 @pytest.mark.asyncio
@@ -115,3 +116,62 @@ async def test_reducing_order_bypasses_exposure_caps_and_status_reports_snapshot
     assert status["portfolio_exposure"] == exposure.as_dict()
     assert status["max_portfolio_exposure"] == 100.0
     assert status["max_asset_concentration_pct"] == 0.50
+
+
+@pytest.mark.asyncio
+async def test_asset_group_concentration_blocks_grouped_assets_and_reports_status() -> None:
+    manager = RiskManager(
+        RiskConfig(
+            max_position_value=10_000.0,
+            max_asset_group_concentration_pct=0.55,
+            asset_groups={"layer1": ("BTCUSDT", "ETHUSDT")},
+        )
+    )
+    exposure = PortfolioExposure(
+        total_notional=300.0,
+        by_symbol={"BTCUSDT": 100.0, "ETHUSDT": 80.0, "SOLUSDT": 120.0},
+    )
+
+    async def exposure_provider(symbol: str, price: float) -> PortfolioExposure:
+        return exposure
+
+    manager.set_portfolio_exposure_provider(exposure_provider)
+    blocked, reason = await manager.check_order("ETHUSDT", "buy", 1.0, 20.0)
+    allowed, allowed_reason = await manager.check_order("SOLUSDT", "buy", 1.0, 20.0)
+    status = await manager.get_risk_status()
+
+    assert blocked is False
+    assert "资产分组 layer1 暴露占比" in reason
+    assert allowed is True
+    assert allowed_reason == "通过风控检查"
+    assert status["max_asset_group_concentration_pct"] == 0.55
+    assert status["asset_groups"] == {"layer1": ["BTCUSDT", "ETHUSDT"]}
+    assert status["asset_group_exposure"]["layer1"] == {
+        "notional": 180.0,
+        "concentration": 0.6,
+    }
+
+
+def test_asset_group_mapping_is_normalized_and_rejects_ambiguous_symbols() -> None:
+    config = RiskConfig(asset_groups={"layer1": ("btcusdt", "ETHUSDT")})
+
+    assert config.asset_groups == {"layer1": ("BTCUSDT", "ETHUSDT")}
+    with pytest.raises(ValueError, match="只能属于一个资产分组"):
+        RiskConfig(
+            asset_groups={
+                "layer1": ("BTCUSDT",),
+                "large_cap": ("btcusdt", "SOLUSDT"),
+            }
+        )
+
+
+def test_settings_passes_asset_group_limits_to_risk_config() -> None:
+    settings = Settings(
+        max_asset_group_concentration_pct=0.7,
+        risk_asset_groups={"layer1": ("BTCUSDT", "ETHUSDT")},
+    )
+
+    risk = settings.risk
+
+    assert risk.max_asset_group_concentration_pct == 0.7
+    assert risk.asset_groups == {"layer1": ("BTCUSDT", "ETHUSDT")}

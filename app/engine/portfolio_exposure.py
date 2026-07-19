@@ -36,9 +36,7 @@ class PortfolioExposure:
         price_overrides: dict[str, float] | None = None,
     ) -> PortfolioExposure:
         """Build a conservative gross-exposure snapshot from local positions."""
-        overrides = {
-            symbol.upper(): price for symbol, price in (price_overrides or {}).items()
-        }
+        overrides = {symbol.upper(): price for symbol, price in (price_overrides or {}).items()}
         by_symbol: dict[str, float] = {}
         for position in positions:
             symbol = position.symbol.upper()
@@ -63,6 +61,21 @@ class PortfolioExposure:
         if self.total_notional <= 0:
             return 0.0
         return self.by_symbol.get(symbol.upper(), 0.0) / self.total_notional
+
+    def group_notional(self, symbols: Iterable[str]) -> float:
+        """Return gross notional for the configured symbols in one asset group."""
+        normalized_symbols = {symbol.upper() for symbol in symbols}
+        return sum(
+            notional
+            for symbol, notional in self.by_symbol.items()
+            if symbol.upper() in normalized_symbols
+        )
+
+    def group_concentration(self, symbols: Iterable[str]) -> float:
+        """Return one configured asset group's share of gross exposure."""
+        if self.total_notional <= 0:
+            return 0.0
+        return self.group_notional(symbols) / self.total_notional
 
     def as_dict(self) -> dict[str, object]:
         """Return JSON-friendly state for status and audit surfaces."""
