@@ -113,6 +113,84 @@ def test_backtest_default_sma(tmp_path) -> None:
         assert "total_pnl" in body
 
 
+def test_rolling_backtest_returns_independent_window_diagnostics(tmp_path) -> None:
+    with TestClient(create_app(_settings(sqlite_path=str(tmp_path / "h.sqlite3")))) as c:
+        response = c.post(
+            "/api/v1/backtest/rolling",
+            json={
+                "klines": _candles(30),
+                "window_size": 10,
+                "step_size": 5,
+                "short_window": 2,
+                "long_window": 4,
+                "fee_rate": 0,
+            },
+        )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["rolling"]["capital_model"] == "independent_per_window"
+    assert body["rolling"]["window_count"] == 5
+    assert body["parameters"]["short_window"] == 2
+    assert len(body["windows"]) == 5
+    assert body["backtest_run_id"] > 0
+
+
+def test_rolling_backtest_data_version_can_be_reproduced(tmp_path) -> None:
+    catalog_candles = [
+        {
+            "timestamp": f"2026-01-{1 + index // 24:02d}T{index % 24:02d}:00:00Z",
+            "open": 100.0 + index * 0.1,
+            "high": 105.0 + index * 0.1,
+            "low": 95.0 + index * 0.1,
+            "close": 100.0 + index * 0.1,
+            "volume": 10.0,
+        }
+        for index in range(30)
+    ]
+    settings = _settings(
+        sqlite_path=str(tmp_path / "h.sqlite3"),
+        market_data_catalog_path=str(tmp_path / "market_data.duckdb"),
+        market_data_parquet_dir=str(tmp_path / "market_data"),
+    )
+    with TestClient(create_app(settings)) as c:
+        imported = c.post(
+            "/api/v1/market-data/datasets",
+            json={
+                "symbol": "BTCUSDT",
+                "timeframe": "1h",
+                "source": "test",
+                "candles": catalog_candles,
+            },
+        )
+        assert imported.status_code == 201
+        response = c.post(
+            "/api/v1/backtest/rolling",
+            json={
+                "data_version": imported.json()["version"],
+                "window_size": 10,
+                "short_window": 2,
+                "long_window": 4,
+                "fee_rate": 0,
+            },
+        )
+        assert response.status_code == 200
+        reproduced = c.post(f"/api/v1/backtests/{response.json()['backtest_run_id']}/reproduce")
+
+    assert reproduced.status_code == 200
+    assert reproduced.json()["reproducible"] is True
+
+
+def test_rolling_backtest_rejects_invalid_window_order(tmp_path) -> None:
+    with TestClient(create_app(_settings(sqlite_path=str(tmp_path / "h.sqlite3")))) as c:
+        response = c.post(
+            "/api/v1/backtest/rolling",
+            json={"klines": _candles(30), "window_size": 10, "short_window": 4, "long_window": 4},
+        )
+
+    assert response.status_code == 400
+
+
 def test_grid_search_backtest_returns_ranked_candidates(tmp_path) -> None:
     with TestClient(create_app(_settings(sqlite_path=str(tmp_path / "h.sqlite3")))) as c:
         response = c.post(

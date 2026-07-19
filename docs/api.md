@@ -98,6 +98,14 @@ MARKET_DATA_PARQUET_DIR=data/market_data
 
 该端点标记 `search.in_sample_only: true`：它仅用于研究和候选参数筛选，不能视为样本外表现或直接晋级交易。应使用 Walk-forward 验证端点取得严格的样本外证据。版本化数据集的网格实验同样会保存哈希并可通过复现端点验证。
 
+#### 滚动窗口回测
+
+`POST /api/v1/backtest/rolling` 以固定 SMA 参数对一段行情执行局部时期诊断。请求与普通回测一样，必须二选一提供 `klines` 或经质量检查的 `data_version`，并指定 `window_size`；`step_size` 省略时等于窗口长度。每个**完整**窗口都从同一 `initial_capital` 独立开始，最多生成 **128** 个窗口。
+
+响应的 `rolling` 固定标注 `parameter_mode: "fixed"` 和 `capital_model: "independent_per_window"`；`windows` 给出每个窗口的原始索引及紧凑回测指标，`summary` 给出窗口收益的平均值、标准差、盈利窗口比例和最佳/最差窗口收益。它适合检验一个既定参数在不同局部时间段的表现差异，**不会**在窗口内选参、连接窗口资金、修改策略配置或授权下单。若要取得训练选参后的严格样本外证据，应使用 Walk-forward 端点。
+
+版本化行情的滚动实验同样保存不可变请求、结果哈希和运行环境，可通过 `POST /api/v1/backtests/{run_id}/reproduce` 验证。
+
 #### 多策略组合回测
 
 `POST /api/v1/backtest/portfolio` 接受与单策略回测相同的数据源、成本和保护参数，并额外要求至少两个 `strategies`。每个策略包含 `name`、`short_window`、`long_window` 与 `weight`；名称在请求内必须唯一，所有权重必须为正且**精确合计为 1.0**。

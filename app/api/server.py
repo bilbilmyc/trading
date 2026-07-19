@@ -51,6 +51,7 @@ from app.api.schemas import (
     PaperResetRequest,
     PortfolioBacktestRequest,
     ReconciliationRecoveryRequest,
+    RollingBacktestRequest,
     SignalRunnerRequest,
     SizingRequest,
     SMAStrategyRequest,
@@ -2674,6 +2675,100 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             ],
         }
 
+    def _run_rolling_backtest(
+        request: RollingBacktestRequest,
+        state: AppState,
+        *,
+        persist: bool,
+    ) -> dict[str, Any]:
+        """Run and optionally persist a fixed-parameter rolling-window study."""
+
+        from app.engine.rolling_backtest import run_rolling_sma_backtest
+
+        try:
+            candles, backtest_candles = _load_backtest_candles(request, state)
+            result = run_rolling_sma_backtest(
+                candles=backtest_candles,
+                window_size=request.window_size,
+                step_size=request.step_size,
+                short_window=request.short_window,
+                long_window=request.long_window,
+                initial_capital=request.initial_capital,
+                position_size_pct=request.position_size_pct,
+                fee_rate=request.fee_rate,
+                slippage_rate=request.slippage_rate,
+                max_volume_participation=request.max_volume_participation,
+                stop_loss_pct=request.stop_loss_pct,
+                take_profit_pct=request.take_profit_pct,
+            )
+        except DatasetNotFoundError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except DatasetQualityError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        except (KeyError, MarketDataError, ValueError, TypeError) as exc:
+            raise HTTPException(
+                status_code=400, detail=f"Invalid rolling backtest data: {exc}"
+            ) from exc
+
+        execution_model = {
+            "signal_execution": "next_bar_open",
+            "fee_rate": request.fee_rate,
+            "slippage_rate": request.slippage_rate,
+            "max_volume_participation": request.max_volume_participation,
+            "volume_limit_behavior": "partial_fill_then_cancel",
+            "capital_allocation": "independent_per_window",
+        }
+        payload: dict[str, Any] = {
+            **result.as_dict(),
+            "parameters": {
+                "short_window": request.short_window,
+                "long_window": request.long_window,
+                "initial_capital": request.initial_capital,
+                "position_size_pct": request.position_size_pct,
+            },
+            "execution_model": execution_model,
+            "klines_used": [_serialize_kline(kline) for kline in candles],
+            "data_version": request.data_version,
+        }
+        result_hash = hashlib.sha256(
+            json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode()
+        ).hexdigest()
+        payload["result_hash"] = result_hash
+
+        if persist:
+            run_id = state.store.save_backtest_experiment(
+                strategy_name="sma_rolling_window",
+                strategy_version=_strategy_version(),
+                data_version=request.data_version,
+                data_start=str(backtest_candles[0].get("open_time")) if backtest_candles else None,
+                data_end=str(backtest_candles[-1].get("open_time")) if backtest_candles else None,
+                strategy_parameters={
+                    "short_window": request.short_window,
+                    "long_window": request.long_window,
+                    "initial_capital": request.initial_capital,
+                    "position_size_pct": request.position_size_pct,
+                    "window_size": request.window_size,
+                    "step_size": request.step_size or request.window_size,
+                },
+                execution_model=execution_model,
+                risk_model={
+                    "stop_loss_pct": request.stop_loss_pct,
+                    "take_profit_pct": request.take_profit_pct,
+                },
+                environment={
+                    "app_version": "0.1.0",
+                    "python_version": platform.python_version(),
+                    "model_version": "not_applicable:sma_rule",
+                    "backtest_engine": "event_driven_simulation_v1",
+                },
+                request=request.model_dump(mode="json", exclude_none=True),
+                result=payload,
+                result_hash=result_hash,
+                created_at=datetime.now(UTC).isoformat().replace("+00:00", "Z"),
+            )
+            payload["backtest_run_id"] = run_id
+        return payload
+
     def _run_grid_search(
         request: GridSearchRequest,
         state: AppState,
@@ -2910,6 +3005,15 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             payload["backtest_run_id"] = run_id
         return payload
 
+    @app.post("/api/v1/backtest/rolling")
+    async def rolling_backtest_endpoint(
+        request: RollingBacktestRequest,
+        state: AppState = Depends(get_state),
+    ):
+        """Run independent fixed-parameter SMA diagnostics over rolling windows."""
+
+        return _run_rolling_backtest(request, state, persist=True)
+
     @app.post("/api/v1/backtest/grid-search")
     async def grid_search_backtest_endpoint(
         request: GridSearchRequest,
@@ -2965,6 +3069,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         elif "short_windows" in raw_request and "long_windows" in raw_request:
             request = GridSearchRequest.model_validate(raw_request)
             replay = _run_grid_search(request, state, persist=False)
+        elif "window_size" in raw_request:
+            request = RollingBacktestRequest.model_validate(raw_request)
+            replay = _run_rolling_backtest(request, state, persist=False)
         else:
             request = BacktestRequest.model_validate(raw_request)
             replay = _run_backtest(request, state, persist=False)

@@ -220,6 +220,13 @@ class GridSearchRequest(BacktestRequest):
         return self
 
 
+class RollingBacktestRequest(BacktestRequest):
+    """Fixed-parameter SMA diagnostics over independently funded rolling windows."""
+
+    window_size: int = Field(..., ge=3, le=9_000)
+    step_size: int | None = Field(None, ge=1, le=9_000)
+
+
 class PortfolioStrategyRequest(BaseModel):
     """One explicitly weighted SMA strategy for a portfolio backtest."""
 
