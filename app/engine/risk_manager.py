@@ -9,7 +9,7 @@ from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime
 from typing import Any
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 from app.engine.live_trading_guard import LiveTradingGuard
 from app.engine.pipeline_types import RiskDecision
@@ -26,9 +26,23 @@ class RiskConfig(BaseModel):
 
     max_position_size: float = Field(1.0, gt=0, description="最大持仓数量")
     max_position_value: float = Field(100000, gt=0, description="单笔最大名义金额")
-    max_daily_order_notional: float = Field(5000, ge=0, description="单日最大下单名义金额；0 表示关闭")
+    max_daily_order_notional: float = Field(
+        5000, ge=0, description="单日最大下单名义金额；0 表示关闭"
+    )
     max_portfolio_exposure: float = Field(0, ge=0, description="组合最大总名义暴露；0 表示关闭")
-    max_asset_concentration_pct: float = Field(0, ge=0, le=1, description="单资产最大组合暴露占比；0 表示关闭")
+    max_asset_concentration_pct: float = Field(
+        0, ge=0, le=1, description="单资产最大组合暴露占比；0 表示关闭"
+    )
+    max_asset_group_concentration_pct: float = Field(
+        0,
+        ge=0,
+        le=1,
+        description="单资产分组最大组合暴露占比；0 表示关闭",
+    )
+    asset_groups: dict[str, tuple[str, ...]] = Field(
+        default_factory=dict,
+        description="资产分组到标准化交易对的显式映射；同一交易对只能属于一个分组",
+    )
     max_leverage: float = Field(5.0, ge=0, description="全局最大杠杆；0 表示不限制")
     stop_loss_pct: float = Field(0.05, gt=0, le=1, description="止损百分比")
     take_profit_pct: float = Field(0.10, gt=0, description="止盈百分比")
@@ -36,15 +50,44 @@ class RiskConfig(BaseModel):
     max_drawdown_pct: float = Field(0.20, gt=0, le=1, description="最大回撤百分比")
     max_orders_per_minute: int = Field(10, gt=0, description="每分钟最大订单数")
     max_consecutive_losses: int = Field(0, ge=0, description="连续亏损暂停阈值；0 表示关闭")
-    blocked_symbols: tuple[str, ...] = Field(default_factory=tuple, description="禁止开新仓的交易对")
+    blocked_symbols: tuple[str, ...] = Field(
+        default_factory=tuple, description="禁止开新仓的交易对"
+    )
     trading_start_hour_utc: int = Field(0, ge=0, le=23, description="允许交易起始 UTC 小时")
-    trading_end_hour_utc: int = Field(24, ge=1, le=24, description="允许交易结束 UTC 小时；24 表示当天结束")
+    trading_end_hour_utc: int = Field(
+        24, ge=1, le=24, description="允许交易结束 UTC 小时；24 表示当天结束"
+    )
 
     # Format: {"BTCUSDT": {"max_leverage": 3.0, "max_position_value": 500.0}}
     symbol_overrides: dict[str, dict[str, float]] = Field(
         default_factory=dict,
         description="Per-symbol risk overrides.",
     )
+
+    @field_validator("asset_groups")
+    @classmethod
+    def _normalize_asset_groups(
+        cls, asset_groups: dict[str, tuple[str, ...]]
+    ) -> dict[str, tuple[str, ...]]:
+        """Validate a deterministic, one-group-per-symbol classification."""
+        normalized_groups: dict[str, tuple[str, ...]] = {}
+        assigned_symbols: set[str] = set()
+        for raw_group, raw_symbols in asset_groups.items():
+            group = raw_group.strip()
+            if not group:
+                raise ValueError("资产分组名称不能为空")
+            symbols = tuple(
+                dict.fromkeys(symbol.strip().upper() for symbol in raw_symbols if symbol.strip())
+            )
+            if not symbols:
+                raise ValueError(f"资产分组 {group} 至少需要一个交易对")
+            duplicate = assigned_symbols.intersection(symbols)
+            if duplicate:
+                rendered = ", ".join(sorted(duplicate))
+                raise ValueError(f"交易对只能属于一个资产分组：{rendered}")
+            assigned_symbols.update(symbols)
+            normalized_groups[group] = symbols
+        return normalized_groups
 
 
 class RiskManager:
@@ -167,6 +210,21 @@ class RiskManager:
                         f"{self.config.max_asset_concentration_pct:.2%}"
                     )
 
+                asset_group = self._asset_group_for_symbol(normalized_symbol)
+                if (
+                    self.config.max_asset_group_concentration_pct > 0
+                    and exposure.total_notional > 0
+                    and asset_group is not None
+                ):
+                    group_name, group_symbols = asset_group
+                    group_concentration = projected_exposure.group_concentration(group_symbols)
+                    if group_concentration > self.config.max_asset_group_concentration_pct:
+                        return False, (
+                            f"资产分组 {group_name} 暴露占比 "
+                            f"{group_concentration:.2%} 超过限制 "
+                            f"{self.config.max_asset_group_concentration_pct:.2%}"
+                        )
+
             if leverage is not None:
                 leverage_cap = overrides.get("max_leverage", self.config.max_leverage)
                 if leverage_cap > 0 and leverage > leverage_cap:
@@ -244,9 +302,7 @@ class RiskManager:
         """Attach the engine-owned local position snapshot provider."""
         self._portfolio_exposure_provider = provider
 
-    async def _current_portfolio_exposure(
-        self, symbol: str, price: float
-    ) -> PortfolioExposure:
+    async def _current_portfolio_exposure(self, symbol: str, price: float) -> PortfolioExposure:
         """Read current gross exposure without coupling the risk layer to positions."""
         if self._portfolio_exposure_provider is None:
             return self._portfolio_exposure
@@ -259,6 +315,24 @@ class RiskManager:
             if configured_symbol.upper() == normalized_symbol:
                 return overrides
         return {}
+
+    def _asset_group_for_symbol(self, symbol: str) -> tuple[str, tuple[str, ...]] | None:
+        """Return the explicit asset group that contains a normalized symbol."""
+        normalized_symbol = symbol.upper()
+        for group_name, symbols in self.config.asset_groups.items():
+            if normalized_symbol in symbols:
+                return group_name, symbols
+        return None
+
+    def _asset_group_exposure(self, exposure: PortfolioExposure) -> dict[str, dict[str, float]]:
+        """Build JSON-safe configured group exposure state for status consumers."""
+        return {
+            group_name: {
+                "notional": exposure.group_notional(symbols),
+                "concentration": exposure.group_concentration(symbols),
+            }
+            for group_name, symbols in sorted(self.config.asset_groups.items())
+        }
 
     def _is_trading_hour(self, hour: int) -> bool:
         """Return whether an UTC hour is within the configured half-open window."""
@@ -344,6 +418,12 @@ class RiskManager:
                 "max_orders_per_minute": self.config.max_orders_per_minute,
                 "max_portfolio_exposure": self.config.max_portfolio_exposure,
                 "max_asset_concentration_pct": self.config.max_asset_concentration_pct,
+                "max_asset_group_concentration_pct": self.config.max_asset_group_concentration_pct,
+                "asset_groups": {
+                    name: list(symbols)
+                    for name, symbols in sorted(self.config.asset_groups.items())
+                },
+                "asset_group_exposure": self._asset_group_exposure(exposure),
                 "portfolio_exposure": exposure.as_dict(),
                 "max_leverage": self.config.max_leverage,
                 "blocked_symbols": list(self.config.blocked_symbols),

@@ -71,6 +71,8 @@ class RiskSettings(BaseModel):
     max_daily_order_notional: float = 5000.0
     max_portfolio_exposure: float = 0.0
     max_asset_concentration_pct: float = 0.0
+    max_asset_group_concentration_pct: float = 0.0
+    asset_groups: dict[str, tuple[str, ...]] = Field(default_factory=dict)
     max_leverage: float = 5.0
     max_consecutive_losses: int = 0
     blocked_symbols: tuple[str, ...] = ()
@@ -192,6 +194,10 @@ class Settings(BaseSettings):
     max_portfolio_exposure: float = Field(default=0.0, ge=0)
     # Share of gross exposure one asset may represent; 0 disables the cap.
     max_asset_concentration_pct: float = Field(default=0.0, ge=0, le=1)
+    # Share of gross exposure one configured asset group may represent; 0 disables it.
+    max_asset_group_concentration_pct: float = Field(default=0.0, ge=0, le=1)
+    # JSON object, e.g. {"layer1":["BTCUSDT","ETHUSDT"]}; no inferred classification.
+    risk_asset_groups: dict[str, tuple[str, ...]] = Field(default_factory=dict)
     # Explicit leverage is capped for contract orders; 0 disables the global cap.
     max_leverage: float = Field(default=5.0, ge=0)
     # 0 leaves the consecutive-loss circuit breaker disabled.
@@ -250,15 +256,15 @@ class Settings(BaseSettings):
     # docs/bot.md for the full command list and webhook setup.
     bot_enabled: bool = False
     bot_telegram_token: str = ""
-    bot_allowed_chat_ids: str = ""            # CSV, e.g. "-1001234567890,123456789"
+    bot_allowed_chat_ids: str = ""  # CSV, e.g. "-1001234567890,123456789"
     bot_api_base_url: str = "http://127.0.0.1:8000"
-    bot_api_key: str = ""                     # empty -> 降级到 auth_api_key
+    bot_api_key: str = ""  # empty -> 降级到 auth_api_key
     bot_request_timeout_seconds: float = 10.0
     bot_event_poll_interval_seconds: float = 5.0
     bot_daily_report_enabled: bool = True
     bot_daily_report_hour: int = 0
     bot_daily_report_minute: int = 5
-    bot_quiet_hours: str = ""                  # "22-8" 闭区间
+    bot_quiet_hours: str = ""  # "22-8" 闭区间
     bot_send_rate_per_second: float = 4.0
     bot_min_alert_level: str = "warning"
     bot_alert_fingerprint_cooldown_seconds: int = 300
@@ -268,7 +274,7 @@ class Settings(BaseSettings):
     bot_autopilot_enabled: bool = False
     bot_autopilot_live_order_enabled: bool = False
     bot_autopilot_exchange: str = "binance_usdm"
-    bot_autopilot_symbols: str = ""              # CSV, empty -> default_symbol
+    bot_autopilot_symbols: str = ""  # CSV, empty -> default_symbol
     bot_autopilot_cycle_seconds: int = Field(default=300, ge=60, le=3600)
     bot_autopilot_min_return_pct: float = Field(default=0.002, gt=0, le=0.2)
     bot_autopilot_max_order_notional: float = Field(default=25.0, gt=0)
@@ -348,9 +354,7 @@ class Settings(BaseSettings):
 
         raw = (self.bot_allowed_chat_ids or "").strip()
         chat_ids: tuple[int, ...] = tuple(
-            int(p)
-            for p in (s.strip() for s in raw.split(","))
-            if p and p.lstrip("-").isdigit()
+            int(p) for p in (s.strip() for s in raw.split(",")) if p and p.lstrip("-").isdigit()
         )
         quiet: tuple[int, int] | None = None
         quiet_raw = (self.bot_quiet_hours or "").strip()
@@ -408,6 +412,8 @@ class Settings(BaseSettings):
             max_daily_order_notional=self.max_daily_order_notional,
             max_portfolio_exposure=self.max_portfolio_exposure,
             max_asset_concentration_pct=self.max_asset_concentration_pct,
+            max_asset_group_concentration_pct=self.max_asset_group_concentration_pct,
+            asset_groups=self.risk_asset_groups,
             max_leverage=self.max_leverage,
             max_consecutive_losses=self.max_consecutive_losses,
             blocked_symbols=tuple(self.risk_blocked_symbols),
@@ -425,7 +431,9 @@ class Settings(BaseSettings):
             "bitget": self.bitget,
             "okx_swap": self.okx.model_copy(update={"enabled": self.okx_swap_enabled}),
             "binance_usdm": self.binance.model_copy(update={"enabled": self.binance_usdm_enabled}),
-            "bitget_usdt_futures": self.bitget.model_copy(update={"enabled": self.bitget_usdt_futures_enabled}),
+            "bitget_usdt_futures": self.bitget.model_copy(
+                update={"enabled": self.bitget_usdt_futures_enabled}
+            ),
         }
         return exchanges.get(name.lower())
 
