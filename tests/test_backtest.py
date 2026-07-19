@@ -12,6 +12,7 @@ from app.engine.backtest import (
     PortfolioStrategyConfig,
     run_multi_sma_backtest,
     run_sma_backtest,
+    run_sma_grid_search,
 )
 
 
@@ -244,4 +245,46 @@ def test_multi_strategy_backtest_rejects_incomplete_or_duplicate_allocations() -
                 PortfolioStrategyConfig(name="same", short_window=2, long_window=4, weight=0.5),
                 PortfolioStrategyConfig(name="SAME", short_window=3, long_window=5, weight=0.5),
             ],
+        )
+
+
+def test_sma_grid_search_returns_all_valid_pairs_in_deterministic_rank_order() -> None:
+    candles = _candles([100, 100, 101, 104, 107, 110, 105, 100, 97, 101, 106, 111])
+
+    result = run_sma_grid_search(
+        candles,
+        short_windows=[3, 2, 2],
+        long_windows=[5, 4, 4],
+        initial_capital=10_000,
+        fee_rate=0,
+    )
+
+    assert result.short_windows == [2, 3]
+    assert result.long_windows == [4, 5]
+    assert len(result.trials) == 4
+    assert result.best_trial == result.trials[0]
+    ranking = [
+        (
+            -trial.result.total_pnl,
+            trial.result.max_drawdown,
+            -trial.result.trades,
+            trial.parameters.short_window,
+            trial.parameters.long_window,
+        )
+        for trial in result.trials
+    ]
+    assert ranking == sorted(ranking)
+
+
+def test_sma_grid_search_rejects_invalid_or_unbounded_candidate_sets() -> None:
+    candles = _candles([100] * 10)
+
+    with pytest.raises(ValueError, match="at least one"):
+        run_sma_grid_search(candles, short_windows=[5], long_windows=[5])
+    with pytest.raises(ValueError, match="maximum is 2"):
+        run_sma_grid_search(
+            candles,
+            short_windows=[1, 2],
+            long_windows=[3, 4],
+            max_candidates=2,
         )

@@ -199,6 +199,27 @@ class BacktestRequest(BaseModel):
         return self
 
 
+class GridSearchRequest(BacktestRequest):
+    """Bounded SMA parameter grid evaluated on one deterministic data sample."""
+
+    short_windows: list[int] = Field(..., min_length=1, max_length=16)
+    long_windows: list[int] = Field(..., min_length=1, max_length=16)
+
+    @model_validator(mode="after")
+    def _has_bounded_valid_grid(self) -> GridSearchRequest:
+        valid_pairs = [
+            (short_window, long_window)
+            for short_window in set(self.short_windows)
+            for long_window in set(self.long_windows)
+            if short_window < long_window
+        ]
+        if not valid_pairs:
+            raise ValueError("the grid must contain at least one short_window < long_window pair")
+        if len(valid_pairs) > 64:
+            raise ValueError("the grid may contain at most 64 valid parameter pairs")
+        return self
+
+
 class PortfolioStrategyRequest(BaseModel):
     """One explicitly weighted SMA strategy for a portfolio backtest."""
 

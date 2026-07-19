@@ -86,6 +86,35 @@ class PortfolioStrategyConfig:
 
 
 @dataclass(frozen=True)
+class SMAParameters:
+    """One SMA window pair evaluated by a deterministic grid search."""
+
+    short_window: int
+    long_window: int
+
+
+@dataclass(frozen=True)
+class GridSearchTrial:
+    """A ranked parameter pair and its full single-strategy result."""
+
+    parameters: SMAParameters
+    result: BacktestResult
+
+
+@dataclass(frozen=True)
+class GridSearchResult:
+    """Deterministically ranked SMA grid-search output."""
+
+    short_windows: list[int]
+    long_windows: list[int]
+    trials: list[GridSearchTrial]
+
+    @property
+    def best_trial(self) -> GridSearchTrial:
+        return self.trials[0]
+
+
+@dataclass(frozen=True)
 class PortfolioStrategyResult:
     """The capital allocation and result for one portfolio strategy."""
 
@@ -333,6 +362,86 @@ def run_sma_backtest(
     )
 
 
+def run_sma_grid_search(
+    candles: list[dict[str, Any]],
+    *,
+    short_windows: Sequence[int],
+    long_windows: Sequence[int],
+    initial_capital: float = 10_000.0,
+    position_size_pct: float = 1.0,
+    fee_rate: float = 0.001,
+    slippage_rate: float = 0.0,
+    max_volume_participation: float | None = None,
+    stop_loss_pct: float | None = None,
+    take_profit_pct: float | None = None,
+    max_candidates: int = 64,
+) -> GridSearchResult:
+    """Evaluate every valid SMA pair and rank by realized total PnL.
+
+    All candidates start from the same capital and use the same candle series,
+    execution model and risk model.  Rankings are deterministic: total PnL
+    descending, then lower drawdown, then more closed trades, followed by the
+    window values.  This is an in-sample research primitive, not OOS evidence.
+    """
+
+    if max_candidates <= 0:
+        raise ValueError("max_candidates must be positive")
+    normalized_shorts = sorted(set(short_windows))
+    normalized_longs = sorted(set(long_windows))
+    if not normalized_shorts or not normalized_longs:
+        raise ValueError("short_windows and long_windows must not be empty")
+    if any(type(value) is not int or value <= 0 for value in normalized_shorts):
+        raise ValueError("short_windows must contain positive integers")
+    if any(type(value) is not int or value <= 0 for value in normalized_longs):
+        raise ValueError("long_windows must contain positive integers")
+
+    parameters = [
+        SMAParameters(short_window=short_window, long_window=long_window)
+        for short_window in normalized_shorts
+        for long_window in normalized_longs
+        if short_window < long_window
+    ]
+    if not parameters:
+        raise ValueError("the grid must contain at least one short_window < long_window pair")
+    if len(parameters) > max_candidates:
+        raise ValueError(
+            f"grid contains {len(parameters)} valid pairs; maximum is {max_candidates}"
+        )
+
+    trials = [
+        GridSearchTrial(
+            parameters=parameter,
+            result=run_sma_backtest(
+                candles=candles,
+                short_window=parameter.short_window,
+                long_window=parameter.long_window,
+                initial_capital=initial_capital,
+                position_size_pct=position_size_pct,
+                fee_rate=fee_rate,
+                slippage_rate=slippage_rate,
+                max_volume_participation=max_volume_participation,
+                stop_loss_pct=stop_loss_pct,
+                take_profit_pct=take_profit_pct,
+            ),
+        )
+        for parameter in parameters
+    ]
+    trials.sort(
+        key=lambda trial: (
+            -trial.result.total_pnl,
+            trial.result.max_drawdown,
+            -trial.result.trades,
+            trial.parameters.short_window,
+            trial.parameters.long_window,
+        )
+    )
+    return GridSearchResult(
+        short_windows=normalized_shorts,
+        long_windows=normalized_longs,
+        trials=trials,
+    )
+
+
 def run_multi_sma_backtest(
     candles: list[dict[str, Any]],
     strategies: Sequence[PortfolioStrategyConfig],
@@ -454,6 +563,10 @@ __all__ = [
     "PortfolioBacktestResult",
     "PortfolioStrategyConfig",
     "PortfolioStrategyResult",
+    "GridSearchResult",
+    "GridSearchTrial",
+    "SMAParameters",
     "run_multi_sma_backtest",
+    "run_sma_grid_search",
     "run_sma_backtest",
 ]

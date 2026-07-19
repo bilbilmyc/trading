@@ -113,6 +113,85 @@ def test_backtest_default_sma(tmp_path) -> None:
         assert "total_pnl" in body
 
 
+def test_grid_search_backtest_returns_ranked_candidates(tmp_path) -> None:
+    with TestClient(create_app(_settings(sqlite_path=str(tmp_path / "h.sqlite3")))) as c:
+        response = c.post(
+            "/api/v1/backtest/grid-search",
+            json={
+                "klines": _candles(30),
+                "fee_rate": 0,
+                "short_windows": [2, 3],
+                "long_windows": [4, 6],
+            },
+        )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["search"]["candidate_count"] == 4
+    assert body["search"]["in_sample_only"] is True
+    assert len(body["candidates"]) == 4
+    assert body["best"]["parameters"] == body["candidates"][0]["parameters"]
+    assert body["backtest_run_id"] > 0
+
+
+def test_grid_search_data_version_can_be_reproduced(tmp_path) -> None:
+    catalog_candles = [
+        {
+            "timestamp": f"2026-01-{1 + index // 24:02d}T{index % 24:02d}:00:00Z",
+            "open": 100.0 + index * 0.1,
+            "high": 105.0 + index * 0.1,
+            "low": 95.0 + index * 0.1,
+            "close": 100.0 + (index % 5) * 0.5,
+            "volume": 10.0,
+        }
+        for index in range(30)
+    ]
+    settings = _settings(
+        sqlite_path=str(tmp_path / "h.sqlite3"),
+        market_data_catalog_path=str(tmp_path / "market_data.duckdb"),
+        market_data_parquet_dir=str(tmp_path / "market_data"),
+    )
+    with TestClient(create_app(settings)) as c:
+        imported = c.post(
+            "/api/v1/market-data/datasets",
+            json={
+                "symbol": "BTCUSDT",
+                "timeframe": "1h",
+                "source": "test",
+                "candles": catalog_candles,
+            },
+        )
+        assert imported.status_code == 201
+        response = c.post(
+            "/api/v1/backtest/grid-search",
+            json={
+                "data_version": imported.json()["version"],
+                "fee_rate": 0,
+                "short_windows": [2, 3],
+                "long_windows": [4, 6],
+            },
+        )
+        assert response.status_code == 200
+        reproduced = c.post(f"/api/v1/backtests/{response.json()['backtest_run_id']}/reproduce")
+
+    assert reproduced.status_code == 200
+    assert reproduced.json()["reproducible"] is True
+
+
+def test_grid_search_backtest_rejects_more_than_64_valid_pairs(tmp_path) -> None:
+    with TestClient(create_app(_settings(sqlite_path=str(tmp_path / "h.sqlite3")))) as c:
+        response = c.post(
+            "/api/v1/backtest/grid-search",
+            json={
+                "klines": _candles(30),
+                "short_windows": list(range(1, 17)),
+                "long_windows": list(range(17, 33)),
+            },
+        )
+
+    assert response.status_code == 422
+
+
 def test_portfolio_backtest_returns_aggregate_and_strategy_attribution(tmp_path) -> None:
     with TestClient(create_app(_settings(sqlite_path=str(tmp_path / "h.sqlite3")))) as c:
         response = c.post(
