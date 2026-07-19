@@ -197,7 +197,11 @@ class LiveOrderPipeline:
                     )
                     return Err(TradeError(stage="place", reason=f"price fetch failed: {exc}"))
 
-            decision = await self._risk_gate.check(signal, price)
+            exchange_aware_check = getattr(self._risk_gate, "check_with_exchange", None)
+            if callable(exchange_aware_check):
+                decision = await exchange_aware_check(signal, price, exchange=self._exchange_name)
+            else:
+                decision = await self._risk_gate.check(signal, price)
             if not decision.allowed:
                 self._observer.record(
                     TradeEvent(

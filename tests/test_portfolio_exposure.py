@@ -4,6 +4,7 @@ from types import SimpleNamespace
 
 import pytest
 
+from app.engine.correlation import CorrelationSnapshot
 from app.engine.portfolio_exposure import PortfolioExposure
 from app.engine.risk_manager import RiskConfig, RiskManager
 from config.settings import Settings
@@ -175,3 +176,65 @@ def test_settings_passes_asset_group_limits_to_risk_config() -> None:
 
     assert risk.max_asset_group_concentration_pct == 0.7
     assert risk.asset_groups == {"layer1": ("BTCUSDT", "ETHUSDT")}
+
+
+@pytest.mark.asyncio
+async def test_position_correlation_cap_blocks_only_eligible_positive_pairs() -> None:
+    manager = RiskManager(
+        RiskConfig(
+            max_position_value=10_000.0,
+            max_position_correlation=0.8,
+            correlation_min_samples=4,
+            correlation_lookback_candles=8,
+        )
+    )
+
+    async def correlation_provider(
+        symbol: str, exchange: str | None, interval: str, lookback: int, samples: int
+    ) -> CorrelationSnapshot:
+        assert (symbol, exchange, interval, lookback, samples) == (
+            "ETHUSDT",
+            "binance_usdm",
+            "1h",
+            8,
+            4,
+        )
+        return CorrelationSnapshot(
+            symbol=symbol,
+            correlations={"BTCUSDT": 0.91},
+            sample_sizes={"BTCUSDT": 4},
+        )
+
+    manager.set_correlation_provider(correlation_provider)
+    allowed, reason = await manager.check_order(
+        "ETHUSDT", "buy", 1.0, 100.0, exchange="binance_usdm"
+    )
+    status = await manager.get_risk_status()
+
+    assert allowed is False
+    assert "BTCUSDT" in reason
+    assert status["correlation_snapshot"]["sample_sizes"] == {"BTCUSDT": 4}
+
+
+@pytest.mark.asyncio
+async def test_missing_correlation_samples_do_not_block_or_apply_to_reductions() -> None:
+    manager = RiskManager(
+        RiskConfig(
+            max_position_value=10_000.0,
+            max_position_correlation=0.1,
+        )
+    )
+
+    async def correlation_provider(*_args: object) -> CorrelationSnapshot:
+        return CorrelationSnapshot(symbol="ETHUSDT")
+
+    manager.set_correlation_provider(correlation_provider)
+    allowed, reason = await manager.check_order("ETHUSDT", "buy", 1.0, 100.0)
+    reducing, reducing_reason = await manager.check_order(
+        "ETHUSDT", "sell", 1.0, 100.0, increases_exposure=False
+    )
+
+    assert allowed is True
+    assert reason == "通过风控检查"
+    assert reducing is True
+    assert reducing_reason == "通过风控检查"
