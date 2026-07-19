@@ -161,6 +161,98 @@ def test_backtest_default_sma(tmp_path) -> None:
         assert "total_pnl" in body
 
 
+def test_bootstrap_backtest_returns_reproducible_risk_distribution(tmp_path) -> None:
+    with TestClient(create_app(_settings(sqlite_path=str(tmp_path / "h.sqlite3")))) as c:
+        response = c.post(
+            "/api/v1/backtest/bootstrap",
+            json={
+                "klines": _monte_carlo_candles(),
+                "short_window": 2,
+                "long_window": 4,
+                "fee_rate": 0,
+                "simulations": 60,
+                "seed": 7,
+                "drawdown_threshold_pct": 0.2,
+            },
+        )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["bootstrap"]["sampling"] == "trade_pnl_bootstrap_with_replacement"
+    assert body["bootstrap"]["simulations"] == 60
+    assert body["bootstrap"]["ending_equity_p05"] < body["bootstrap"]["ending_equity_p95"]
+    assert body["baseline"]["trades"] > 0
+    assert body["backtest_run_id"] > 0
+
+
+def test_bootstrap_data_version_can_be_reproduced(tmp_path) -> None:
+    catalog_candles = [
+        {
+            "timestamp": f"2026-01-{1 + index // 24:02d}T{index % 24:02d}:00:00Z",
+            "open": candle["open"],
+            "high": candle["high"],
+            "low": candle["low"],
+            "close": candle["close"],
+            "volume": candle["volume"],
+        }
+        for index, candle in enumerate(_monte_carlo_candles())
+    ]
+    settings = _settings(
+        sqlite_path=str(tmp_path / "h.sqlite3"),
+        market_data_catalog_path=str(tmp_path / "market_data.duckdb"),
+        market_data_parquet_dir=str(tmp_path / "market_data"),
+    )
+    with TestClient(create_app(settings)) as c:
+        imported = c.post(
+            "/api/v1/market-data/datasets",
+            json={
+                "symbol": "BTCUSDT",
+                "timeframe": "1h",
+                "source": "test",
+                "candles": catalog_candles,
+            },
+        )
+        assert imported.status_code == 201
+        response = c.post(
+            "/api/v1/backtest/bootstrap",
+            json={
+                "data_version": imported.json()["version"],
+                "short_window": 2,
+                "long_window": 4,
+                "fee_rate": 0,
+                "simulations": 40,
+                "seed": 7,
+            },
+        )
+        assert response.status_code == 200
+        reproduced = c.post(f"/api/v1/backtests/{response.json()['backtest_run_id']}/reproduce")
+
+    assert reproduced.status_code == 200
+    assert reproduced.json()["reproducible"] is True
+
+
+def test_bootstrap_backtest_rejects_baselines_without_completed_trades(tmp_path) -> None:
+    flat_candles = [
+        {
+            "open_time": f"2026-01-01T00:{index:02d}:00",
+            "open": 100.0,
+            "high": 101.0,
+            "low": 99.0,
+            "close": 100.0,
+            "volume": 1_000.0,
+        }
+        for index in range(12)
+    ]
+    with TestClient(create_app(_settings(sqlite_path=str(tmp_path / "h.sqlite3")))) as c:
+        response = c.post(
+            "/api/v1/backtest/bootstrap",
+            json={"klines": flat_candles, "short_window": 2, "long_window": 4},
+        )
+
+    assert response.status_code == 400
+    assert "completed trade" in response.json()["detail"]
+
+
 def test_monte_carlo_backtest_returns_reproducible_risk_distribution(tmp_path) -> None:
     with TestClient(create_app(_settings(sqlite_path=str(tmp_path / "h.sqlite3")))) as c:
         response = c.post(
