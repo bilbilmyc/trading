@@ -2,10 +2,6 @@
 
 from __future__ import annotations
 
-import json
-from typing import Any, Dict
-
-import pytest
 from fastapi.testclient import TestClient
 
 from app.api.server import create_app
@@ -117,11 +113,109 @@ def test_backtest_default_sma(tmp_path) -> None:
         assert "total_pnl" in body
 
 
+def test_portfolio_backtest_returns_aggregate_and_strategy_attribution(tmp_path) -> None:
+    with TestClient(create_app(_settings(sqlite_path=str(tmp_path / "h.sqlite3")))) as c:
+        response = c.post(
+            "/api/v1/backtest/portfolio",
+            json={
+                "klines": _candles(30),
+                "initial_capital": 10_000,
+                "fee_rate": 0,
+                "strategies": [
+                    {"name": "fast", "short_window": 2, "long_window": 4, "weight": 0.6},
+                    {"name": "slow", "short_window": 3, "long_window": 6, "weight": 0.4},
+                ],
+            },
+        )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["portfolio"]["allocation_model"] == "fixed_weight_separate_capital"
+    assert [item["allocated_capital"] for item in body["portfolio"]["strategies"]] == [
+        6000.0,
+        4000.0,
+    ]
+    assert body["final_equity"] == round(
+        sum(item["result"]["final_equity"] for item in body["portfolio"]["strategies"]), 4
+    )
+    assert body["backtest_run_id"] > 0
+
+
+def test_portfolio_backtest_data_version_can_be_reproduced(tmp_path) -> None:
+    catalog_path = tmp_path / "market_data.duckdb"
+    parquet_path = tmp_path / "market_data"
+    catalog_candles = [
+        {
+            "timestamp": f"2026-01-{1 + index // 24:02d}T{index % 24:02d}:00:00Z",
+            "open": 100.0 + index * 0.1,
+            "high": 105.0 + index * 0.1,
+            "low": 95.0 + index * 0.1,
+            "close": 100.0 + (index % 5) * 0.5,
+            "volume": 10.0,
+        }
+        for index in range(30)
+    ]
+    settings = _settings(
+        sqlite_path=str(tmp_path / "h.sqlite3"),
+        market_data_catalog_path=str(catalog_path),
+        market_data_parquet_dir=str(parquet_path),
+    )
+    with TestClient(create_app(settings)) as c:
+        imported = c.post(
+            "/api/v1/market-data/datasets",
+            json={
+                "symbol": "BTCUSDT",
+                "timeframe": "1h",
+                "source": "test",
+                "candles": catalog_candles,
+            },
+        )
+        assert imported.status_code == 201
+        response = c.post(
+            "/api/v1/backtest/portfolio",
+            json={
+                "data_version": imported.json()["version"],
+                "initial_capital": 10_000,
+                "fee_rate": 0,
+                "strategies": [
+                    {"name": "fast", "short_window": 2, "long_window": 4, "weight": 0.5},
+                    {"name": "slow", "short_window": 3, "long_window": 6, "weight": 0.5},
+                ],
+            },
+        )
+        assert response.status_code == 200
+        reproduced = c.post(f"/api/v1/backtests/{response.json()['backtest_run_id']}/reproduce")
+
+    assert reproduced.status_code == 200
+    assert reproduced.json()["reproducible"] is True
+
+
+def test_portfolio_backtest_requires_complete_explicit_weights(tmp_path) -> None:
+    with TestClient(create_app(_settings(sqlite_path=str(tmp_path / "h.sqlite3")))) as c:
+        response = c.post(
+            "/api/v1/backtest/portfolio",
+            json={
+                "klines": _candles(30),
+                "strategies": [
+                    {"name": "one", "short_window": 2, "long_window": 4, "weight": 0.4},
+                    {"name": "two", "short_window": 3, "long_window": 6, "weight": 0.4},
+                ],
+            },
+        )
+
+    assert response.status_code == 422
+
+
 def test_backtest_short_window_must_be_smaller(tmp_path) -> None:
     with TestClient(create_app(_settings(sqlite_path=str(tmp_path / "h.sqlite3")))) as c:
-        r = c.post("/api/v1/backtest", json={
-            "klines": _candles(30), "short_window": 30, "long_window": 5,
-        })
+        r = c.post(
+            "/api/v1/backtest",
+            json={
+                "klines": _candles(30),
+                "short_window": 30,
+                "long_window": 5,
+            },
+        )
         assert r.status_code == 400
 
 

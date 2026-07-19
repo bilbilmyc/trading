@@ -7,7 +7,12 @@ from typing import Any
 
 import pytest
 
-from app.engine.backtest import BacktestResult, run_sma_backtest
+from app.engine.backtest import (
+    BacktestResult,
+    PortfolioStrategyConfig,
+    run_multi_sma_backtest,
+    run_sma_backtest,
+)
 
 
 def _candles(prices: list[float]) -> list[dict[str, Any]]:
@@ -200,3 +205,43 @@ def test_backtest_fills_stop_at_open_when_price_gaps_below_trigger() -> None:
 
     assert result.trade_history[0].exit_reason == "stop_loss"
     assert result.trade_history[0].exit_price == 80
+
+
+def test_multi_strategy_backtest_aggregates_independently_allocated_equity() -> None:
+    candles = _candles([100, 100, 101, 103, 106, 108, 104, 100, 98, 101, 105, 109])
+    strategies = [
+        PortfolioStrategyConfig(name="fast", short_window=2, long_window=4, weight=0.6),
+        PortfolioStrategyConfig(name="slow", short_window=3, long_window=5, weight=0.4),
+    ]
+
+    result = run_multi_sma_backtest(candles, strategies, initial_capital=10_000, fee_rate=0)
+
+    assert result.initial_capital == 10_000
+    assert len(result.strategies) == 2
+    assert len(result.equity_curve) == len(candles)
+    assert result.final_equity == round(
+        sum(item.result.final_equity for item in result.strategies), 4
+    )
+    assert result.equity_curve[-1] == result.final_equity
+    assert [item.allocated_capital for item in result.strategies] == [6000.0, 4000.0]
+
+
+def test_multi_strategy_backtest_rejects_incomplete_or_duplicate_allocations() -> None:
+    candles = _candles([100] * 8)
+
+    with pytest.raises(ValueError, match="sum to 1.0"):
+        run_multi_sma_backtest(
+            candles,
+            [
+                PortfolioStrategyConfig(name="one", short_window=2, long_window=4, weight=0.4),
+                PortfolioStrategyConfig(name="two", short_window=3, long_window=5, weight=0.4),
+            ],
+        )
+    with pytest.raises(ValueError, match="duplicate"):
+        run_multi_sma_backtest(
+            candles,
+            [
+                PortfolioStrategyConfig(name="same", short_window=2, long_window=4, weight=0.5),
+                PortfolioStrategyConfig(name="SAME", short_window=3, long_window=5, weight=0.5),
+            ],
+        )

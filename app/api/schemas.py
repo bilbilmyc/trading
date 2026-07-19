@@ -144,7 +144,6 @@ class AIDecisionOutcomeRequest(BaseModel):
     observation_window: str = Field("", max_length=64)
 
 
-
 class SizingRequest(BaseModel):
     """Position-sizing request body.
 
@@ -197,6 +196,36 @@ class BacktestRequest(BaseModel):
             raise ValueError("start must be earlier than or equal to end")
         if self.klines is not None and (self.start is not None or self.end is not None):
             raise ValueError("start and end are only supported when data_version is provided")
+        return self
+
+
+class PortfolioStrategyRequest(BaseModel):
+    """One explicitly weighted SMA strategy for a portfolio backtest."""
+
+    name: str = Field(..., min_length=1, max_length=80)
+    short_window: int = Field(..., gt=0)
+    long_window: int = Field(..., gt=0)
+    weight: float = Field(..., gt=0.0, le=1.0)
+
+    @model_validator(mode="after")
+    def _has_valid_sma_windows(self) -> PortfolioStrategyRequest:
+        if self.short_window >= self.long_window:
+            raise ValueError("short_window must be smaller than long_window")
+        return self
+
+
+class PortfolioBacktestRequest(BacktestRequest):
+    """A deterministic, fixed-weight portfolio of independent SMA backtests."""
+
+    strategies: list[PortfolioStrategyRequest] = Field(..., min_length=2, max_length=20)
+
+    @model_validator(mode="after")
+    def _has_complete_portfolio_weights(self) -> PortfolioBacktestRequest:
+        names = [strategy.name.strip().casefold() for strategy in self.strategies]
+        if len(names) != len(set(names)):
+            raise ValueError("portfolio strategy names must be unique")
+        if abs(sum(strategy.weight for strategy in self.strategies) - 1.0) > 1e-9:
+            raise ValueError("portfolio strategy weights must sum to 1.0")
         return self
 
 

@@ -48,6 +48,7 @@ from app.api.schemas import (
     MarketDataImportRequest,
     OrderRequest,
     PaperResetRequest,
+    PortfolioBacktestRequest,
     ReconciliationRecoveryRequest,
     SignalRunnerRequest,
     SizingRequest,
@@ -2616,6 +2617,193 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             payload["backtest_run_id"] = run_id
         return payload
 
+    def _backtest_metrics_payload(result: Any) -> dict[str, Any]:
+        """Serialize one engine result without experiment-specific metadata."""
+
+        return {
+            "initial_capital": result.initial_capital,
+            "final_equity": result.final_equity,
+            "total_pnl": result.total_pnl,
+            "trades": result.trades,
+            "win_rate": result.win_rate,
+            "max_drawdown": result.max_drawdown,
+            "equity_curve": result.equity_curve,
+            "total_fees": result.total_fees,
+            "gross_pnl": result.gross_pnl,
+            "total_return_pct": result.total_return_pct,
+            "profit_factor": result.profit_factor,
+            "trade_history": [
+                {
+                    "entry_index": trade.entry_index,
+                    "exit_index": trade.exit_index,
+                    "entry_time": _serialize_kline({"value": trade.entry_time})["value"],
+                    "exit_time": _serialize_kline({"value": trade.exit_time})["value"],
+                    "quantity": trade.quantity,
+                    "entry_price": trade.entry_price,
+                    "exit_price": trade.exit_price,
+                    "gross_pnl": trade.gross_pnl,
+                    "fees": trade.fees,
+                    "net_pnl": trade.net_pnl,
+                    "exit_reason": trade.exit_reason,
+                }
+                for trade in result.trade_history
+            ],
+            "fill_history": [
+                {
+                    "order_id": fill.order_id,
+                    "index": fill.index,
+                    "time": _serialize_kline({"value": fill.time})["value"],
+                    "side": fill.side,
+                    "requested_quantity": fill.requested_quantity,
+                    "filled_quantity": fill.filled_quantity,
+                    "price": fill.price,
+                    "fee": fill.fee,
+                    "remaining_quantity": fill.remaining_quantity,
+                    "status": fill.status,
+                    "reason": fill.reason,
+                }
+                for fill in result.fill_history
+            ],
+        }
+
+    def _run_portfolio_backtest(
+        request: PortfolioBacktestRequest,
+        state: AppState,
+        *,
+        persist: bool,
+    ) -> dict[str, Any]:
+        """Run and optionally persist a fixed-weight SMA portfolio experiment."""
+
+        from app.engine.backtest import PortfolioStrategyConfig, run_multi_sma_backtest
+
+        try:
+            if request.data_version is not None:
+                candles = state.market_data.query_candles(
+                    request.data_version,
+                    start=request.start,
+                    end=request.end,
+                    require_quality=True,
+                )
+            else:
+                candles = request.klines or []
+            if not candles:
+                raise MarketDataError("the requested dataset range contains no candles")
+            backtest_candles = [
+                {**candle, "open_time": candle.get("open_time", candle.get("timestamp"))}
+                for candle in candles
+            ]
+            result = run_multi_sma_backtest(
+                candles=backtest_candles,
+                strategies=[
+                    PortfolioStrategyConfig(
+                        name=strategy.name,
+                        short_window=strategy.short_window,
+                        long_window=strategy.long_window,
+                        weight=strategy.weight,
+                    )
+                    for strategy in request.strategies
+                ],
+                initial_capital=request.initial_capital,
+                position_size_pct=request.position_size_pct,
+                fee_rate=request.fee_rate,
+                slippage_rate=request.slippage_rate,
+                max_volume_participation=request.max_volume_participation,
+                stop_loss_pct=request.stop_loss_pct,
+                take_profit_pct=request.take_profit_pct,
+            )
+        except DatasetNotFoundError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except DatasetQualityError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        except (KeyError, MarketDataError, ValueError, TypeError) as exc:
+            raise HTTPException(
+                status_code=400, detail=f"Invalid portfolio backtest data: {exc}"
+            ) from exc
+
+        execution_model = {
+            "signal_execution": "next_bar_open",
+            "fee_rate": request.fee_rate,
+            "slippage_rate": request.slippage_rate,
+            "max_volume_participation": request.max_volume_participation,
+            "volume_limit_behavior": "partial_fill_then_cancel",
+            "capital_allocation": "fixed_weight_separate_capital",
+        }
+        payload: dict[str, Any] = {
+            "initial_capital": result.initial_capital,
+            "final_equity": result.final_equity,
+            "total_pnl": result.total_pnl,
+            "trades": result.trades,
+            "win_rate": result.win_rate,
+            "max_drawdown": result.max_drawdown,
+            "equity_curve": result.equity_curve,
+            "total_fees": result.total_fees,
+            "gross_pnl": result.gross_pnl,
+            "total_return_pct": result.total_return_pct,
+            "profit_factor": result.profit_factor,
+            "portfolio": {
+                "allocation_model": "fixed_weight_separate_capital",
+                "strategies": [
+                    {
+                        "name": item.name,
+                        "weight": item.weight,
+                        "allocated_capital": item.allocated_capital,
+                        "result": _backtest_metrics_payload(item.result),
+                    }
+                    for item in result.strategies
+                ],
+            },
+            "execution_model": execution_model,
+            "klines_used": [_serialize_kline(kline) for kline in candles],
+            "data_version": request.data_version,
+        }
+        result_hash = hashlib.sha256(
+            json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode()
+        ).hexdigest()
+        payload["result_hash"] = result_hash
+
+        if persist:
+            strategy_parameters = {
+                "strategies": [strategy.model_dump() for strategy in request.strategies],
+                "initial_capital": request.initial_capital,
+                "position_size_pct": request.position_size_pct,
+            }
+            risk_model = {
+                "stop_loss_pct": request.stop_loss_pct,
+                "take_profit_pct": request.take_profit_pct,
+            }
+            environment = {
+                "app_version": "0.1.0",
+                "python_version": platform.python_version(),
+                "model_version": "not_applicable:sma_rule",
+                "backtest_engine": "event_driven_simulation_v1",
+            }
+            run_id = state.store.save_backtest_experiment(
+                strategy_name="sma_portfolio",
+                strategy_version=_strategy_version(),
+                data_version=request.data_version,
+                data_start=str(backtest_candles[0].get("open_time")) if backtest_candles else None,
+                data_end=str(backtest_candles[-1].get("open_time")) if backtest_candles else None,
+                strategy_parameters=strategy_parameters,
+                execution_model=execution_model,
+                risk_model=risk_model,
+                environment=environment,
+                request=request.model_dump(mode="json", exclude_none=True),
+                result=payload,
+                result_hash=result_hash,
+                created_at=datetime.now(UTC).isoformat().replace("+00:00", "Z"),
+            )
+            payload["backtest_run_id"] = run_id
+        return payload
+
+    @app.post("/api/v1/backtest/portfolio")
+    async def portfolio_backtest_endpoint(
+        request: PortfolioBacktestRequest,
+        state: AppState = Depends(get_state),
+    ):
+        """Run a deterministic fixed-weight portfolio of SMA strategies."""
+
+        return _run_portfolio_backtest(request, state, persist=True)
+
     @app.post("/api/v1/backtest")
     async def backtest_endpoint(
         request: BacktestRequest,
@@ -2646,8 +2834,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 status_code=409,
                 detail="only data-version-bound backtests can be reproduced through the catalog",
             )
-        request = BacktestRequest.model_validate(run["request"])
-        replay = _run_backtest(request, state, persist=False)
+        raw_request = run["request"]
+        if "strategies" in raw_request:
+            request = PortfolioBacktestRequest.model_validate(raw_request)
+            replay = _run_portfolio_backtest(request, state, persist=False)
+        else:
+            request = BacktestRequest.model_validate(raw_request)
+            replay = _run_backtest(request, state, persist=False)
         return {
             "run_id": run_id,
             "expected_result_hash": run["result_hash"],
