@@ -90,6 +90,7 @@ SQLite 文件位置 `data/trading.sqlite3`：
 | 单交易对集中度 | `MAX_ASSET_CONCENTRATION_PCT` | `0` | 按标准化交易对聚合跨交易所本地持仓；已有组合时，新开/加仓后的该交易对毛暴露占比不得超过比例，`0` 关闭。 |
 | 资产分组集中度 | `MAX_ASSET_GROUP_CONCENTRATION_PCT` + `RISK_ASSET_GROUPS` | `0` + `{}` | 对显式配置的交易对分组聚合本地毛暴露；已有组合时，新开/加仓后的分组占比不得超过比例。每个交易对只能属于一个分组，未映射交易对不猜测分类。 |
 | 持仓相关性 | `MAX_POSITION_CORRELATION` | `0` | 对候选标的与本地非零持仓拉取同周期 K 线，仅在至少 `CORRELATION_MIN_SAMPLES` 个对齐收益样本齐全时拦截超过阈值的**正**相关；数据不足或数据源不可用时不猜测、不拦截，并在风险状态中留下证据。 |
+| 波动率自适应仓位 | `VOLATILITY_SIZING_ENABLED` + `VOLATILITY_*` | `false` | 启用后从候选下单交易所获取带时间戳的 OHLC K 线，按 ATR/最新收盘价计算波动率；高于 `VOLATILITY_TARGET_ATR_PCT` 时按比例收紧 `MAX_POSITION_VALUE`，最低至 `VOLATILITY_MIN_MULTIPLIER`。低波动绝不放大静态额度；样本不足、异常 K 线或数据源不可用时维持静态上限。 |
 | 最大杠杆 | `MAX_LEVERAGE` | `5` | 合约下单的全局杠杆上限；`0` 关闭，生产环境不建议关闭。 |
 | 单品种覆盖 | `RISK_SYMBOL_OVERRIDES` | `{}` | JSON 对象，可为某标的收紧 `max_leverage` 或 `max_position_value`。 |
 | 禁交易标的 | `RISK_BLOCKED_SYMBOLS` | `[]` | JSON 数组；匹配后拒绝新订单。 |
@@ -104,7 +105,7 @@ SQLite 文件位置 `data/trading.sqlite3`：
 会用下单参考价覆盖旧标记价，其他标的使用最近同步价格。它不会把“已提交但尚未成交/对账”的
 订单当成持仓，也尚未进行跨进程全局聚合；因此实盘必须保持单一交易引擎的持仓同步和账户对账正常，
 并在 testnet 上先以小额度启用。资产分组使用 `RISK_ASSET_GROUPS` 的显式映射，不会把未配置交易对
-自动归类；相关性使用候选下单交易所及持仓所属交易所的公开 K 线进行时间对齐，只限制正相关。仍待补充的是待成交订单预留和波动率限制。
+自动归类；相关性使用候选下单交易所及持仓所属交易所的公开 K 线进行时间对齐，只限制正相关。仍待补充的是待成交订单预留与交易后风险归因。
 
 > **上线建议**：先在 testnet 设定很小的 `MAX_DAILY_ORDER_NOTIONAL`、正数
 > `MAX_LEVERAGE` 和明确的标的黑名单；确认审计、对账和 Kill Switch 演练正常后，才逐步调整额度。

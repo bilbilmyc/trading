@@ -21,6 +21,7 @@ from app.engine.account_reconciliation import (
     AccountReconciliationFilter,
     AccountReconciliationGuard,
 )
+from app.engine.atr_sizing import VolatilitySnapshot, volatility_snapshot_from_candles
 from app.engine.composite_observer import CompositeObserver
 from app.engine.correlation import CorrelationSnapshot, position_correlation_snapshot
 from app.engine.live_order_pipeline import LiveOrderPipeline
@@ -140,6 +141,7 @@ class TradingEngine:
             self.position_manager.get_exposure_snapshot
         )
         self.risk_manager.set_correlation_provider(self._position_correlation_snapshot)
+        self.risk_manager.set_volatility_provider(self._volatility_snapshot)
         self.account_reconciliation = AccountReconciliationGuard()
         self.paper_account = PaperTradingAccount()
 
@@ -314,6 +316,25 @@ class TradingEngine:
             min_samples=min_samples,
             unavailable_symbols=unavailable,
         )
+
+    async def _volatility_snapshot(
+        self,
+        symbol: str,
+        exchange_name: str | None,
+        interval: str,
+        lookback_candles: int,
+        atr_period: int,
+    ) -> VolatilitySnapshot | None:
+        """Fetch one candidate's public candles and derive an ATR evidence snapshot."""
+        source = self._exchanges.get((exchange_name or "").lower())
+        if source is None:
+            return None
+        try:
+            candles = await source.get_klines(symbol, interval=interval, limit=lookback_candles)
+            return volatility_snapshot_from_candles(symbol, candles, atr_period=atr_period)
+        except Exception as exc:
+            logger.warning(f"Volatility candle fetch failed for {symbol}: {exc}")
+            return None
 
     def add_exchange(self, name: str, exchange: ExchangeBase):
         """添加交易所"""

@@ -4,6 +4,7 @@ from types import SimpleNamespace
 
 import pytest
 
+from app.engine.atr_sizing import VolatilitySnapshot
 from app.engine.correlation import CorrelationSnapshot
 from app.engine.portfolio_exposure import PortfolioExposure
 from app.engine.risk_manager import RiskConfig, RiskManager
@@ -238,3 +239,92 @@ async def test_missing_correlation_samples_do_not_block_or_apply_to_reductions()
     assert reason == "通过风控检查"
     assert reducing is True
     assert reducing_reason == "通过风控检查"
+
+
+@pytest.mark.asyncio
+async def test_volatility_sizing_tightens_high_volatility_orders_only() -> None:
+    manager = RiskManager(
+        RiskConfig(
+            max_position_value=1_000.0,
+            volatility_sizing_enabled=True,
+            volatility_lookback_candles=8,
+            volatility_atr_period=4,
+            volatility_target_atr_pct=0.02,
+            volatility_min_multiplier=0.1,
+        )
+    )
+    provider_calls = 0
+
+    async def volatility_provider(
+        symbol: str, exchange: str | None, interval: str, lookback: int, period: int
+    ) -> VolatilitySnapshot:
+        nonlocal provider_calls
+        provider_calls += 1
+        assert (symbol, exchange, interval, lookback, period) == (
+            "ETHUSDT",
+            "binance_usdm",
+            "1h",
+            8,
+            4,
+        )
+        return VolatilitySnapshot(symbol=symbol, atr=5.0, atr_pct=0.05, candle_count=8)
+
+    manager.set_volatility_provider(volatility_provider)
+    blocked, reason = await manager.check_order(
+        "ETHUSDT", "buy", 5.0, 100.0, exchange="binance_usdm"
+    )
+    allowed, allowed_reason = await manager.check_order(
+        "ETHUSDT", "buy", 4.0, 100.0, exchange="binance_usdm"
+    )
+    reducing, reducing_reason = await manager.check_order(
+        "ETHUSDT", "sell", 10.0, 100.0, increases_exposure=False
+    )
+    status = await manager.get_risk_status()
+
+    assert blocked is False
+    assert "ATR 波动率自适应上限 400.00" in reason
+    assert allowed is True
+    assert allowed_reason == "通过风控检查"
+    assert reducing is True
+    assert reducing_reason == "通过风控检查"
+    assert provider_calls == 2
+    assert status["volatility_snapshot"] == {
+        "symbol": "ETHUSDT",
+        "atr": 5.0,
+        "atr_pct": 0.05,
+        "candle_count": 8,
+    }
+
+
+@pytest.mark.asyncio
+async def test_missing_volatility_snapshot_keeps_static_limit() -> None:
+    manager = RiskManager(RiskConfig(max_position_value=1_000.0, volatility_sizing_enabled=True))
+
+    async def unavailable_provider(*_args: object) -> None:
+        return None
+
+    manager.set_volatility_provider(unavailable_provider)
+    allowed, reason = await manager.check_order("ETHUSDT", "buy", 9.0, 100.0)
+
+    assert allowed is True
+    assert reason == "通过风控检查"
+
+
+def test_volatility_settings_and_window_validation() -> None:
+    settings = Settings(
+        volatility_sizing_enabled=True,
+        volatility_interval="4h",
+        volatility_lookback_candles=80,
+        volatility_atr_period=20,
+        volatility_target_atr_pct=0.03,
+        volatility_min_multiplier=0.2,
+    )
+
+    risk = settings.risk
+
+    assert risk.volatility_sizing_enabled is True
+    assert risk.volatility_interval == "4h"
+    assert risk.volatility_atr_period == 20
+    assert risk.volatility_target_atr_pct == 0.03
+    with pytest.raises(ValueError, match="ATR 周期必须小于"):
+        RiskConfig(volatility_lookback_candles=14, volatility_atr_period=14)
