@@ -34,7 +34,7 @@ python -c "import secrets; print(secrets.token_urlsafe(32))"
 | 策略 | `/api/v1/strategies/*` | 10+ | **是**（写） |
 | 信号/事件 | `/api/v1/signals/recent`, `/api/v1/events/recent` | 2 | 否 |
 | 风控计算 | `/api/v1/sizing`, `/api/v1/atr-sizing` | 2 | 否 |
-| 回测/实验 | `/api/v1/backtest`, `/api/v1/backtest/portfolio`, `/api/v1/backtests/*`, `/api/v1/strategies/suggest` | 4 | 读取实验为**是** |
+| 回测/实验 | `/api/v1/backtest`, `/api/v1/backtest/grid-search`, `/api/v1/backtest/portfolio`, `/api/v1/backtests/*`, `/api/v1/strategies/suggest` | 4 | 读取实验为**是** |
 | 投资组合 | `/api/v1/portfolio/*`, `/api/v1/trade-history` | 3 | 否 |
 | AI | `/api/v1/ai/analyze`, `/api/v1/ai/insights`, `/api/v1/ai/decisions*` | 5 | **是** |
 | LLM 策略 | `/api/v1/strategies/llm*` | 3 | **是** |
@@ -89,6 +89,14 @@ MARKET_DATA_PARQUET_DIR=data/market_data
 信号在 K 线收盘后生成，并在**下一根 K 线开盘价**执行，避免以未决策时可见的收盘价成交。止盈和止损使用当根 K 线的 high/low 判断；若同一根同时触发，回测保守地按止损成交。响应包括 `total_fees`、`gross_pnl`、`total_return_pct`、`profit_factor`、`execution_model`、`fill_history`、`trade_history`、`result_hash` 与 `backtest_run_id`。
 
 每次回测会保存策略源码版本、策略参数、数据版本及实际范围、执行模型、风险模型、Python/引擎版本、原始请求、结果和结果哈希。使用版本化数据集的实验可通过 `GET /api/v1/backtests/{run_id}` 审计，并用 `POST /api/v1/backtests/{run_id}/reproduce`（二者均需 API key）复跑并比较结果哈希。
+
+#### 参数网格搜索
+
+`POST /api/v1/backtest/grid-search` 在同一份 K 线、相同初始资金、执行模型与风险模型下，遍历 `short_windows × long_windows` 的全部有效 SMA 组合。窗口值会去重并升序规范化；只保留 `short_window < long_window` 的组合，最多允许 **64** 个有效组合（每个原始窗口列表最多 16 项）。
+
+响应的 `candidates` 按以下稳定规则排序：`total_pnl` 降序、`max_drawdown` 升序、`trades` 降序、短窗口升序、长窗口升序。`best` 包含第一名的完整回测指标、权益曲线和成交明细，候选列表只返回比较所需的紧凑指标，以限制响应体大小。
+
+该端点标记 `search.in_sample_only: true`：它仅用于研究和候选参数筛选，不能视为样本外表现或直接晋级交易。应使用 Walk-forward 验证端点取得严格的样本外证据。版本化数据集的网格实验同样会保存哈希并可通过复现端点验证。
 
 #### 多策略组合回测
 
