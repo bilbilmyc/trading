@@ -11,6 +11,7 @@ from typing import Any
 
 from pydantic import BaseModel, Field, field_validator, model_validator
 
+from app.engine.atr_sizing import VolatilitySnapshot, volatility_adjusted_notional_cap
 from app.engine.correlation import CorrelationSnapshot
 from app.engine.live_trading_guard import LiveTradingGuard
 from app.engine.pipeline_types import RiskDecision
@@ -50,6 +51,14 @@ class RiskConfig(BaseModel):
     correlation_interval: str = Field("1h", min_length=1, description="相关性 K 线周期")
     correlation_lookback_candles: int = Field(72, ge=3, le=1500, description="相关性 K 线窗口")
     correlation_min_samples: int = Field(30, ge=2, description="最少对齐收益样本")
+    volatility_sizing_enabled: bool = Field(False, description="是否按 ATR 波动率收紧下单上限")
+    volatility_interval: str = Field("1h", min_length=1, description="波动率 K 线周期")
+    volatility_lookback_candles: int = Field(72, ge=3, le=1500, description="波动率 K 线窗口")
+    volatility_atr_period: int = Field(14, ge=2, le=500, description="ATR 计算周期")
+    volatility_target_atr_pct: float = Field(0.02, gt=0, le=1, description="目标 ATR 占价格比例")
+    volatility_min_multiplier: float = Field(
+        0.1, ge=0, le=1, description="高波动下静态上限允许缩小到的最小倍率"
+    )
     max_leverage: float = Field(5.0, ge=0, description="全局最大杠杆；0 表示不限制")
     stop_loss_pct: float = Field(0.05, gt=0, le=1, description="止损百分比")
     take_profit_pct: float = Field(0.10, gt=0, description="止盈百分比")
@@ -97,9 +106,11 @@ class RiskConfig(BaseModel):
         return normalized_groups
 
     @model_validator(mode="after")
-    def _validate_correlation_window(self) -> "RiskConfig":
+    def _validate_market_data_windows(self) -> "RiskConfig":
         if self.correlation_min_samples >= self.correlation_lookback_candles:
             raise ValueError("相关性最少样本必须小于 K 线窗口")
+        if self.volatility_atr_period >= self.volatility_lookback_candles:
+            raise ValueError("ATR 周期必须小于波动率 K 线窗口")
         return self
 
 
@@ -128,6 +139,10 @@ class RiskManager:
             Callable[[str, str | None, str, int, int], Awaitable[CorrelationSnapshot]] | None
         ) = None
         self._correlation_snapshot: CorrelationSnapshot | None = None
+        self._volatility_provider: (
+            Callable[[str, str | None, str, int, int], Awaitable[VolatilitySnapshot | None]] | None
+        ) = None
+        self._volatility_snapshot: VolatilitySnapshot | None = None
         self._order_timestamps: list[datetime] = []
         self._trading_enabled = True
         self._guard = trading_guard
@@ -187,6 +202,9 @@ class RiskManager:
         correlation_snapshot = None
         if increases_exposure and self.config.max_position_correlation > 0:
             correlation_snapshot = await self._current_correlation(normalized_symbol, exchange)
+        volatility_snapshot = None
+        if increases_exposure and self.config.volatility_sizing_enabled:
+            volatility_snapshot = await self._current_volatility(normalized_symbol, exchange)
 
         async with self._lock:
             self._portfolio_exposure = exposure
@@ -200,6 +218,21 @@ class RiskManager:
             order_value = quantity * price
             if order_value > self.config.max_position_value:
                 return False, f"订单价值 {order_value} 超过限制 {self.config.max_position_value}"
+
+            if increases_exposure and volatility_snapshot is not None:
+                self._volatility_snapshot = volatility_snapshot
+                volatility_cap, multiplier = volatility_adjusted_notional_cap(
+                    self.config.max_position_value,
+                    volatility_snapshot.atr_pct,
+                    target_atr_pct=self.config.volatility_target_atr_pct,
+                    min_multiplier=self.config.volatility_min_multiplier,
+                )
+                if order_value > volatility_cap:
+                    return False, (
+                        f"订单价值 {order_value:.2f} 超过 ATR 波动率自适应上限 "
+                        f"{volatility_cap:.2f}（ATR {volatility_snapshot.atr_pct:.2%}，"
+                        f"倍率 {multiplier:.2%}）"
+                    )
 
             overrides = self._symbol_overrides(normalized_symbol)
             per_symbol_value_cap = overrides.get("max_position_value")
@@ -366,6 +399,27 @@ class RiskManager:
             self.config.correlation_min_samples,
         )
 
+    def set_volatility_provider(
+        self,
+        provider: Callable[[str, str | None, str, int, int], Awaitable[VolatilitySnapshot | None]]
+        | None,
+    ) -> None:
+        """Attach the engine-owned ATR snapshot provider."""
+        self._volatility_provider = provider
+
+    async def _current_volatility(
+        self, symbol: str, exchange: str | None
+    ) -> VolatilitySnapshot | None:
+        if self._volatility_provider is None:
+            return None
+        return await self._volatility_provider(
+            symbol,
+            exchange,
+            self.config.volatility_interval,
+            self.config.volatility_lookback_candles,
+            self.config.volatility_atr_period,
+        )
+
     async def _current_portfolio_exposure(self, symbol: str, price: float) -> PortfolioExposure:
         """Read current gross exposure without coupling the risk layer to positions."""
         if self._portfolio_exposure_provider is None:
@@ -489,6 +543,15 @@ class RiskManager:
                 "correlation_min_samples": self.config.correlation_min_samples,
                 "correlation_snapshot": self._correlation_snapshot.as_dict()
                 if self._correlation_snapshot
+                else None,
+                "volatility_sizing_enabled": self.config.volatility_sizing_enabled,
+                "volatility_interval": self.config.volatility_interval,
+                "volatility_lookback_candles": self.config.volatility_lookback_candles,
+                "volatility_atr_period": self.config.volatility_atr_period,
+                "volatility_target_atr_pct": self.config.volatility_target_atr_pct,
+                "volatility_min_multiplier": self.config.volatility_min_multiplier,
+                "volatility_snapshot": self._volatility_snapshot.as_dict()
+                if self._volatility_snapshot
                 else None,
                 "asset_groups": {
                     name: list(symbols)

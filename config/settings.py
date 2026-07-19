@@ -77,6 +77,12 @@ class RiskSettings(BaseModel):
     correlation_interval: str = "1h"
     correlation_lookback_candles: int = 72
     correlation_min_samples: int = 30
+    volatility_sizing_enabled: bool = False
+    volatility_interval: str = "1h"
+    volatility_lookback_candles: int = 72
+    volatility_atr_period: int = 14
+    volatility_target_atr_pct: float = 0.02
+    volatility_min_multiplier: float = 0.1
     max_leverage: float = 5.0
     max_consecutive_losses: int = 0
     blocked_symbols: tuple[str, ...] = ()
@@ -207,6 +213,12 @@ class Settings(BaseSettings):
     correlation_interval: str = Field(default="1h", min_length=1)
     correlation_lookback_candles: int = Field(default=72, ge=3, le=1500)
     correlation_min_samples: int = Field(default=30, ge=2)
+    volatility_sizing_enabled: bool = False
+    volatility_interval: str = Field(default="1h", min_length=1)
+    volatility_lookback_candles: int = Field(default=72, ge=3, le=1500)
+    volatility_atr_period: int = Field(default=14, ge=2, le=500)
+    volatility_target_atr_pct: float = Field(default=0.02, gt=0, le=1)
+    volatility_min_multiplier: float = Field(default=0.1, ge=0, le=1)
     # Explicit leverage is capped for contract orders; 0 disables the global cap.
     max_leverage: float = Field(default=5.0, ge=0)
     # 0 leaves the consecutive-loss circuit breaker disabled.
@@ -427,6 +439,12 @@ class Settings(BaseSettings):
             correlation_interval=self.correlation_interval,
             correlation_lookback_candles=self.correlation_lookback_candles,
             correlation_min_samples=self.correlation_min_samples,
+            volatility_sizing_enabled=self.volatility_sizing_enabled,
+            volatility_interval=self.volatility_interval,
+            volatility_lookback_candles=self.volatility_lookback_candles,
+            volatility_atr_period=self.volatility_atr_period,
+            volatility_target_atr_pct=self.volatility_target_atr_pct,
+            volatility_min_multiplier=self.volatility_min_multiplier,
             max_leverage=self.max_leverage,
             max_consecutive_losses=self.max_consecutive_losses,
             blocked_symbols=tuple(self.risk_blocked_symbols),
