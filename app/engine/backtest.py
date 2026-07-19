@@ -75,6 +75,44 @@ class BacktestResult:
     fill_history: list[BacktestFill] = field(default_factory=list)
 
 
+@dataclass(frozen=True)
+class PortfolioStrategyConfig:
+    """One independently funded SMA strategy in a portfolio experiment."""
+
+    name: str
+    short_window: int
+    long_window: int
+    weight: float
+
+
+@dataclass(frozen=True)
+class PortfolioStrategyResult:
+    """The capital allocation and result for one portfolio strategy."""
+
+    name: str
+    weight: float
+    allocated_capital: float
+    result: BacktestResult
+
+
+@dataclass
+class PortfolioBacktestResult:
+    """Aggregate of independent strategy backtests on the same candle timeline."""
+
+    initial_capital: float
+    final_equity: float
+    total_pnl: float
+    trades: int
+    win_rate: float
+    max_drawdown: float
+    equity_curve: list[float] = field(default_factory=list)
+    total_fees: float = 0.0
+    gross_pnl: float = 0.0
+    total_return_pct: float = 0.0
+    profit_factor: float | None = None
+    strategies: list[PortfolioStrategyResult] = field(default_factory=list)
+
+
 def _sma(values: list[float], window: int) -> list[float]:
     """Simple moving average; first ``window - 1`` values are zero."""
     out: list[float] = []
@@ -122,9 +160,7 @@ def _validate_inputs(
         ("stop_loss_pct", stop_loss_pct),
         ("take_profit_pct", take_profit_pct),
     ):
-        if risk_value is not None and (
-            not isfinite(risk_value) or not 0 < risk_value < 1
-        ):
+        if risk_value is not None and (not isfinite(risk_value) or not 0 < risk_value < 1):
             raise ValueError(f"{risk_name} must be between 0 (exclusive) and 1")
     for index, candle in enumerate(candles):
         if not isinstance(candle, dict):
@@ -297,6 +333,109 @@ def run_sma_backtest(
     )
 
 
+def run_multi_sma_backtest(
+    candles: list[dict[str, Any]],
+    strategies: Sequence[PortfolioStrategyConfig],
+    initial_capital: float = 10_000.0,
+    position_size_pct: float = 1.0,
+    fee_rate: float = 0.001,
+    slippage_rate: float = 0.0,
+    max_volume_participation: float | None = None,
+    stop_loss_pct: float | None = None,
+    take_profit_pct: float | None = None,
+) -> PortfolioBacktestResult:
+    """Backtest explicitly weighted SMA strategies and aggregate their equity.
+
+    Each strategy receives only ``initial_capital * weight`` and is simulated
+    independently.  The combined curve is the point-in-time sum of those
+    independently funded curves; it does not share cash or rebalance between
+    strategies.  This makes allocation and attribution deterministic.
+    """
+
+    if not strategies:
+        raise ValueError("at least one portfolio strategy is required")
+    if not isfinite(initial_capital) or initial_capital <= 0:
+        raise ValueError("initial_capital must be positive")
+
+    names: set[str] = set()
+    total_weight = 0.0
+    for strategy in strategies:
+        name = strategy.name.strip()
+        if not name:
+            raise ValueError("portfolio strategy name must not be empty")
+        normalized_name = name.casefold()
+        if normalized_name in names:
+            raise ValueError(f"duplicate portfolio strategy name: {name}")
+        names.add(normalized_name)
+        if not isfinite(strategy.weight) or strategy.weight <= 0:
+            raise ValueError("portfolio strategy weights must be positive")
+        total_weight += strategy.weight
+
+    if abs(total_weight - 1.0) > 1e-9:
+        raise ValueError("portfolio strategy weights must sum to 1.0")
+
+    strategy_results: list[PortfolioStrategyResult] = []
+    for strategy in strategies:
+        allocated_capital = initial_capital * strategy.weight
+        result = run_sma_backtest(
+            candles=candles,
+            short_window=strategy.short_window,
+            long_window=strategy.long_window,
+            initial_capital=allocated_capital,
+            position_size_pct=position_size_pct,
+            fee_rate=fee_rate,
+            slippage_rate=slippage_rate,
+            max_volume_participation=max_volume_participation,
+            stop_loss_pct=stop_loss_pct,
+            take_profit_pct=take_profit_pct,
+        )
+        strategy_results.append(
+            PortfolioStrategyResult(
+                name=strategy.name.strip(),
+                weight=strategy.weight,
+                allocated_capital=round(allocated_capital, 4),
+                result=result,
+            )
+        )
+
+    curve_lengths = {len(item.result.equity_curve) for item in strategy_results}
+    if len(curve_lengths) > 1:
+        raise ValueError("portfolio strategy equity curves must share a timeline")
+    curve_length = curve_lengths.pop() if curve_lengths else 0
+    equity_curve = [
+        round(sum(item.result.equity_curve[index] for item in strategy_results), 4)
+        for index in range(curve_length)
+    ]
+    final_equity = sum(item.result.final_equity for item in strategy_results)
+    total_fees = sum(item.result.total_fees for item in strategy_results)
+    gross_pnl = sum(item.result.gross_pnl for item in strategy_results)
+    all_trades = [trade for item in strategy_results for trade in item.result.trade_history]
+    gains = sum(trade.net_pnl for trade in all_trades if trade.net_pnl > 0)
+    losses = -sum(trade.net_pnl for trade in all_trades if trade.net_pnl < 0)
+    wins = sum(1 for trade in all_trades if trade.net_pnl > 0)
+    peak = initial_capital
+    max_drawdown = 0.0
+    for equity in equity_curve:
+        peak = max(peak, equity)
+        if peak > 0:
+            max_drawdown = max(max_drawdown, (peak - equity) / peak)
+
+    return PortfolioBacktestResult(
+        initial_capital=round(initial_capital, 4),
+        final_equity=round(final_equity, 4),
+        total_pnl=round(final_equity - initial_capital, 4),
+        trades=len(all_trades),
+        win_rate=round(wins / len(all_trades), 4) if all_trades else 0.0,
+        max_drawdown=round(max_drawdown, 4),
+        equity_curve=equity_curve,
+        total_fees=round(total_fees, 4),
+        gross_pnl=round(gross_pnl, 4),
+        total_return_pct=round((final_equity / initial_capital - 1) * 100, 4),
+        profit_factor=round(gains / losses, 4) if losses > 0 else None,
+        strategies=strategy_results,
+    )
+
+
 def _volume(candle: dict[str, Any]) -> float | None:
     raw_volume = candle.get("volume")
     if raw_volume is None:
@@ -308,4 +447,13 @@ def _volume(candle: dict[str, Any]) -> float | None:
     return volume if isfinite(volume) and volume >= 0 else None
 
 
-__all__ = ["BacktestFill", "BacktestResult", "BacktestTrade", "run_sma_backtest"]
+__all__ = [
+    "BacktestFill",
+    "BacktestResult",
+    "BacktestTrade",
+    "PortfolioBacktestResult",
+    "PortfolioStrategyConfig",
+    "PortfolioStrategyResult",
+    "run_multi_sma_backtest",
+    "run_sma_backtest",
+]
