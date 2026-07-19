@@ -161,6 +161,28 @@ def test_backtest_default_sma(tmp_path) -> None:
         assert "total_pnl" in body
 
 
+def test_in_out_sample_backtest_returns_fixed_segment_diagnostics(tmp_path) -> None:
+    with TestClient(create_app(_settings(sqlite_path=str(tmp_path / "h.sqlite3")))) as c:
+        response = c.post(
+            "/api/v1/backtest/in-out-sample",
+            json={
+                "klines": _monte_carlo_candles(),
+                "in_sample_size": 16,
+                "short_window": 2,
+                "long_window": 4,
+                "fee_rate": 0,
+            },
+        )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["split"]["parameter_mode"] == "fixed"
+    assert body["split"]["selection_on_out_sample"] is False
+    assert body["split"]["in_sample_size"] == 16
+    assert body["split"]["out_sample_size"] == 16
+    assert body["backtest_run_id"] > 0
+
+
 def test_bootstrap_backtest_returns_reproducible_risk_distribution(tmp_path) -> None:
     with TestClient(create_app(_settings(sqlite_path=str(tmp_path / "h.sqlite3")))) as c:
         response = c.post(

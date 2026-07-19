@@ -98,6 +98,12 @@ MARKET_DATA_PARQUET_DIR=data/market_data
 
 该端点标记 `search.in_sample_only: true`：它仅用于研究和候选参数筛选，不能视为样本外表现或直接晋级交易。应使用 Walk-forward 验证端点取得严格的样本外证据。版本化数据集的网格实验同样会保存哈希并可通过复现端点验证。
 
+#### 样本内 / 样本外固定参数分析
+
+`POST /api/v1/backtest/in-out-sample` 将同一段行情按 `in_sample_size` 分成时间连续、互不重叠的样本内和样本外两段，并以**同一组固定 SMA 参数、成本和保护参数**分别独立回测。两段都至少需要 `long_window + 1` 根 K 线；响应的 `split` 明确标注 `parameter_mode: "fixed"`、`selection_on_out_sample: false` 和 `capital_model: "independent_per_segment"`，并分别返回 `in_sample` 与 `out_sample` 指标。
+
+该端点不会在样本外段搜索或修改参数，不能替代含训练期选参的 Walk-forward 验证；它只用于检验既定参数在明确时间切分后的表现差异，不生成订单或构成实盘准入承诺。版本化行情实验可通过 `POST /api/v1/backtests/{run_id}/reproduce` 复现。
+
 #### Bootstrap 交易样本稳健性测试
 
 `POST /api/v1/backtest/bootstrap` 先运行一次固定参数的 SMA 基线回测，再对其**已完成交易净盈亏**执行有界、固定种子的 Bootstrap 重采样。请求沿用普通回测的 `klines` / `data_version` 二选一规则、执行成本和保护参数，并额外支持：

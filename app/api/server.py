@@ -45,6 +45,7 @@ from app.api.schemas import (
     ClosePositionRequest,
     CustomSourceRequest,
     GridSearchRequest,
+    InOutSampleBacktestRequest,
     KillSwitchRequest,
     LLMStrategyCreateRequest,
     MarketDataImportRequest,
@@ -2677,6 +2678,100 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             ],
         }
 
+    def _run_in_out_sample_backtest(
+        request: InOutSampleBacktestRequest, state: AppState, *, persist: bool
+    ) -> dict[str, Any]:
+        """Run one fixed SMA configuration on contiguous in/out sample segments."""
+        from app.engine.in_out_sample import run_in_out_sample_sma_backtest
+
+        try:
+            candles, backtest_candles = _load_backtest_candles(request, state)
+            result = run_in_out_sample_sma_backtest(
+                backtest_candles,
+                in_sample_size=request.in_sample_size,
+                short_window=request.short_window,
+                long_window=request.long_window,
+                initial_capital=request.initial_capital,
+                position_size_pct=request.position_size_pct,
+                fee_rate=request.fee_rate,
+                slippage_rate=request.slippage_rate,
+                max_volume_participation=request.max_volume_participation,
+                stop_loss_pct=request.stop_loss_pct,
+                take_profit_pct=request.take_profit_pct,
+            )
+        except DatasetNotFoundError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except DatasetQualityError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        except (KeyError, MarketDataError, ValueError, TypeError) as exc:
+            raise HTTPException(
+                status_code=400, detail=f"Invalid in/out-sample backtest data: {exc}"
+            ) from exc
+
+        execution_model = {
+            "signal_execution": "next_bar_open",
+            "fee_rate": request.fee_rate,
+            "slippage_rate": request.slippage_rate,
+            "max_volume_participation": request.max_volume_participation,
+            "volume_limit_behavior": "partial_fill_then_cancel",
+        }
+        payload: dict[str, Any] = {
+            "split": {
+                "in_sample_size": result.in_sample_size,
+                "out_sample_size": result.out_sample_size,
+                "parameter_mode": "fixed",
+                "selection_on_out_sample": False,
+                "capital_model": "independent_per_segment",
+            },
+            "in_sample": _backtest_metrics_payload(result.in_sample),
+            "out_sample": _backtest_metrics_payload(result.out_sample),
+            "parameters": {
+                "short_window": request.short_window,
+                "long_window": request.long_window,
+                "initial_capital": request.initial_capital,
+                "position_size_pct": request.position_size_pct,
+            },
+            "execution_model": execution_model,
+            "klines_used": [_serialize_kline(kline) for kline in candles],
+            "data_version": request.data_version,
+        }
+        result_hash = hashlib.sha256(
+            json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode()
+        ).hexdigest()
+        payload["result_hash"] = result_hash
+        if persist:
+            run_id = state.store.save_backtest_experiment(
+                strategy_name="sma_in_out_sample",
+                strategy_version=_strategy_version(),
+                data_version=request.data_version,
+                data_start=str(backtest_candles[0].get("open_time")),
+                data_end=str(backtest_candles[-1].get("open_time")),
+                strategy_parameters={
+                    "short_window": request.short_window,
+                    "long_window": request.long_window,
+                    "in_sample_size": request.in_sample_size,
+                    "initial_capital": request.initial_capital,
+                    "position_size_pct": request.position_size_pct,
+                },
+                execution_model=execution_model,
+                risk_model={
+                    "stop_loss_pct": request.stop_loss_pct,
+                    "take_profit_pct": request.take_profit_pct,
+                },
+                environment={
+                    "app_version": "0.1.0",
+                    "python_version": platform.python_version(),
+                    "model_version": "not_applicable:sma_rule",
+                    "backtest_engine": "event_driven_simulation_v1",
+                },
+                request=request.model_dump(mode="json", exclude_none=True),
+                result=payload,
+                result_hash=result_hash,
+                created_at=datetime.now(UTC).isoformat().replace("+00:00", "Z"),
+            )
+            payload["backtest_run_id"] = run_id
+        return payload
+
     def _run_bootstrap_backtest(
         request: BootstrapBacktestRequest, state: AppState, *, persist: bool
     ) -> dict[str, Any]:
@@ -3194,6 +3289,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             payload["backtest_run_id"] = run_id
         return payload
 
+    @app.post("/api/v1/backtest/in-out-sample")
+    async def in_out_sample_backtest_endpoint(
+        request: InOutSampleBacktestRequest, state: AppState = Depends(get_state)
+    ):
+        """Run fixed-parameter in-sample / out-of-sample SMA diagnostics."""
+        return _run_in_out_sample_backtest(request, state, persist=True)
+
     @app.post("/api/v1/backtest/bootstrap")
     async def bootstrap_backtest_endpoint(
         request: BootstrapBacktestRequest, state: AppState = Depends(get_state)
@@ -3275,6 +3377,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         elif "window_size" in raw_request:
             request = RollingBacktestRequest.model_validate(raw_request)
             replay = _run_rolling_backtest(request, state, persist=False)
+        elif run["strategy_name"] == "sma_in_out_sample":
+            request = InOutSampleBacktestRequest.model_validate(raw_request)
+            replay = _run_in_out_sample_backtest(request, state, persist=False)
         elif run["strategy_name"] == "sma_bootstrap":
             request = BootstrapBacktestRequest.model_validate(raw_request)
             replay = _run_bootstrap_backtest(request, state, persist=False)

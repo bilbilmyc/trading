@@ -220,6 +220,12 @@ class GridSearchRequest(BacktestRequest):
         return self
 
 
+class InOutSampleBacktestRequest(BacktestRequest):
+    """Fixed-parameter contiguous in-sample / out-of-sample SMA study."""
+
+    in_sample_size: int = Field(..., ge=3, le=9_000)
+
+
 class BootstrapBacktestRequest(BacktestRequest):
     """Bounded with-replacement Bootstrap diagnostics for one SMA backtest."""
 
