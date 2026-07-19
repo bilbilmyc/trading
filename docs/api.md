@@ -98,6 +98,19 @@ MARKET_DATA_PARQUET_DIR=data/market_data
 
 该端点标记 `search.in_sample_only: true`：它仅用于研究和候选参数筛选，不能视为样本外表现或直接晋级交易。应使用 Walk-forward 验证端点取得严格的样本外证据。版本化数据集的网格实验同样会保存哈希并可通过复现端点验证。
 
+#### Monte Carlo 交易序列风险模拟
+
+`POST /api/v1/backtest/monte-carlo` 先以请求中的固定 SMA 参数运行一次普通回测，再仅对该回测的**已完成交易净盈亏**做有界、固定种子的风险分布诊断。请求沿用普通回测的 `klines` / `data_version` 二选一规则、执行成本和保护参数，并额外支持：
+
+- `simulations`：模拟次数，默认 `500`，范围 `1`–`1000`；
+- `seed`：伪随机种子，默认 `42`，用于复现同一诊断；
+- `return_jitter_pct`：可选的单笔净盈亏扰动上限，默认 `0`；每笔会乘以 `[1 - jitter, 1 + jitter]` 内的均匀随机系数；
+- `drawdown_threshold_pct`：路径下探阈值，默认 `0.30`；权益低于或等于 `initial_capital × (1 - threshold)` 的路径会被计为一次阈值触发。
+
+`monte_carlo.sampling` 固定为 `trade_order_permutation_without_replacement`：每次模拟都对原始交易集合做**不放回乱序**，因此在 `return_jitter_pct=0` 时每条路径的期末权益相同，但中途回撤及阈值触发概率可能不同。响应提供期末权益 `p05` / `median` / `p95`、最大回撤的 `p95`、阈值触发概率和期末权益非正的概率，并同时保留 `baseline` 的原始回测指标。
+
+该能力用于研究和风险压力诊断，不修改策略参数、不生成订单、不触发真实或模拟盘下单，也不构成收益、风险或实盘准入承诺。它**不是** Bootstrap：后者会使用有放回抽样，应作为独立研究方法解释。版本化行情实验会保存不可变请求、结果哈希和环境信息，并可通过 `POST /api/v1/backtests/{run_id}/reproduce` 复现。
+
 #### 滚动窗口回测
 
 `POST /api/v1/backtest/rolling` 以固定 SMA 参数对一段行情执行局部时期诊断。请求与普通回测一样，必须二选一提供 `klines` 或经质量检查的 `data_version`，并指定 `window_size`；`step_size` 省略时等于窗口长度。每个**完整**窗口都从同一 `initial_capital` 独立开始，最多生成 **128** 个窗口。

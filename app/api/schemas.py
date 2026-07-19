@@ -220,6 +220,15 @@ class GridSearchRequest(BacktestRequest):
         return self
 
 
+class MonteCarloBacktestRequest(BacktestRequest):
+    """Bounded trade-order Monte Carlo diagnostics for one SMA backtest."""
+
+    simulations: int = Field(500, ge=1, le=1_000)
+    seed: int = Field(42, ge=0, le=2_147_483_647)
+    return_jitter_pct: float = Field(0.0, ge=0.0, le=1.0)
+    drawdown_threshold_pct: float = Field(0.3, gt=0.0, lt=1.0)
+
+
 class RollingBacktestRequest(BacktestRequest):
     """Fixed-parameter SMA diagnostics over independently funded rolling windows."""
 

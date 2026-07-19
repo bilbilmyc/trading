@@ -38,6 +38,54 @@ def _candles(n: int = 30) -> list:
     ]
 
 
+def _monte_carlo_candles() -> list[dict[str, float | str]]:
+    prices = [
+        100,
+        100,
+        100,
+        100,
+        100,
+        110,
+        115,
+        120,
+        115,
+        110,
+        100,
+        90,
+        85,
+        90,
+        100,
+        110,
+        120,
+        110,
+        100,
+        90,
+        80,
+        90,
+        100,
+        110,
+        120,
+        110,
+        100,
+        90,
+        80,
+        90,
+        100,
+        110,
+    ]
+    return [
+        {
+            "open_time": f"2026-01-01T00:{index:02d}:00",
+            "open": float(price),
+            "high": float(price + 1),
+            "low": float(price - 1),
+            "close": float(price),
+            "volume": 1_000.0,
+        }
+        for index, price in enumerate(prices)
+    ]
+
+
 # ── Health / config ──────────────────────────────────────────────────
 
 
@@ -111,6 +159,75 @@ def test_backtest_default_sma(tmp_path) -> None:
         body = r.json()
         assert "final_equity" in body
         assert "total_pnl" in body
+
+
+def test_monte_carlo_backtest_returns_reproducible_risk_distribution(tmp_path) -> None:
+    with TestClient(create_app(_settings(sqlite_path=str(tmp_path / "h.sqlite3")))) as c:
+        response = c.post(
+            "/api/v1/backtest/monte-carlo",
+            json={
+                "klines": _monte_carlo_candles(),
+                "short_window": 2,
+                "long_window": 4,
+                "fee_rate": 0,
+                "simulations": 60,
+                "seed": 7,
+                "drawdown_threshold_pct": 0.2,
+            },
+        )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["monte_carlo"]["sampling"] == "trade_order_permutation_without_replacement"
+    assert body["monte_carlo"]["simulations"] == 60
+    assert body["baseline"]["trades"] > 0
+    assert body["backtest_run_id"] > 0
+
+
+def test_monte_carlo_data_version_can_be_reproduced(tmp_path) -> None:
+    catalog_candles = [
+        {
+            "timestamp": f"2026-01-{1 + index // 24:02d}T{index % 24:02d}:00:00Z",
+            "open": candle["open"],
+            "high": candle["high"],
+            "low": candle["low"],
+            "close": candle["close"],
+            "volume": candle["volume"],
+        }
+        for index, candle in enumerate(_monte_carlo_candles())
+    ]
+    settings = _settings(
+        sqlite_path=str(tmp_path / "h.sqlite3"),
+        market_data_catalog_path=str(tmp_path / "market_data.duckdb"),
+        market_data_parquet_dir=str(tmp_path / "market_data"),
+    )
+    with TestClient(create_app(settings)) as c:
+        imported = c.post(
+            "/api/v1/market-data/datasets",
+            json={
+                "symbol": "BTCUSDT",
+                "timeframe": "1h",
+                "source": "test",
+                "candles": catalog_candles,
+            },
+        )
+        assert imported.status_code == 201
+        response = c.post(
+            "/api/v1/backtest/monte-carlo",
+            json={
+                "data_version": imported.json()["version"],
+                "short_window": 2,
+                "long_window": 4,
+                "fee_rate": 0,
+                "simulations": 40,
+                "seed": 7,
+            },
+        )
+        assert response.status_code == 200
+        reproduced = c.post(f"/api/v1/backtests/{response.json()['backtest_run_id']}/reproduce")
+
+    assert reproduced.status_code == 200
+    assert reproduced.json()["reproducible"] is True
 
 
 def test_rolling_backtest_returns_independent_window_diagnostics(tmp_path) -> None:

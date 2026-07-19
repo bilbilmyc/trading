@@ -47,6 +47,7 @@ from app.api.schemas import (
     KillSwitchRequest,
     LLMStrategyCreateRequest,
     MarketDataImportRequest,
+    MonteCarloBacktestRequest,
     OrderRequest,
     PaperResetRequest,
     PortfolioBacktestRequest,
@@ -2675,6 +2676,100 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             ],
         }
 
+    def _run_monte_carlo_backtest(
+        request: MonteCarloBacktestRequest, state: AppState, *, persist: bool
+    ) -> dict[str, Any]:
+        """Run a deterministic trade-order Monte Carlo study for one SMA result."""
+        from app.engine.backtest import run_sma_backtest
+        from app.engine.monte_carlo import run_trade_sequence_monte_carlo
+
+        try:
+            candles, backtest_candles = _load_backtest_candles(request, state)
+            baseline = run_sma_backtest(
+                backtest_candles,
+                short_window=request.short_window,
+                long_window=request.long_window,
+                initial_capital=request.initial_capital,
+                position_size_pct=request.position_size_pct,
+                fee_rate=request.fee_rate,
+                slippage_rate=request.slippage_rate,
+                max_volume_participation=request.max_volume_participation,
+                stop_loss_pct=request.stop_loss_pct,
+                take_profit_pct=request.take_profit_pct,
+            )
+            simulation = run_trade_sequence_monte_carlo(
+                [trade.net_pnl for trade in baseline.trade_history],
+                initial_capital=request.initial_capital,
+                simulations=request.simulations,
+                seed=request.seed,
+                return_jitter_pct=request.return_jitter_pct,
+                drawdown_threshold_pct=request.drawdown_threshold_pct,
+            )
+        except DatasetNotFoundError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except DatasetQualityError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        except (KeyError, MarketDataError, ValueError, TypeError) as exc:
+            raise HTTPException(
+                status_code=400, detail=f"Invalid Monte Carlo backtest data: {exc}"
+            ) from exc
+
+        execution_model = {
+            "signal_execution": "next_bar_open",
+            "fee_rate": request.fee_rate,
+            "slippage_rate": request.slippage_rate,
+            "max_volume_participation": request.max_volume_participation,
+            "volume_limit_behavior": "partial_fill_then_cancel",
+        }
+        payload: dict[str, Any] = {
+            "monte_carlo": simulation.as_dict(),
+            "baseline": _backtest_metrics_payload(baseline),
+            "parameters": {
+                "short_window": request.short_window,
+                "long_window": request.long_window,
+                "initial_capital": request.initial_capital,
+                "position_size_pct": request.position_size_pct,
+            },
+            "execution_model": execution_model,
+            "klines_used": [_serialize_kline(kline) for kline in candles],
+            "data_version": request.data_version,
+        }
+        result_hash = hashlib.sha256(
+            json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode()
+        ).hexdigest()
+        payload["result_hash"] = result_hash
+        if persist:
+            run_id = state.store.save_backtest_experiment(
+                strategy_name="sma_monte_carlo",
+                strategy_version=_strategy_version(),
+                data_version=request.data_version,
+                data_start=str(backtest_candles[0].get("open_time")),
+                data_end=str(backtest_candles[-1].get("open_time")),
+                strategy_parameters={
+                    "short_window": request.short_window,
+                    "long_window": request.long_window,
+                    "initial_capital": request.initial_capital,
+                    "position_size_pct": request.position_size_pct,
+                },
+                execution_model=execution_model,
+                risk_model={
+                    "stop_loss_pct": request.stop_loss_pct,
+                    "take_profit_pct": request.take_profit_pct,
+                },
+                environment={
+                    "app_version": "0.1.0",
+                    "python_version": platform.python_version(),
+                    "model_version": "not_applicable:sma_rule",
+                    "backtest_engine": "event_driven_simulation_v1",
+                },
+                request=request.model_dump(mode="json", exclude_none=True),
+                result=payload,
+                result_hash=result_hash,
+                created_at=datetime.now(UTC).isoformat().replace("+00:00", "Z"),
+            )
+            payload["backtest_run_id"] = run_id
+        return payload
+
     def _run_rolling_backtest(
         request: RollingBacktestRequest,
         state: AppState,
@@ -3005,6 +3100,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             payload["backtest_run_id"] = run_id
         return payload
 
+    @app.post("/api/v1/backtest/monte-carlo")
+    async def monte_carlo_backtest_endpoint(
+        request: MonteCarloBacktestRequest, state: AppState = Depends(get_state)
+    ):
+        """Run bounded deterministic trade-order Monte Carlo diagnostics."""
+        return _run_monte_carlo_backtest(request, state, persist=True)
+
     @app.post("/api/v1/backtest/rolling")
     async def rolling_backtest_endpoint(
         request: RollingBacktestRequest,
@@ -3072,6 +3174,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         elif "window_size" in raw_request:
             request = RollingBacktestRequest.model_validate(raw_request)
             replay = _run_rolling_backtest(request, state, persist=False)
+        elif "simulations" in raw_request and "seed" in raw_request:
+            request = MonteCarloBacktestRequest.model_validate(raw_request)
+            replay = _run_monte_carlo_backtest(request, state, persist=False)
         else:
             request = BacktestRequest.model_validate(raw_request)
             replay = _run_backtest(request, state, persist=False)
