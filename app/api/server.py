@@ -264,7 +264,7 @@ class AppState:
         """Reload durable, non-terminal submissions into the reconciliation loop."""
 
         for intent in self.store.pending_execution_intents():
-            self.track_execution_intent(intent["client_order_id"])
+            self._track_execution_intent(intent["client_order_id"])
 
     def _restore_reconciliation_blocks(self) -> None:
         """Keep critical account discrepancies fail-closed across restarts."""
@@ -276,6 +276,16 @@ class AppState:
 
         payload = outcome.as_dict()
         self.store.append_account_snapshot(payload)
+        # A synchronized quote-currency balance is the authoritative baseline
+        # for drawdown.  Post-trade attribution applies realized PnL between
+        # these reconciliation snapshots.
+        quote_value = sum(
+            float(balance.get("total", 0) or 0)
+            for balance in outcome.balances
+            if str(balance.get("currency", "")).upper() in {"USD", "USDT", "USDC"}
+        )
+        if quote_value > 0:
+            self.engine.risk_manager.update_portfolio_value(quote_value)
         self.store.upsert_reconciliation_issues(outcome.exchange, outcome.issues)
         if self.engine.account_reconciliation.observe(outcome):
             self.store.append_event(
@@ -290,43 +300,86 @@ class AppState:
                 }
             )
 
-    def track_execution_intent(self, client_order_id: str) -> None:
-        """Track an intent by client id so a later exchange sync can bind it."""
+    def _track_execution_intent(self, client_order_id: str) -> Order | None:
+        """Build an order from a durable intent and enroll non-terminals in sync."""
 
         intent = self.store.get_execution_intent(client_order_id)
         if intent is None:
-            return
+            return None
         try:
             status = OrderStatus(intent["status"])
         except ValueError:
             status = OrderStatus.UNKNOWN
-        if status in {
+        try:
+            side = OrderSide(str(intent["side"]).lower())
+        except ValueError:
+            return None
+        order_type = (
+            OrderType.MARKET if str(intent["order_type"]).lower() == "market" else OrderType.LIMIT
+        )
+        response = intent.get("response") or {}
+        try:
+            filled_quantity = max(
+                0.0,
+                float(
+                    response.get(
+                        "filled_quantity", response.get("executedQty", response.get("filled", 0))
+                    )
+                    or 0
+                ),
+            )
+        except (TypeError, ValueError):
+            filled_quantity = 0.0
+        try:
+            raw_average = response.get(
+                "avg_fill_price", response.get("avgPrice", response.get("average"))
+            )
+            average_price = float(raw_average) if raw_average not in (None, "", "0", 0) else None
+        except (TypeError, ValueError):
+            average_price = None
+        order = Order(
+            order_id=intent.get("exchange_order_id"),
+            client_order_id=intent["client_order_id"],
+            exchange=intent["exchange"],
+            symbol=intent["symbol"],
+            side=side,
+            order_type=order_type,
+            quantity=float(intent["quantity"]),
+            price=intent.get("price"),
+            status=status,
+            filled_quantity=filled_quantity,
+            avg_fill_price=average_price,
+        )
+        if status not in {
             OrderStatus.FILLED,
             OrderStatus.CANCELLED,
             OrderStatus.REJECTED,
             OrderStatus.EXPIRED,
         }:
+            self.engine.order_sync.track(order)
+        return order
+
+    async def track_execution_intent(self, client_order_id: str) -> None:
+        """Track an intent and immediately attribute any confirmed response fill."""
+
+        order = self._track_execution_intent(client_order_id)
+        if order is None:
             return
-        try:
-            side = OrderSide(str(intent["side"]).lower())
-        except ValueError:
-            return
-        order_type = (
-            OrderType.MARKET if str(intent["order_type"]).lower() == "market" else OrderType.LIMIT
-        )
-        self.engine.order_sync.track(
-            Order(
-                order_id=intent.get("exchange_order_id"),
-                client_order_id=intent["client_order_id"],
-                exchange=intent["exchange"],
-                symbol=intent["symbol"],
-                side=side,
-                order_type=order_type,
-                quantity=float(intent["quantity"]),
-                price=intent.get("price"),
-                status=status,
+        attribution = await self.engine.post_trade_attributor.record_order(order)
+        if attribution is not None:
+            self.store.append_event(
+                {
+                    "category": "risk",
+                    "event_type": "post_trade_risk_attributed",
+                    "level": "info",
+                    "exchange": attribution.exchange,
+                    "symbol": attribution.symbol,
+                    "order_id": order.order_id or client_order_id,
+                    "message": "Confirmed fill attributed to post-trade risk state",
+                    "details": attribution.as_dict(),
+                    "timestamp": datetime.now(UTC).isoformat(),
+                }
             )
-        )
 
     async def _persist_execution_intent_from_sync(self, order: Order, changed: bool) -> None:
         """Reflect reconciliation results in SQLite without blocking order sync."""
@@ -340,6 +393,21 @@ class AppState:
             exchange_order_id=order.order_id,
             clear_error=status not in {OrderStatus.SUBMITTING.value, OrderStatus.UNKNOWN.value},
         )
+        attribution = await self.engine.post_trade_attributor.record_order(order)
+        if attribution is not None:
+            self.store.append_event(
+                {
+                    "category": "risk",
+                    "event_type": "post_trade_risk_attributed",
+                    "level": "info",
+                    "exchange": attribution.exchange,
+                    "symbol": attribution.symbol,
+                    "order_id": order.order_id or order.client_order_id,
+                    "message": "Confirmed synchronized fill attributed to post-trade risk state",
+                    "details": attribution.as_dict(),
+                    "timestamp": datetime.now(UTC).isoformat(),
+                }
+            )
 
     def ensure_strategy_exchanges(self) -> None:
         """策略运行前，先把策略配置里需要的交易所客户端创建好。"""
@@ -656,7 +724,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 reference_price = 0.0
             if reference_price > 0:
                 return reference_price
-        raise HTTPException(status_code=502, detail="Cannot obtain a valid reference price for risk check")
+        raise HTTPException(
+            status_code=502, detail="Cannot obtain a valid reference price for risk check"
+        )
 
     async def ensure_pretrade_risk(
         *,
@@ -846,7 +916,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         )
         return response
 
-    def _mark_submission_unknown(
+    async def _mark_submission_unknown(
         *,
         request: Any,
         action: str,
@@ -857,7 +927,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             status="unknown",
             last_error=str(error.detail),
         )
-        state.track_execution_intent(request.client_order_id)
+        await state.track_execution_intent(request.client_order_id)
         record_event(
             category="order",
             event_type=f"{action}_submission_unknown",
@@ -1264,8 +1334,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         A Bot caller cannot turn an arbitrary REST request into a trade: the
         order must refer to a just-recorded, same-symbol actionable decision.
         """
-        cutoff = datetime.now(UTC) - timedelta(seconds=state.settings.bot.autopilot_cycle_seconds * 2)
-        for event in reversed(state.store.recent_events(category="bot", event_type="autopilot_analysis", limit=500)):
+        cutoff = datetime.now(UTC) - timedelta(
+            seconds=state.settings.bot.autopilot_cycle_seconds * 2
+        )
+        for event in reversed(
+            state.store.recent_events(category="bot", event_type="autopilot_analysis", limit=500)
+        ):
             details = event.get("details") or {}
             decision = details.get("decision") or {}
             if decision.get("decision_id") != decision_id:
@@ -1350,9 +1424,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         if not bot.autopilot_enabled or not bot.autopilot_live_order_enabled:
             raise HTTPException(status_code=409, detail="Bot autopilot live orders are disabled")
         if exchange != bot.autopilot_exchange.lower() or symbol not in set(bot.autopilot_symbols):
-            raise HTTPException(status_code=403, detail="Bot autopilot exchange or symbol is not allowed")
+            raise HTTPException(
+                status_code=403, detail="Bot autopilot exchange or symbol is not allowed"
+            )
         if request.notional > bot.autopilot_max_order_notional:
-            raise HTTPException(status_code=422, detail="Bot autopilot single-order notional limit exceeded")
+            raise HTTPException(
+                status_code=422, detail="Bot autopilot single-order notional limit exceeded"
+            )
         if not state.settings.enable_live_trading:
             reject_live_disabled(
                 action="bot_autopilot_order",
@@ -1380,14 +1458,17 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             raise HTTPException(status_code=409, detail="No fresh matching Bot autopilot decision")
         signal_key = str(decision.get("signal_key") or "")
         if len(signal_key) < 16:
-            raise HTTPException(status_code=409, detail="Bot autopilot decision has no stable signal key")
+            raise HTTPException(
+                status_code=409, detail="Bot autopilot decision has no stable signal key"
+            )
         # A random decision ID is intentionally not the idempotency key: the
         # scheduler may restart and re-analyze the same closed candle. Key the
         # order and budget to the stable consensus instead, so that retrying
         # one candle can never create a second live trade.
-        client_order_id = "bot-" + hashlib.sha256(
-            f"{exchange}|{symbol}|{side}|{signal_key}".encode()
-        ).hexdigest()[:32]
+        client_order_id = (
+            "bot-"
+            + hashlib.sha256(f"{exchange}|{symbol}|{side}|{signal_key}".encode()).hexdigest()[:32]
+        )
         # Replays must return before ticker/risk checks. Otherwise a Bot restart
         # could consume rate-limit slots while merely recovering an already
         # submitted or unknown order; this path never contacts the exchange.
@@ -1407,7 +1488,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         except (TypeError, ValueError):
             reference_price = 0.0
         if reference_price <= 0:
-            raise HTTPException(status_code=502, detail="Cannot obtain a valid reference price for Bot order")
+            raise HTTPException(
+                status_code=502, detail="Cannot obtain a valid reference price for Bot order"
+            )
         quantity = request.notional / reference_price
         await ensure_pretrade_risk(
             action="bot_autopilot_order",
@@ -1420,12 +1503,14 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         )
 
         budget_date = datetime.now(UTC).date().isoformat()
-        budget_allowed, used_notional, budget_idempotent = state.store.reserve_bot_autopilot_notional(
-            decision_id=client_order_id,
-            budget_date=budget_date,
-            notional=request.notional,
-            maximum_notional=bot.autopilot_max_daily_notional,
-            created_at=datetime.now(UTC).isoformat(),
+        budget_allowed, used_notional, budget_idempotent = (
+            state.store.reserve_bot_autopilot_notional(
+                decision_id=client_order_id,
+                budget_date=budget_date,
+                notional=request.notional,
+                maximum_notional=bot.autopilot_max_daily_notional,
+                created_at=datetime.now(UTC).isoformat(),
+            )
         )
         if not budget_allowed:
             reject_pretrade_risk(
@@ -1480,7 +1565,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 is_private=True,
             )
         except HTTPException as exc:
-            _mark_submission_unknown(request=order_request, action="bot_autopilot_order", error=exc)
+            await _mark_submission_unknown(
+                request=order_request, action="bot_autopilot_order", error=exc
+            )
             raise HTTPException(
                 status_code=502,
                 detail={
@@ -1501,7 +1588,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             response=response,
             clear_error=True,
         )
-        state.track_execution_intent(client_order_id)
+        await state.track_execution_intent(client_order_id)
         record_event(
             category="bot",
             event_type="autopilot_order_submitted",
@@ -1769,7 +1856,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 is_private=True,
             )
         except HTTPException as exc:
-            _mark_submission_unknown(request=request, action="spot_order", error=exc)
+            await _mark_submission_unknown(request=request, action="spot_order", error=exc)
             raise HTTPException(
                 status_code=502,
                 detail={
@@ -1790,7 +1877,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             response=response,
             clear_error=True,
         )
-        state.track_execution_intent(request.client_order_id)
+        await state.track_execution_intent(request.client_order_id)
         record_event(
             category="order",
             event_type="spot_order_submitted",
@@ -1881,7 +1968,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 lambda: client.place_contract_order(request), is_private=True
             )
         except HTTPException as exc:
-            _mark_submission_unknown(request=request, action="contract_order", error=exc)
+            await _mark_submission_unknown(request=request, action="contract_order", error=exc)
             raise HTTPException(
                 status_code=502,
                 detail={
@@ -1902,7 +1989,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             response=response,
             clear_error=True,
         )
-        state.track_execution_intent(request.client_order_id)
+        await state.track_execution_intent(request.client_order_id)
         record_event(
             category="order",
             event_type="contract_order_submitted",
@@ -2329,7 +2416,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     ):
         """List immutable historical dataset versions and their quality status."""
 
-        return {"datasets": [_public_dataset(item) for item in state.market_data.datasets(limit=limit)]}
+        return {
+            "datasets": [_public_dataset(item) for item in state.market_data.datasets(limit=limit)]
+        }
 
     @app.get("/api/v1/market-data/datasets/{version}")
     async def market_dataset_endpoint(version: str, state: AppState = Depends(get_state)):
@@ -2585,7 +2674,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     ):
         if not any(item["name"] == name for item in state.engine.list_strategies()):
             raise HTTPException(status_code=404, detail=f"Strategy not found: {name}")
-        return {"strategy": name, "runs": state.store.recent_strategy_backtest_runs(name, limit=limit)}
+        return {
+            "strategy": name,
+            "runs": state.store.recent_strategy_backtest_runs(name, limit=limit),
+        }
 
     @app.post(
         "/api/v1/strategies/{name}/backtests/walk-forward",
@@ -2626,7 +2718,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 take_profit_pct=request.take_profit_pct,
             )
         except (KeyError, ValueError, TypeError) as exc:
-            raise HTTPException(status_code=400, detail=f"Invalid walk-forward data: {exc}") from exc
+            raise HTTPException(
+                status_code=400, detail=f"Invalid walk-forward data: {exc}"
+            ) from exc
 
         payload = result.as_dict()
         run_id = state.store.save_strategy_backtest_run(
@@ -2664,9 +2758,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         evidence = state.store.paper_strategy_performance(name)
         thresholds = request.model_dump(mode="json")
         profit_factor = evidence["profit_factor"]
-        profit_factor_ok = (
-            (profit_factor is None and evidence["total_pnl"] > 0)
-            or (profit_factor is not None and profit_factor >= request.min_profit_factor)
+        profit_factor_ok = (profit_factor is None and evidence["total_pnl"] > 0) or (
+            profit_factor is not None and profit_factor >= request.min_profit_factor
         )
         checks = {
             "closed_trades": evidence["closed_trades"] >= request.min_closed_trades,
@@ -2710,7 +2803,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             decided_at=datetime.utcnow().isoformat(),
         )
         if review is None:
-            raise HTTPException(status_code=409, detail="promotion review is not eligible or already decided")
+            raise HTTPException(
+                status_code=409, detail="promotion review is not eligible or already decided"
+            )
         return {
             "review": review,
             "live_mode_changed": False,
@@ -3061,7 +3156,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         )
         outcome = next(
             (
-                item for item in outcomes
+                item
+                for item in outcomes
                 if isinstance(item.get("details"), dict)
                 and item["details"].get("decision_event_id") == event_id
             ),

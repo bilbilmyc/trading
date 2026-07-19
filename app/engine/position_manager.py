@@ -14,7 +14,7 @@ from app.models.position import Position
 
 class PositionManager:
     """持仓管理器
-    
+
     负责：
     - 持仓跟踪
     - 盈亏计算
@@ -63,14 +63,9 @@ class PositionManager:
             )
 
     async def update_position(
-        self,
-        exchange: str,
-        symbol: str,
-        quantity: float,
-        price: float,
-        side: str
-    ):
-        """更新持仓信息"""
+        self, exchange: str, symbol: str, quantity: float, price: float, side: str
+    ) -> float:
+        """更新持仓信息，并返回该笔成交新增的已实现盈亏。"""
         async with self._lock:
             key = self._make_key(exchange, symbol)
 
@@ -83,14 +78,15 @@ class PositionManager:
                 )
 
             # 根据买卖方向调整数量
-            if side.lower() == 'buy':
+            if side.lower() == "buy":
                 qty_change = quantity
             else:
                 qty_change = -quantity
 
-            self._positions[key].update_position(qty_change, price)
+            realized_pnl = self._positions[key].update_position(qty_change, price)
         # Outside the lock — gauge sync is cheap and idempotent.
         self.sync_positions_gauge()
+        return realized_pnl
 
     async def update_price(self, exchange: str, symbol: str, price: float):
         """更新持仓价格"""
@@ -111,18 +107,13 @@ class PositionManager:
         unrealized = sum(p.unrealized_pnl for p in self._positions.values())
         realized = sum(p.realized_pnl for p in self._positions.values())
         return {
-            'unrealized_pnl': unrealized,
-            'realized_pnl': realized,
-            'total_pnl': unrealized + realized,
+            "unrealized_pnl": unrealized,
+            "realized_pnl": realized,
+            "total_pnl": unrealized + realized,
         }
 
     async def update_balance(
-        self,
-        exchange: str,
-        currency: str,
-        total: float,
-        available: float,
-        frozen: float = None
+        self, exchange: str, currency: str, total: float, available: float, frozen: float = None
     ):
         """更新余额"""
         async with self._lock:
@@ -138,9 +129,7 @@ class PositionManager:
                     frozen=frozen or (total - available),
                 )
             else:
-                self._balances[exchange][currency].update_balance(
-                    total, available, frozen
-                )
+                self._balances[exchange][currency].update_balance(total, available, frozen)
 
     async def get_balance(self, exchange: str, currency: str) -> Balance | None:
         """获取余额"""
@@ -161,7 +150,7 @@ class PositionManager:
 
     async def get_portfolio_value(self, prices: dict[str, float]) -> float:
         """计算组合总价值
-        
+
         Args:
             prices: 币种到价格的映射 (以 USDT 计价)
         """
@@ -169,7 +158,7 @@ class PositionManager:
 
         for exchange, balances in self._balances.items():
             for currency, balance in balances.items():
-                if currency == 'USDT':
+                if currency == "USDT":
                     total_value += balance.total
                 elif currency in prices:
                     total_value += balance.total * prices[currency]
@@ -183,22 +172,24 @@ class PositionManager:
 
         for pos in self._positions.values():
             if not pos.is_flat():
-                positions.append({
-                    'symbol': pos.symbol,
-                    'exchange': pos.exchange,
-                    'quantity': pos.quantity,
-                    'avg_entry_price': pos.avg_entry_price,
-                    'current_price': pos.current_price,
-                    'unrealized_pnl': pos.unrealized_pnl,
-                    'pnl_pct': pos.pnl_percentage,
-                })
+                positions.append(
+                    {
+                        "symbol": pos.symbol,
+                        "exchange": pos.exchange,
+                        "quantity": pos.quantity,
+                        "avg_entry_price": pos.avg_entry_price,
+                        "current_price": pos.current_price,
+                        "unrealized_pnl": pos.unrealized_pnl,
+                        "pnl_pct": pos.pnl_percentage,
+                    }
+                )
 
         return {
-            'total_unrealized_pnl': pnl['unrealized_pnl'],
-            'total_realized_pnl': pnl['realized_pnl'],
-            'total_pnl': pnl['total_pnl'],
-            'active_positions': len(positions),
-            'positions': positions,
+            "total_unrealized_pnl": pnl["unrealized_pnl"],
+            "total_realized_pnl": pnl["realized_pnl"],
+            "total_pnl": pnl["total_pnl"],
+            "active_positions": len(positions),
+            "positions": positions,
         }
 
     def sync_positions_gauge(self) -> None:

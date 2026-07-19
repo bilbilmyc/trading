@@ -66,7 +66,9 @@ def test_sqlite_store_persists_strategy_signal_and_paper_state(tmp_path):
     }
     store.append_event(event)
     assert store.recent_events(limit=1) == [{**event, "id": 1}]
-    assert store.recent_events(category="risk", limit=1)[0]["event_type"] == "order_rejected_by_risk"
+    assert (
+        store.recent_events(category="risk", limit=1)[0]["event_type"] == "order_rejected_by_risk"
+    )
     assert store.recent_events(category="order", limit=1) == []
 
     order = {
@@ -113,3 +115,21 @@ def test_sqlite_store_persists_strategy_signal_and_paper_state(tmp_path):
     store.delete_strategy("sma_test")
     assert store.list_strategies() == []
     store.close()
+
+
+def test_post_trade_attribution_checkpoint_advances_only_for_new_cumulative_fill(tmp_path) -> None:
+    store = SQLiteStore(str(tmp_path / "attribution.db"))
+
+    assert store.advance_post_trade_attribution(
+        attribution_id="client-1", cumulative_quantity=1.0, cumulative_avg_price=100.0
+    ) == (0.0, 0.0)
+    assert store.advance_post_trade_attribution(
+        attribution_id="client-1", cumulative_quantity=1.5, cumulative_avg_price=110.0
+    ) == (1.0, 100.0)
+    assert store.advance_post_trade_attribution(
+        attribution_id="client-1", cumulative_quantity=1.5, cumulative_avg_price=110.0
+    ) == (1.5, 110.0)
+    # Cumulative fill notional is not allowed to regress on malformed data.
+    assert store.advance_post_trade_attribution(
+        attribution_id="client-1", cumulative_quantity=2.0, cumulative_avg_price=70.0
+    ) == (1.5, 110.0)

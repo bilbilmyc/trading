@@ -5,7 +5,6 @@ from __future__ import annotations
 import pytest
 
 from app.engine.position_manager import PositionManager
-from app.models.position import Position
 
 
 @pytest.mark.asyncio
@@ -113,3 +112,16 @@ async def test_position_manager_update_position_with_price_none() -> None:
     pos = await pm.get_position("binance_usdm", "BTCUSDT")
     assert pos is not None
     assert pos.avg_entry_price == 0.0
+
+
+@pytest.mark.asyncio
+async def test_update_position_returns_realized_pnl_from_actual_fill_price() -> None:
+    pm = PositionManager()
+    await pm.update_position("binance_usdm", "BTCUSDT", 1.0, 100.0, "buy")
+    realized = await pm.update_position("binance_usdm", "BTCUSDT", 0.4, 125.0, "sell")
+
+    position = await pm.get_position("binance_usdm", "BTCUSDT")
+    assert realized == pytest.approx(10.0)
+    assert position is not None
+    assert position.realized_pnl == pytest.approx(10.0)
+    assert position.quantity == pytest.approx(0.6)

@@ -33,6 +33,7 @@ from app.engine.paper_trading import PaperTradingAccount
 from app.engine.position_manager import PositionManager
 from app.engine.position_recorder import PositionRecorderAdapter
 from app.engine.position_sync import PositionSync
+from app.engine.post_trade_attribution import PostTradeRiskAttributor
 from app.engine.risk_manager import RiskConfig, RiskManager
 from app.engine.strategy_registry import StrategyRegistry
 from app.exchanges.base import ExchangeBase
@@ -190,7 +191,12 @@ class TradingEngine:
 
         # ── Phase D: LiveOrderPipeline (deep module + 6 ports) ──
         self._order_tracker = OrderTrackerAdapter(self.order_sync)
-        self._position_recorder = PositionRecorderAdapter(self.position_manager)
+        self.post_trade_attributor = PostTradeRiskAttributor(
+            self.position_manager, self.risk_manager, self.store
+        )
+        self._position_recorder = PositionRecorderAdapter(
+            self.position_manager, self.post_trade_attributor
+        )
         self._observer = CompositeObserver(self.monitor, self.store)
         self._pipeline_semaphore = asyncio.Semaphore(max_concurrent_orders)
         # Pipeline is per-exchange (created on demand in add_exchange)
