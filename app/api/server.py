@@ -3017,8 +3017,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         from app.engine.strategy_governance import SMAParameters, run_walk_forward_backtest
 
         try:
+            _, backtest_candles = _load_backtest_candles(request, state)
             result = run_walk_forward_backtest(
-                request.klines,
+                backtest_candles,
                 train_size=request.train_size,
                 test_size=request.test_size,
                 step_size=request.step_size,
@@ -3037,7 +3038,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 stop_loss_pct=request.stop_loss_pct,
                 take_profit_pct=request.take_profit_pct,
             )
-        except (KeyError, ValueError, TypeError) as exc:
+        except DatasetNotFoundError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except DatasetQualityError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        except (KeyError, MarketDataError, ValueError, TypeError) as exc:
             raise HTTPException(
                 status_code=400, detail=f"Invalid walk-forward data: {exc}"
             ) from exc

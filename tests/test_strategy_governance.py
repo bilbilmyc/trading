@@ -29,6 +29,8 @@ def _candles(prices: list[float]) -> list[dict[str, float | str]]:
 def _settings(tmp_path) -> Settings:
     return Settings(
         sqlite_path=str(tmp_path / "governance.sqlite3"),
+        market_data_catalog_path=str(tmp_path / "market_data.duckdb"),
+        market_data_parquet_dir=str(tmp_path / "market_data"),
         enable_live_trading=False,
         frontend_static_dir=str(tmp_path / "static"),
         llm_api_key="",
@@ -87,6 +89,35 @@ def test_walk_forward_uses_only_out_of_sample_folds() -> None:
     assert "equity_curve" not in result.folds[0].as_dict()["out_of_sample"]
 
 
+def test_walk_forward_audits_normalized_candidate_selection_stability() -> None:
+    prices = [100 + ((index % 11) - 5) * 1.5 + index * 0.2 for index in range(90)]
+    result = run_walk_forward_backtest(
+        _candles(prices),
+        train_size=30,
+        test_size=15,
+        step_size=15,
+        candidate_parameters=[
+            SMAParameters(3, 6),
+            SMAParameters(2, 4),
+            SMAParameters(2, 4),
+        ],
+        fee_rate=0.0,
+    )
+
+    payload = result.as_dict()
+    optimization = payload["optimization"]
+    assert result.candidate_count == 2
+    assert optimization["candidate_count"] == 2
+    assert optimization["selection_metric"][-2:] == ["short_window_asc", "long_window_asc"]
+    assert sum(
+        item["selected_folds"] for item in optimization["parameter_selection_frequency"]
+    ) == len(result.folds)
+    assert (
+        optimization["parameter_stability_ratio"]
+        == optimization["parameter_selection_frequency"][0]["selected_fold_ratio"]
+    )
+
+
 def test_walk_forward_endpoint_records_versioned_oos_evidence(tmp_path) -> None:
     app = create_app(_settings(tmp_path))
     with TestClient(app) as client:
@@ -108,11 +139,75 @@ def test_walk_forward_endpoint_records_versioned_oos_evidence(tmp_path) -> None:
         body = response.json()
         assert body["strategy_version"] == 1
         assert body["result"]["folds"]
+        assert body["result"]["optimization"]["candidate_count"] == 2
         assert "live_mode_changed" not in body
 
         history = client.get("/api/v1/strategies/sma_governed/backtests")
         assert history.status_code == 200
         assert history.json()["runs"][0]["kind"] == "walk_forward"
+
+
+def test_walk_forward_endpoint_accepts_versioned_market_data(tmp_path) -> None:
+    app = create_app(_settings(tmp_path))
+    catalog_candles = [
+        {
+            "timestamp": f"2026-01-{1 + index // 24:02d}T{index % 24:02d}:00:00Z",
+            "open": 100.0 + index * 0.1,
+            "high": 105.0 + index * 0.1,
+            "low": 95.0 + index * 0.1,
+            "close": 100.0 + index * 0.1,
+            "volume": 10.0,
+        }
+        for index in range(70)
+    ]
+    with TestClient(app) as client:
+        _register(app.state.trading.engine)
+        imported = client.post(
+            "/api/v1/market-data/datasets",
+            json={
+                "symbol": "BTCUSDT",
+                "timeframe": "1h",
+                "source": "fixture",
+                "candles": catalog_candles,
+            },
+        )
+        assert imported.status_code == 201, imported.text
+
+        response = client.post(
+            "/api/v1/strategies/sma_governed/backtests/walk-forward",
+            json={
+                "data_version": imported.json()["version"],
+                "train_size": 30,
+                "test_size": 15,
+                "step_size": 15,
+                "candidate_parameters": [{"short_window": 2, "long_window": 4}],
+                "fee_rate": 0,
+            },
+        )
+        assert response.status_code == 200, response.text
+        history = client.get("/api/v1/strategies/sma_governed/backtests")
+
+    assert history.status_code == 200
+    assert history.json()["runs"][0]["request"]["data_version"] == imported.json()["version"]
+
+
+def test_walk_forward_endpoint_rejects_invalid_or_duplicate_candidates(tmp_path) -> None:
+    app = create_app(_settings(tmp_path))
+    with TestClient(app) as client:
+        _register(app.state.trading.engine)
+        response = client.post(
+            "/api/v1/strategies/sma_governed/backtests/walk-forward",
+            json={
+                "klines": _candles([100 + index for index in range(50)]),
+                "train_size": 30,
+                "test_size": 15,
+                "candidate_parameters": [
+                    {"short_window": 2, "long_window": 4},
+                    {"short_window": 2, "long_window": 4},
+                ],
+            },
+        )
+    assert response.status_code == 422
 
 
 def _paper_order(order_id: str, pnl: float) -> dict[str, object]:
@@ -153,7 +248,9 @@ def test_paper_promotion_needs_manual_decision_and_never_enables_live(tmp_path) 
         review = evaluate.json()["review"]
         assert review["status"] == "eligible"
         assert evaluate.json()["live_mode_changed"] is False
-        governed = next(item for item in state.engine.list_strategies() if item["name"] == "sma_governed")
+        governed = next(
+            item for item in state.engine.list_strategies() if item["name"] == "sma_governed"
+        )
         assert governed["mode"] == "paper"
 
         decision = client.post(
@@ -163,5 +260,7 @@ def test_paper_promotion_needs_manual_decision_and_never_enables_live(tmp_path) 
         assert decision.status_code == 200, decision.text
         assert decision.json()["review"]["status"] == "approved"
         assert decision.json()["live_mode_changed"] is False
-        governed = next(item for item in state.engine.list_strategies() if item["name"] == "sma_governed")
+        governed = next(
+            item for item in state.engine.list_strategies() if item["name"] == "sma_governed"
+        )
         assert governed["mode"] == "paper"

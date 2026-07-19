@@ -8,6 +8,8 @@ from typing import Any
 
 from app.engine.backtest import BacktestResult, run_sma_backtest
 
+MAX_WALK_FORWARD_CANDIDATES = 24
+
 
 @dataclass(frozen=True)
 class SMAParameters:
@@ -38,10 +40,29 @@ class WalkForwardFold:
 
 
 @dataclass(frozen=True)
+class ParameterSelectionFrequency:
+    """How often one parameter pair won an independent training window."""
+
+    parameters: SMAParameters
+    selected_folds: int
+    selected_fold_ratio: float
+
+    def as_dict(self) -> dict[str, Any]:
+        return {
+            "parameters": asdict(self.parameters),
+            "selected_folds": self.selected_folds,
+            "selected_fold_ratio": self.selected_fold_ratio,
+        }
+
+
+@dataclass(frozen=True)
 class WalkForwardResult:
     """Aggregate of only the out-of-sample segments from a WFO run."""
 
     folds: list[WalkForwardFold]
+    candidate_count: int
+    parameter_stability_ratio: float
+    parameter_selection_frequency: list[ParameterSelectionFrequency]
     initial_capital: float
     final_equity: float
     total_pnl: float
@@ -56,6 +77,20 @@ class WalkForwardResult:
     def as_dict(self) -> dict[str, Any]:
         return {
             "folds": [fold.as_dict() for fold in self.folds],
+            "optimization": {
+                "candidate_count": self.candidate_count,
+                "selection_metric": [
+                    "train_total_return_pct_desc",
+                    "train_max_drawdown_asc",
+                    "train_trades_desc",
+                    "short_window_asc",
+                    "long_window_asc",
+                ],
+                "parameter_stability_ratio": self.parameter_stability_ratio,
+                "parameter_selection_frequency": [
+                    item.as_dict() for item in self.parameter_selection_frequency
+                ],
+            },
             "initial_capital": self.initial_capital,
             "final_equity": self.final_equity,
             "total_pnl": self.total_pnl,
@@ -100,10 +135,39 @@ def _select_candidate(
         trials.append((candidate, trial))
 
     # Prefer return, then lower drawdown, then a larger sample of closed trades.
+    # The final window tie-breaks make an equal training result reproducible.
     return max(
         trials,
-        key=lambda item: (item[1].total_return_pct, -item[1].max_drawdown, item[1].trades),
+        key=lambda item: (
+            item[1].total_return_pct,
+            -item[1].max_drawdown,
+            item[1].trades,
+            -item[0].short_window,
+            -item[0].long_window,
+        ),
     )
+
+
+def _normalise_candidates(candidates: list[SMAParameters]) -> list[SMAParameters]:
+    """Validate, de-duplicate and stably order bounded WFO candidate pairs."""
+
+    normalised = sorted(
+        {(candidate.short_window, candidate.long_window) for candidate in candidates}
+    )
+    if not normalised:
+        raise ValueError("candidate_parameters cannot be empty")
+    if len(normalised) > MAX_WALK_FORWARD_CANDIDATES:
+        raise ValueError(
+            f"candidate_parameters may contain at most {MAX_WALK_FORWARD_CANDIDATES} unique pairs"
+        )
+    if any(
+        short_window <= 0 or long_window <= short_window for short_window, long_window in normalised
+    ):
+        raise ValueError("each candidate must have short_window < long_window")
+    return [
+        SMAParameters(short_window=short_window, long_window=long_window)
+        for short_window, long_window in normalised
+    ]
 
 
 def run_walk_forward_backtest(
@@ -136,14 +200,9 @@ def run_walk_forward_backtest(
     if step <= 0:
         raise ValueError("step_size must be positive")
 
-    candidates = candidate_parameters or [
-        SMAParameters(short_window=short_window, long_window=long_window)
-    ]
-    if not candidates:
-        raise ValueError("candidate_parameters cannot be empty")
-    for candidate in candidates:
-        if candidate.short_window <= 0 or candidate.long_window <= candidate.short_window:
-            raise ValueError("each candidate must have short_window < long_window")
+    candidates = _normalise_candidates(
+        candidate_parameters or [SMAParameters(short_window=short_window, long_window=long_window)]
+    )
 
     execution: dict[str, Any] = {
         "initial_capital": initial_capital,
@@ -193,8 +252,28 @@ def run_walk_forward_backtest(
     mean_return = sum(returns) / len(returns)
     variance = sum((value - mean_return) ** 2 for value in returns) / len(returns)
 
+    selection_counts: dict[SMAParameters, int] = {}
+    for fold in folds:
+        selection_counts[fold.selected_parameters] = (
+            selection_counts.get(fold.selected_parameters, 0) + 1
+        )
+    selection_frequency = [
+        ParameterSelectionFrequency(
+            parameters=parameters,
+            selected_folds=count,
+            selected_fold_ratio=round(count / len(folds), 4),
+        )
+        for parameters, count in sorted(
+            selection_counts.items(),
+            key=lambda item: (-item[1], item[0].short_window, item[0].long_window),
+        )
+    ]
+
     return WalkForwardResult(
         folds=folds,
+        candidate_count=len(candidates),
+        parameter_stability_ratio=selection_frequency[0].selected_fold_ratio,
+        parameter_selection_frequency=selection_frequency,
         initial_capital=round(initial_capital, 4),
         final_equity=round(equity, 4),
         total_pnl=round(equity - initial_capital, 4),
@@ -209,6 +288,8 @@ def run_walk_forward_backtest(
 
 
 __all__ = [
+    "MAX_WALK_FORWARD_CANDIDATES",
+    "ParameterSelectionFrequency",
     "SMAParameters",
     "WalkForwardFold",
     "WalkForwardResult",

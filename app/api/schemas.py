@@ -256,6 +256,12 @@ class WalkForwardCandidate(BaseModel):
     short_window: int = Field(..., gt=0)
     long_window: int = Field(..., gt=0)
 
+    @model_validator(mode="after")
+    def _has_valid_window_order(self) -> WalkForwardCandidate:
+        if self.short_window >= self.long_window:
+            raise ValueError("short_window must be less than long_window")
+        return self
+
 
 class WalkForwardRequest(BacktestRequest):
     """Strictly out-of-sample walk-forward validation request."""
@@ -264,6 +270,16 @@ class WalkForwardRequest(BacktestRequest):
     test_size: int = Field(..., ge=3, le=9_000)
     step_size: int | None = Field(None, ge=1, le=9_000)
     candidate_parameters: list[WalkForwardCandidate] = Field(default_factory=list, max_length=24)
+
+    @model_validator(mode="after")
+    def _has_unique_candidate_parameters(self) -> WalkForwardRequest:
+        pairs = [
+            (candidate.short_window, candidate.long_window)
+            for candidate in self.candidate_parameters
+        ]
+        if len(pairs) != len(set(pairs)):
+            raise ValueError("candidate_parameters must not contain duplicate window pairs")
+        return self
 
 
 class StrategyPromotionEvaluateRequest(BaseModel):

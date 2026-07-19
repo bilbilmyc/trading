@@ -274,7 +274,9 @@ AI 分析器使用版本化 `v4` 协议。协议包含 `decision`（`buy` / `sel
 
 策略配置会持久化为不可变版本：创建策略、调整运行状态或模式后，只有配置指纹实际变化才会新增版本。可通过 `GET /api/v1/strategies/{name}/versions`（`AUTH_API_KEY`）查看版本、参数和创建原因。
 
-样本外验证使用 `POST /api/v1/strategies/{name}/backtests/walk-forward`（`AUTH_API_KEY`）。请求包含原始 `klines`、`train_size`、`test_size`、可选 `step_size` 和 SMA 参数候选集。每个训练窗口只在自身历史上选取候选参数，再从零开始执行紧接着的测试窗口；响应及 SQLite 审计记录只聚合测试窗口结果，避免把训练期优化收益伪装成样本外表现。可用 `GET /api/v1/strategies/{name}/backtests` 查看已持久化的验证记录。
+样本外验证使用 `POST /api/v1/strategies/{name}/backtests/walk-forward`（`AUTH_API_KEY`）。请求与普通回测一致，必须二选一提供内联 `klines` 或通过质量检查的 `data_version`（后者可附带 `start` / `end`）；再指定 `train_size`、`test_size`、可选 `step_size` 和最多 24 组互不重复的 SMA 参数候选集。每个训练窗口只在自身历史上选择候选参数，再从零开始执行紧接着的测试窗口；响应及 SQLite 审计记录只聚合测试窗口结果，避免把训练期优化收益伪装成样本外表现。
+
+响应新增 `result.optimization` 审计对象，包含候选数、稳定的训练期排序规则、每个参数对被选择的折数/比例，以及 `parameter_stability_ratio`。该稳定性值仅用于研究诊断，**不是**实盘准入或自动下单授权；端点不会修改策略参数、改变策略模式或启用真实交易。可用 `GET /api/v1/strategies/{name}/backtests` 查看已持久化的验证记录。
 
 ```json
 {
