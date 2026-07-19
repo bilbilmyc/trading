@@ -5,6 +5,7 @@
 """
 
 import asyncio
+import math
 from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime
 from typing import Any
@@ -492,13 +493,38 @@ class RiskManager:
         if value > self._peak_value:
             self._peak_value = value
 
+    async def record_realized_pnl(self, pnl: float) -> None:
+        """Atomically backwrite a confirmed realized PnL into risk state.
+
+        A known portfolio value is adjusted by the fill PnL so drawdown is
+        refreshed immediately; an authoritative balance sync may later replace
+        that value.  With no account baseline, daily-loss and streak controls
+        still remain accurate without fabricating a drawdown percentage.
+        """
+        if not isinstance(pnl, (int, float)) or not math.isfinite(float(pnl)):
+            return
+        async with self._lock:
+            self._daily_pnl += float(pnl)
+            if pnl < 0:
+                self._consecutive_losses += 1
+            elif pnl > 0:
+                self._consecutive_losses = 0
+            if self._current_value > 0:
+                self._current_value += float(pnl)
+                if self._current_value > self._peak_value:
+                    self._peak_value = self._current_value
+
     def update_daily_pnl(self, pnl: float) -> None:
-        """记录一笔已实现盈亏，并维护连续亏损闸门状态。"""
+        """Synchronous compatibility helper for manual/local risk updates."""
         self._daily_pnl += pnl
         if pnl < 0:
             self._consecutive_losses += 1
         elif pnl > 0:
             self._consecutive_losses = 0
+        if self._current_value > 0:
+            self._current_value += pnl
+            if self._current_value > self._peak_value:
+                self._peak_value = self._current_value
 
     def reset_daily_pnl(self) -> None:
         """重置每日盈亏与连续亏损计数（每日调用）。"""

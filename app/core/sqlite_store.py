@@ -274,6 +274,13 @@ class SQLiteStore:
                 );
                 CREATE INDEX IF NOT EXISTS idx_execution_intents_status
                     ON execution_intents(status, exchange, updated_at);
+
+                CREATE TABLE IF NOT EXISTS post_trade_attributions (
+                    attribution_id TEXT PRIMARY KEY,
+                    attributed_quantity REAL NOT NULL CHECK (attributed_quantity >= 0),
+                    attributed_avg_price REAL NOT NULL CHECK (attributed_avg_price >= 0),
+                    updated_at TEXT NOT NULL
+                );
                 """
             )
             self._conn.commit()
@@ -395,7 +402,9 @@ class SQLiteStore:
             self._conn.commit()
         return int(cursor.lastrowid)
 
-    def recent_strategy_backtest_runs(self, strategy_name: str, limit: int = 20) -> list[dict[str, Any]]:
+    def recent_strategy_backtest_runs(
+        self, strategy_name: str, limit: int = 20
+    ) -> list[dict[str, Any]]:
         with self._lock:
             rows = self._conn.execute(
                 "SELECT * FROM strategy_backtest_runs WHERE strategy_name = ? "
@@ -979,6 +988,58 @@ class SQLiteStore:
                 tuple(params),
             )
             self._conn.commit()
+
+    def advance_post_trade_attribution(
+        self,
+        *,
+        attribution_id: str,
+        cumulative_quantity: float,
+        cumulative_avg_price: float,
+    ) -> tuple[float, float]:
+        """Advance one confirmed-fill checkpoint and return its prior values.
+
+        The SQLite lock makes repeated callbacks and process restarts idempotent.
+        Regressing cumulative quantities are ignored rather than rewriting the
+        high-water mark received from a more authoritative exchange response.
+        """
+        if cumulative_quantity <= 0 or cumulative_avg_price <= 0:
+            raise ValueError("cumulative fill quantity and average price must be positive")
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT attributed_quantity, attributed_avg_price "
+                "FROM post_trade_attributions WHERE attribution_id = ?",
+                (attribution_id,),
+            ).fetchone()
+            if row is not None:
+                prior_quantity = float(row["attributed_quantity"])
+                prior_average = float(row["attributed_avg_price"])
+                if cumulative_quantity <= prior_quantity + 1e-12:
+                    return prior_quantity, prior_average
+                # A cumulative fill's notional cannot move backwards.  Treat a
+                # malformed/regressing exchange payload as untrusted and retain
+                # the last known-good checkpoint so a later valid update can
+                # still be attributed.
+                if (
+                    cumulative_quantity * cumulative_avg_price
+                    <= (prior_quantity * prior_average) + 1e-12
+                ):
+                    return prior_quantity, prior_average
+                self._conn.execute(
+                    "UPDATE post_trade_attributions "
+                    "SET attributed_quantity = ?, attributed_avg_price = ?, updated_at = datetime('now') "
+                    "WHERE attribution_id = ?",
+                    (cumulative_quantity, cumulative_avg_price, attribution_id),
+                )
+            else:
+                prior_quantity, prior_average = 0.0, 0.0
+                self._conn.execute(
+                    "INSERT INTO post_trade_attributions "
+                    "(attribution_id, attributed_quantity, attributed_avg_price, updated_at) "
+                    "VALUES (?, ?, ?, datetime('now'))",
+                    (attribution_id, cumulative_quantity, cumulative_avg_price),
+                )
+            self._conn.commit()
+        return prior_quantity, prior_average
 
     def pending_execution_intents(self, exchange: str | None = None) -> list[dict[str, Any]]:
         """Return intents which may still need exchange reconciliation."""

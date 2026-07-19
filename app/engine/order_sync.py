@@ -136,10 +136,14 @@ class OrderSync:
                 if client_order_id and not local.client_order_id:
                     local.client_order_id = client_order_id
 
+                before_fill = (local.filled_quantity, local.avg_fill_price)
                 self._apply_exchange_fields(local, raw)
-                if new_status and local.status != new_status:
+                state_changed = bool(new_status and local.status != new_status)
+                fill_changed = before_fill != (local.filled_quantity, local.avg_fill_price)
+                if state_changed:
                     local.status = new_status
                     local.updated_at = datetime.utcnow()
+                if state_changed or fill_changed:
                     changed += 1
                     await self._notify(local)
 
@@ -236,7 +240,9 @@ class OrderSync:
             quantity = float(raw.get("quantity") or raw.get("origQty") or raw.get("size") or 0)
             if quantity <= 0:
                 return None
-            status = cls._translate_status(str(raw.get("status", "new")).lower()) or OrderStatus.PENDING
+            status = (
+                cls._translate_status(str(raw.get("status", "new")).lower()) or OrderStatus.PENDING
+            )
             price_value = raw.get("price")
             price = float(price_value) if price_value not in (None, "", "0") else None
             order = Order(
@@ -264,4 +270,6 @@ class OrderSync:
 
     @property
     def open_orders(self) -> list[Order]:
-        return list({id(order): order for order in self._local_orders.values() if order.is_active}.values())
+        return list(
+            {id(order): order for order in self._local_orders.values() if order.is_active}.values()
+        )
