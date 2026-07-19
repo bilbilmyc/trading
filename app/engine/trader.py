@@ -135,6 +135,9 @@ class TradingEngine:
         # 核心组件
         self.risk_manager = RiskManager(risk_config, trading_guard=trading_guard)
         self.position_manager = PositionManager()
+        self.risk_manager.set_portfolio_exposure_provider(
+            self.position_manager.get_exposure_snapshot
+        )
         self.account_reconciliation = AccountReconciliationGuard()
         self.paper_account = PaperTradingAccount()
 

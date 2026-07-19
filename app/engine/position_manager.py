@@ -7,6 +7,7 @@
 import asyncio
 from typing import Any
 
+from app.engine.portfolio_exposure import PortfolioExposure
 from app.models.balance import Balance
 from app.models.position import Position
 
@@ -38,6 +39,28 @@ class PositionManager:
     async def get_all_positions(self) -> dict[str, Position]:
         """获取所有持仓"""
         return self._positions.copy()
+
+    async def get_exposure_snapshot(
+        self,
+        symbol: str | None = None,
+        reference_price: float | None = None,
+    ) -> PortfolioExposure:
+        """Return gross local exposure, overriding the checked symbol's price.
+
+        PositionSync and strategy fills maintain this local view. The reference
+        price from the incoming order replaces a potentially stale price for its
+        own symbol, while other symbols retain their latest synchronized mark.
+        """
+        overrides = (
+            {symbol.upper(): reference_price}
+            if symbol is not None and reference_price is not None and reference_price > 0
+            else None
+        )
+        async with self._lock:
+            return PortfolioExposure.from_positions(
+                self._positions.values(),
+                price_overrides=overrides,
+            )
 
     async def update_position(
         self,

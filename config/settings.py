@@ -69,6 +69,8 @@ class RiskSettings(BaseModel):
     max_drawdown_pct: float = 0.20
     max_orders_per_minute: int = 5
     max_daily_order_notional: float = 5000.0
+    max_portfolio_exposure: float = 0.0
+    max_asset_concentration_pct: float = 0.0
     max_leverage: float = 5.0
     max_consecutive_losses: int = 0
     blocked_symbols: tuple[str, ...] = ()
@@ -186,6 +188,10 @@ class Settings(BaseSettings):
     max_orders_per_minute: int = Field(default=5, gt=0)
     # Cross-request day budget. Set to 0 only to explicitly disable it.
     max_daily_order_notional: float = Field(default=5000.0, ge=0)
+    # Gross local position exposure; 0 retains compatibility by disabling the cap.
+    max_portfolio_exposure: float = Field(default=0.0, ge=0)
+    # Share of gross exposure one asset may represent; 0 disables the cap.
+    max_asset_concentration_pct: float = Field(default=0.0, ge=0, le=1)
     # Explicit leverage is capped for contract orders; 0 disables the global cap.
     max_leverage: float = Field(default=5.0, ge=0)
     # 0 leaves the consecutive-loss circuit breaker disabled.
@@ -400,6 +406,8 @@ class Settings(BaseSettings):
             max_drawdown_pct=self.max_drawdown_pct,
             max_orders_per_minute=self.max_orders_per_minute,
             max_daily_order_notional=self.max_daily_order_notional,
+            max_portfolio_exposure=self.max_portfolio_exposure,
+            max_asset_concentration_pct=self.max_asset_concentration_pct,
             max_leverage=self.max_leverage,
             max_consecutive_losses=self.max_consecutive_losses,
             blocked_symbols=tuple(self.risk_blocked_symbols),
