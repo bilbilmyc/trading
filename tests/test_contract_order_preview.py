@@ -1,3 +1,4 @@
+import asyncio
 from typing import Any
 
 import pytest
@@ -207,6 +208,47 @@ def test_contract_order_reuses_idempotency_result(tmp_path, monkeypatch):
     assert second.json()["idempotent_replay"] is True
     assert exchange.place_calls == 1
     assert conflicting.status_code == 409
+
+
+def test_contract_order_risk_gate_blocks_portfolio_exposure_and_audits(tmp_path, monkeypatch):
+    exchange = PreviewExchange()
+    monkeypatch.setattr(ExchangeFactory, "get_or_create", lambda *args, **kwargs: exchange)
+    app = create_app(
+        Settings(
+            sqlite_path=str(tmp_path / "risk-portfolio-exposure.sqlite3"),
+            enable_live_trading=True,
+            max_portfolio_exposure=150.0,
+            frontend_static_dir=str(tmp_path / "static"),
+        )
+    )
+
+    with TestClient(app) as client:
+        asyncio.run(
+            app.state.trading.engine.position_manager.update_position(
+                "binance_usdm",
+                "BTCUSDT",
+                quantity=0.001,
+                price=100_000.0,
+                side="buy",
+            )
+        )
+        response = client.post(
+            "/api/v1/contracts/order",
+            json={
+                "exchange": "binance_usdm",
+                "symbol": "BTCUSDT",
+                "intent": "open_long",
+                "quantity": 0.001,
+                "order_type": "market",
+                "client_order_id": "risk-portfolio-exposure-001",
+            },
+        )
+        events = client.get("/api/v1/events/recent?event_type=risk_order_blocked").json()["events"]
+
+    assert response.status_code == 422
+    assert exchange.place_calls == 0
+    assert events[-1]["details"]["action"] == "place_contract_order"
+    assert "组合总名义暴露" in events[-1]["details"]["reason"]
 
 
 def test_contract_order_risk_gate_blocks_excessive_leverage_and_audits(tmp_path, monkeypatch):

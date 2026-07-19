@@ -5,6 +5,7 @@
 """
 
 import asyncio
+from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime
 from typing import Any
 
@@ -12,6 +13,7 @@ from pydantic import BaseModel, Field
 
 from app.engine.live_trading_guard import LiveTradingGuard
 from app.engine.pipeline_types import RiskDecision
+from app.engine.portfolio_exposure import PortfolioExposure
 from app.strategies.base import Signal
 
 
@@ -25,6 +27,8 @@ class RiskConfig(BaseModel):
     max_position_size: float = Field(1.0, gt=0, description="最大持仓数量")
     max_position_value: float = Field(100000, gt=0, description="单笔最大名义金额")
     max_daily_order_notional: float = Field(5000, ge=0, description="单日最大下单名义金额；0 表示关闭")
+    max_portfolio_exposure: float = Field(0, ge=0, description="组合最大总名义暴露；0 表示关闭")
+    max_asset_concentration_pct: float = Field(0, ge=0, le=1, description="单资产最大组合暴露占比；0 表示关闭")
     max_leverage: float = Field(5.0, ge=0, description="全局最大杠杆；0 表示不限制")
     stop_loss_pct: float = Field(0.05, gt=0, le=1, description="止损百分比")
     take_profit_pct: float = Field(0.10, gt=0, description="止盈百分比")
@@ -60,6 +64,10 @@ class RiskManager:
         self._peak_value = 0.0
         self._current_value = 0.0
         self._consecutive_losses = 0
+        self._portfolio_exposure = PortfolioExposure()
+        self._portfolio_exposure_provider: (
+            Callable[[str, float], Awaitable[PortfolioExposure]] | None
+        ) = None
         self._order_timestamps: list[datetime] = []
         self._trading_enabled = True
         self._guard = trading_guard
@@ -97,6 +105,7 @@ class RiskManager:
         price: float,
         *,
         leverage: float | None = None,
+        increases_exposure: bool = True,
         now: datetime | None = None,
     ) -> tuple[bool, str]:
         """检查订单是否符合统一预交易风控要求。
@@ -113,7 +122,10 @@ class RiskManager:
         if check_time.tzinfo is None:
             check_time = check_time.replace(tzinfo=UTC)
 
+        exposure = await self._current_portfolio_exposure(normalized_symbol, price)
+
         async with self._lock:
+            self._portfolio_exposure = exposure
             if not self.is_trading_enabled:
                 return False, "交易已禁用"
             if normalized_symbol in {item.upper() for item in self.config.blocked_symbols}:
@@ -132,6 +144,28 @@ class RiskManager:
                     f"per-symbol max position value {per_symbol_value_cap} exceeded "
                     f"({order_value:.2f}; 单品种最大名义金额超过限制)"
                 )
+
+            if increases_exposure:
+                projected_exposure = exposure.projected(normalized_symbol, order_value)
+                if (
+                    self.config.max_portfolio_exposure > 0
+                    and projected_exposure.total_notional > self.config.max_portfolio_exposure
+                ):
+                    return False, (
+                        f"组合总名义暴露 {projected_exposure.total_notional:.2f} 超过限制 "
+                        f"{self.config.max_portfolio_exposure:.2f}"
+                    )
+                if (
+                    self.config.max_asset_concentration_pct > 0
+                    and exposure.total_notional > 0
+                    and projected_exposure.concentration(normalized_symbol)
+                    > self.config.max_asset_concentration_pct
+                ):
+                    return False, (
+                        f"单资产 {normalized_symbol} 暴露占比 "
+                        f"{projected_exposure.concentration(normalized_symbol):.2%} 超过限制 "
+                        f"{self.config.max_asset_concentration_pct:.2%}"
+                    )
 
             if leverage is not None:
                 leverage_cap = overrides.get("max_leverage", self.config.max_leverage)
@@ -202,6 +236,21 @@ class RiskManager:
             stop_loss=self.calculate_stop_loss(price, signal.action.value),
             take_profit=self.calculate_take_profit(price, signal.action.value),
         )
+
+    def set_portfolio_exposure_provider(
+        self,
+        provider: Callable[[str, float], Awaitable[PortfolioExposure]] | None,
+    ) -> None:
+        """Attach the engine-owned local position snapshot provider."""
+        self._portfolio_exposure_provider = provider
+
+    async def _current_portfolio_exposure(
+        self, symbol: str, price: float
+    ) -> PortfolioExposure:
+        """Read current gross exposure without coupling the risk layer to positions."""
+        if self._portfolio_exposure_provider is None:
+            return self._portfolio_exposure
+        return await self._portfolio_exposure_provider(symbol, price)
 
     def _symbol_overrides(self, symbol: str) -> dict[str, float]:
         """Look up per-symbol limits case-insensitively."""
@@ -278,16 +327,24 @@ class RiskManager:
             return
         self._trading_enabled = False
 
-    def get_risk_status(self) -> dict[str, Any]:
-        """获取风险状态。"""
-        return {
-            "trading_enabled": self.is_trading_enabled,
-            "daily_pnl": self._daily_pnl,
-            "current_drawdown": self.current_drawdown,
-            "consecutive_losses": self._consecutive_losses,
-            "max_daily_loss": self.config.max_daily_loss,
-            "max_drawdown_pct": self.config.max_drawdown_pct,
-            "max_daily_order_notional": self.config.max_daily_order_notional,
-            "max_leverage": self.config.max_leverage,
-            "blocked_symbols": list(self.config.blocked_symbols),
-        }
+    async def get_risk_status(self) -> dict[str, Any]:
+        """获取包含本地组合暴露快照的风险状态。"""
+        exposure = await self._current_portfolio_exposure("", 0.0)
+        async with self._lock:
+            self._portfolio_exposure = exposure
+            return {
+                "trading_enabled": self.is_trading_enabled,
+                "daily_pnl": self._daily_pnl,
+                "current_drawdown": self.current_drawdown,
+                "consecutive_losses": self._consecutive_losses,
+                "max_daily_loss": self.config.max_daily_loss,
+                "max_drawdown_pct": self.config.max_drawdown_pct,
+                "max_daily_order_notional": self.config.max_daily_order_notional,
+                "orders_last_minute": len(self._order_timestamps),
+                "max_orders_per_minute": self.config.max_orders_per_minute,
+                "max_portfolio_exposure": self.config.max_portfolio_exposure,
+                "max_asset_concentration_pct": self.config.max_asset_concentration_pct,
+                "portfolio_exposure": exposure.as_dict(),
+                "max_leverage": self.config.max_leverage,
+                "blocked_symbols": list(self.config.blocked_symbols),
+            }

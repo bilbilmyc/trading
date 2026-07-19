@@ -668,6 +668,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         reference_price: float,
         details: dict[str, Any],
         leverage: float | None = None,
+        increases_exposure: bool = True,
     ) -> None:
         """Apply the canonical in-memory rules shared by every live order route."""
         allowed, reason = await state.engine.risk_manager.check_order(
@@ -676,6 +677,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             quantity=quantity,
             price=reference_price,
             leverage=leverage,
+            increases_exposure=increases_exposure,
         )
         if not allowed:
             reject_pretrade_risk(
@@ -1734,6 +1736,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             side=request.side,
             quantity=request.quantity,
             reference_price=reference_price,
+            increases_exposure=request.side.lower() == "buy",
             details=request.model_dump(mode="json"),
         )
         reserve_shared_daily_notional(
@@ -1832,7 +1835,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         )
 
         client = state.get_contract_exchange(request.exchange)
-        side, _, _ = client.resolve_order_intent(request.intent)
+        side, _, reduce_only = client.resolve_order_intent(request.intent)
         existing = _existing_execution_intent(
             client_order_id=request.client_order_id,
             request=request,
@@ -1854,6 +1857,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             quantity=request.quantity,
             reference_price=reference_price,
             leverage=request.leverage,
+            increases_exposure=not reduce_only,
             details=request.model_dump(mode="json"),
         )
         reserve_shared_daily_notional(

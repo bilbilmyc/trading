@@ -86,6 +86,8 @@ SQLite 文件位置 `data/trading.sqlite3`：
 | --- | --- | --- | --- |
 | 单笔名义金额 | `MAX_POSITION_VALUE` | `1000` | 数量 × 参考价格不得超过上限。 |
 | 全路由单日预算 | `MAX_DAILY_ORDER_NOTIONAL` | `5000` | SQLite 原子预留，跨现货、合约和 Bot 累计；`0` 关闭。网络结果不明确时预算会保守保留，等待对账而不是冒险释放。 |
+| 组合总毛暴露 | `MAX_PORTFOLIO_EXPOSURE` | `0` | 根据本地同步持仓按绝对数量 × 市场价聚合；新开/加仓后的投影总额不得超过上限，`0` 关闭。 |
+| 单交易对集中度 | `MAX_ASSET_CONCENTRATION_PCT` | `0` | 按标准化交易对聚合跨交易所本地持仓；已有组合时，新开/加仓后的该交易对毛暴露占比不得超过比例，`0` 关闭。 |
 | 最大杠杆 | `MAX_LEVERAGE` | `5` | 合约下单的全局杠杆上限；`0` 关闭，生产环境不建议关闭。 |
 | 单品种覆盖 | `RISK_SYMBOL_OVERRIDES` | `{}` | JSON 对象，可为某标的收紧 `max_leverage` 或 `max_position_value`。 |
 | 禁交易标的 | `RISK_BLOCKED_SYMBOLS` | `[]` | JSON 数组；匹配后拒绝新订单。 |
@@ -95,6 +97,11 @@ SQLite 文件位置 `data/trading.sqlite3`：
 风险拦截会返回 HTTP `422`，不会创建待提交的执行意图，也会记录 `risk_order_blocked`
 审计事件（含入口、交易所、标的、触发原因和限额上下文）。幂等重放不会重复扣减
 单日额度；所有配置示例以 [`.env.example`](../.env.example) 为准。
+
+组合暴露读取的是引擎内 `PositionSync` 与已记录成交维护的**本地持仓快照**：当前待交易标的
+会用下单参考价覆盖旧标记价，其他标的使用最近同步价格。它不会把“已提交但尚未成交/对账”的
+订单当成持仓，也尚未进行跨进程全局聚合；因此实盘必须保持单一交易引擎的持仓同步和账户对账正常，
+并在 testnet 上先以小额度启用。后续阶段将补充待成交订单预留、相关性/资产分组和波动率限制。
 
 > **上线建议**：先在 testnet 设定很小的 `MAX_DAILY_ORDER_NOTIONAL`、正数
 > `MAX_LEVERAGE` 和明确的标的黑名单；确认审计、对账和 Kill Switch 演练正常后，才逐步调整额度。
