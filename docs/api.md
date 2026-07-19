@@ -34,7 +34,7 @@ python -c "import secrets; print(secrets.token_urlsafe(32))"
 | 策略 | `/api/v1/strategies/*` | 10+ | **是**（写） |
 | 信号/事件 | `/api/v1/signals/recent`, `/api/v1/events/recent` | 2 | 否 |
 | 风控计算 | `/api/v1/sizing`, `/api/v1/atr-sizing` | 2 | 否 |
-| 回测/实验 | `/api/v1/backtest`, `/api/v1/backtest/grid-search`, `/api/v1/backtest/portfolio`, `/api/v1/backtests/*`, `/api/v1/strategies/suggest` | 4 | 读取实验为**是** |
+| 回测/实验 | `/api/v1/backtest`, `/api/v1/backtest/grid-search`, `/api/v1/backtest/parameter-sensitivity`, `/api/v1/backtest/portfolio`, `/api/v1/backtests/*`, `/api/v1/strategies/suggest` | 5 | 读取实验为**是** |
 | 投资组合 | `/api/v1/portfolio/*`, `/api/v1/trade-history` | 3 | 否 |
 | AI | `/api/v1/ai/analyze`, `/api/v1/ai/insights`, `/api/v1/ai/decisions*` | 5 | **是** |
 | LLM 策略 | `/api/v1/strategies/llm*` | 3 | **是** |
@@ -97,6 +97,14 @@ MARKET_DATA_PARQUET_DIR=data/market_data
 响应的 `candidates` 按以下稳定规则排序：`total_pnl` 降序、`max_drawdown` 升序、`trades` 降序、短窗口升序、长窗口升序。`best` 包含第一名的完整回测指标、权益曲线和成交明细，候选列表只返回比较所需的紧凑指标，以限制响应体大小。
 
 该端点标记 `search.in_sample_only: true`：它仅用于研究和候选参数筛选，不能视为样本外表现或直接晋级交易。应使用 Walk-forward 验证端点取得严格的样本外证据。版本化数据集的网格实验同样会保存哈希并可通过复现端点验证。
+
+#### 局部参数敏感性分析
+
+`POST /api/v1/backtest/parameter-sensitivity` 围绕一组固定 SMA 基准参数运行**局部、有限**的参数扰动，用于观察小幅窗口变化对 `total_pnl`、`total_return_pct`、`max_drawdown` 和 `trades` 的影响。请求沿用普通回测的数据源、资金、执行成本和保护参数，并可传入 `short_offsets`、`long_offsets`；两个偏移列表默认都是 `[-1, 0, 1]`，每个列表最多 8 项，且都必须包含 `0`，确保响应保留原始基准组合。
+
+服务端只保留满足有效窗口关系的候选：`short_window + short_offset > 0`、`long_window + long_offset > 0` 且短窗口小于长窗口；最多 **64** 个有效局部候选。`candidates` 以有效短窗口、有效长窗口和两项偏移的稳定升序返回，`baseline` 是偏移均为 `0` 的同一组基准指标；响应还明确标注 `parameter_mode: "bounded_local_variation"`、`in_sample_only: true` 和 `auto_selection: false`。
+
+该端点只做敏感性比较：不会把表现最好的候选写回策略配置、不会自动挑选参数、不会发出模拟或真实订单，也不能作为样本外或实盘准入证据。需要训练选参与严格样本外检验时应使用 Walk-forward。版本化行情实验会保存不可变请求、结果哈希、执行/风险模型和运行环境，并可通过 `POST /api/v1/backtests/{run_id}/reproduce` 验证。
 
 #### 样本内 / 样本外固定参数分析
 
