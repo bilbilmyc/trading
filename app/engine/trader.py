@@ -22,6 +22,7 @@ from app.engine.account_reconciliation import (
     AccountReconciliationGuard,
 )
 from app.engine.composite_observer import CompositeObserver
+from app.engine.correlation import CorrelationSnapshot, position_correlation_snapshot
 from app.engine.live_order_pipeline import LiveOrderPipeline
 from app.engine.live_trading_guard import LiveTradingGuard
 from app.engine.monitor import Alert, AlertCategory, AlertLevel, Monitor, build_engine_checkers
@@ -138,6 +139,7 @@ class TradingEngine:
         self.risk_manager.set_portfolio_exposure_provider(
             self.position_manager.get_exposure_snapshot
         )
+        self.risk_manager.set_correlation_provider(self._position_correlation_snapshot)
         self.account_reconciliation = AccountReconciliationGuard()
         self.paper_account = PaperTradingAccount()
 
@@ -263,6 +265,55 @@ class TradingEngine:
             )
         except ImportError:
             logger.info("LLMStrategy not importable — skipping registration")
+
+    async def _position_correlation_snapshot(
+        self,
+        symbol: str,
+        exchange_name: str | None,
+        interval: str,
+        lookback_candles: int,
+        min_samples: int,
+    ) -> CorrelationSnapshot:
+        """Fetch aligned public candles for a candidate versus active local positions."""
+        source = self._exchanges.get((exchange_name or "").lower())
+        if source is None:
+            return CorrelationSnapshot(symbol=symbol, unavailable_symbols=(symbol,))
+        positions = await self.position_manager.get_all_positions()
+        active_by_symbol = {}
+        for position in positions.values():
+            if position.quantity and position.symbol.upper() != symbol.upper():
+                active_by_symbol.setdefault(position.symbol.upper(), position.exchange.lower())
+        if not active_by_symbol:
+            return CorrelationSnapshot(symbol=symbol.upper())
+        try:
+            candidate_candles = await source.get_klines(
+                symbol, interval=interval, limit=lookback_candles
+            )
+        except Exception as exc:
+            logger.warning(f"Correlation candle fetch failed for {symbol}: {exc}")
+            return CorrelationSnapshot(symbol=symbol, unavailable_symbols=(symbol,))
+
+        position_candles: dict[str, list[dict[str, Any]]] = {}
+        unavailable: list[str] = []
+        for position_symbol, position_exchange in active_by_symbol.items():
+            position_source = self._exchanges.get(position_exchange)
+            if position_source is None:
+                unavailable.append(position_symbol)
+                continue
+            try:
+                position_candles[position_symbol] = await position_source.get_klines(
+                    position_symbol, interval=interval, limit=lookback_candles
+                )
+            except Exception as exc:
+                logger.warning(f"Correlation candle fetch failed for {position_symbol}: {exc}")
+                unavailable.append(position_symbol)
+        return position_correlation_snapshot(
+            symbol,
+            candidate_candles,
+            position_candles,
+            min_samples=min_samples,
+            unavailable_symbols=unavailable,
+        )
 
     def add_exchange(self, name: str, exchange: ExchangeBase):
         """添加交易所"""
@@ -481,10 +532,20 @@ class TradingEngine:
         self.store.upsert_strategy(snapshot)
         version_payload = {
             key: snapshot.get(key)
-            for key in ("class_name", "exchange", "symbol", "interval", "mode", "running", "parameters")
+            for key in (
+                "class_name",
+                "exchange",
+                "symbol",
+                "interval",
+                "mode",
+                "running",
+                "parameters",
+            )
         }
         fingerprint = hashlib.sha256(
-            json.dumps(version_payload, ensure_ascii=False, sort_keys=True, default=str).encode("utf-8")
+            json.dumps(version_payload, ensure_ascii=False, sort_keys=True, default=str).encode(
+                "utf-8"
+            )
         ).hexdigest()
         version = self.store.record_strategy_version(snapshot, fingerprint=fingerprint)
         self._strategy_configs.setdefault(name, {})["version"] = version["version"]

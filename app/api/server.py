@@ -678,6 +678,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             price=reference_price,
             leverage=leverage,
             increases_exposure=increases_exposure,
+            exchange=exchange,
         )
         if not allowed:
             reject_pretrade_risk(

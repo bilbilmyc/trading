@@ -73,6 +73,10 @@ class RiskSettings(BaseModel):
     max_asset_concentration_pct: float = 0.0
     max_asset_group_concentration_pct: float = 0.0
     asset_groups: dict[str, tuple[str, ...]] = Field(default_factory=dict)
+    max_position_correlation: float = 0.0
+    correlation_interval: str = "1h"
+    correlation_lookback_candles: int = 72
+    correlation_min_samples: int = 30
     max_leverage: float = 5.0
     max_consecutive_losses: int = 0
     blocked_symbols: tuple[str, ...] = ()
@@ -198,6 +202,11 @@ class Settings(BaseSettings):
     max_asset_group_concentration_pct: float = Field(default=0.0, ge=0, le=1)
     # JSON object, e.g. {"layer1":["BTCUSDT","ETHUSDT"]}; no inferred classification.
     risk_asset_groups: dict[str, tuple[str, ...]] = Field(default_factory=dict)
+    # Maximum positive return correlation to an existing position; 0 disables it.
+    max_position_correlation: float = Field(default=0.0, ge=0, le=1)
+    correlation_interval: str = Field(default="1h", min_length=1)
+    correlation_lookback_candles: int = Field(default=72, ge=3, le=1500)
+    correlation_min_samples: int = Field(default=30, ge=2)
     # Explicit leverage is capped for contract orders; 0 disables the global cap.
     max_leverage: float = Field(default=5.0, ge=0)
     # 0 leaves the consecutive-loss circuit breaker disabled.
@@ -414,6 +423,10 @@ class Settings(BaseSettings):
             max_asset_concentration_pct=self.max_asset_concentration_pct,
             max_asset_group_concentration_pct=self.max_asset_group_concentration_pct,
             asset_groups=self.risk_asset_groups,
+            max_position_correlation=self.max_position_correlation,
+            correlation_interval=self.correlation_interval,
+            correlation_lookback_candles=self.correlation_lookback_candles,
+            correlation_min_samples=self.correlation_min_samples,
             max_leverage=self.max_leverage,
             max_consecutive_losses=self.max_consecutive_losses,
             blocked_symbols=tuple(self.risk_blocked_symbols),

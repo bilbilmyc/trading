@@ -9,8 +9,9 @@ from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime
 from typing import Any
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
+from app.engine.correlation import CorrelationSnapshot
 from app.engine.live_trading_guard import LiveTradingGuard
 from app.engine.pipeline_types import RiskDecision
 from app.engine.portfolio_exposure import PortfolioExposure
@@ -43,6 +44,12 @@ class RiskConfig(BaseModel):
         default_factory=dict,
         description="资产分组到标准化交易对的显式映射；同一交易对只能属于一个分组",
     )
+    max_position_correlation: float = Field(
+        0, ge=0, le=1, description="最大正收益相关系数；0 表示关闭"
+    )
+    correlation_interval: str = Field("1h", min_length=1, description="相关性 K 线周期")
+    correlation_lookback_candles: int = Field(72, ge=3, le=1500, description="相关性 K 线窗口")
+    correlation_min_samples: int = Field(30, ge=2, description="最少对齐收益样本")
     max_leverage: float = Field(5.0, ge=0, description="全局最大杠杆；0 表示不限制")
     stop_loss_pct: float = Field(0.05, gt=0, le=1, description="止损百分比")
     take_profit_pct: float = Field(0.10, gt=0, description="止盈百分比")
@@ -89,6 +96,12 @@ class RiskConfig(BaseModel):
             normalized_groups[group] = symbols
         return normalized_groups
 
+    @model_validator(mode="after")
+    def _validate_correlation_window(self) -> "RiskConfig":
+        if self.correlation_min_samples >= self.correlation_lookback_candles:
+            raise ValueError("相关性最少样本必须小于 K 线窗口")
+        return self
+
 
 class RiskManager:
     """统一风险管理器。
@@ -111,6 +124,10 @@ class RiskManager:
         self._portfolio_exposure_provider: (
             Callable[[str, float], Awaitable[PortfolioExposure]] | None
         ) = None
+        self._correlation_provider: (
+            Callable[[str, str | None, str, int, int], Awaitable[CorrelationSnapshot]] | None
+        ) = None
+        self._correlation_snapshot: CorrelationSnapshot | None = None
         self._order_timestamps: list[datetime] = []
         self._trading_enabled = True
         self._guard = trading_guard
@@ -149,6 +166,7 @@ class RiskManager:
         *,
         leverage: float | None = None,
         increases_exposure: bool = True,
+        exchange: str | None = None,
         now: datetime | None = None,
     ) -> tuple[bool, str]:
         """检查订单是否符合统一预交易风控要求。
@@ -166,6 +184,9 @@ class RiskManager:
             check_time = check_time.replace(tzinfo=UTC)
 
         exposure = await self._current_portfolio_exposure(normalized_symbol, price)
+        correlation_snapshot = None
+        if increases_exposure and self.config.max_position_correlation > 0:
+            correlation_snapshot = await self._current_correlation(normalized_symbol, exchange)
 
         async with self._lock:
             self._portfolio_exposure = exposure
@@ -225,6 +246,22 @@ class RiskManager:
                             f"{self.config.max_asset_group_concentration_pct:.2%}"
                         )
 
+                if correlation_snapshot is not None:
+                    self._correlation_snapshot = correlation_snapshot
+                    max_pair = correlation_snapshot.max_positive_pair()
+                    if (
+                        self.config.max_position_correlation > 0
+                        and max_pair is not None
+                        and max_pair[1] > self.config.max_position_correlation
+                    ):
+                        compared_symbol, correlation = max_pair
+                        samples = correlation_snapshot.sample_sizes[compared_symbol]
+                        return False, (
+                            f"标的 {normalized_symbol} 与持仓 {compared_symbol} 收益相关系数 "
+                            f"{correlation:.2f}（{samples} 个样本）超过限制 "
+                            f"{self.config.max_position_correlation:.2f}"
+                        )
+
             if leverage is not None:
                 leverage_cap = overrides.get("max_leverage", self.config.max_leverage)
                 if leverage_cap > 0 and leverage > leverage_cap:
@@ -254,12 +291,19 @@ class RiskManager:
 
     async def check(self, signal: Signal, price: float) -> RiskDecision:
         """RiskGate port surface, returning a typed :class:`RiskDecision`."""
+        return await self.check_with_exchange(signal, price)
+
+    async def check_with_exchange(
+        self, signal: Signal, price: float, exchange: str | None = None
+    ) -> RiskDecision:
+        """Evaluate a pipeline signal with its source exchange when available."""
         quantity = signal.quantity or 0.001
         allowed, reason = await self.check_order(
             symbol=signal.symbol,
             side=signal.action.value,
             quantity=quantity,
             price=price,
+            exchange=exchange,
         )
         if not allowed:
             return RiskDecision(allowed=False, reason=reason)
@@ -301,6 +345,26 @@ class RiskManager:
     ) -> None:
         """Attach the engine-owned local position snapshot provider."""
         self._portfolio_exposure_provider = provider
+
+    def set_correlation_provider(
+        self,
+        provider: Callable[[str, str | None, str, int, int], Awaitable[CorrelationSnapshot]] | None,
+    ) -> None:
+        """Attach the engine-owned aligned market-history provider."""
+        self._correlation_provider = provider
+
+    async def _current_correlation(
+        self, symbol: str, exchange: str | None
+    ) -> CorrelationSnapshot | None:
+        if self._correlation_provider is None:
+            return None
+        return await self._correlation_provider(
+            symbol,
+            exchange,
+            self.config.correlation_interval,
+            self.config.correlation_lookback_candles,
+            self.config.correlation_min_samples,
+        )
 
     async def _current_portfolio_exposure(self, symbol: str, price: float) -> PortfolioExposure:
         """Read current gross exposure without coupling the risk layer to positions."""
@@ -419,6 +483,13 @@ class RiskManager:
                 "max_portfolio_exposure": self.config.max_portfolio_exposure,
                 "max_asset_concentration_pct": self.config.max_asset_concentration_pct,
                 "max_asset_group_concentration_pct": self.config.max_asset_group_concentration_pct,
+                "max_position_correlation": self.config.max_position_correlation,
+                "correlation_interval": self.config.correlation_interval,
+                "correlation_lookback_candles": self.config.correlation_lookback_candles,
+                "correlation_min_samples": self.config.correlation_min_samples,
+                "correlation_snapshot": self._correlation_snapshot.as_dict()
+                if self._correlation_snapshot
+                else None,
                 "asset_groups": {
                     name: list(symbols)
                     for name, symbols in sorted(self.config.asset_groups.items())
