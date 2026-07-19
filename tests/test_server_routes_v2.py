@@ -422,6 +422,93 @@ def test_rolling_backtest_rejects_invalid_window_order(tmp_path) -> None:
     assert response.status_code == 400
 
 
+def test_parameter_sensitivity_returns_local_candidates(tmp_path) -> None:
+    with TestClient(create_app(_settings(sqlite_path=str(tmp_path / "h.sqlite3")))) as c:
+        response = c.post(
+            "/api/v1/backtest/parameter-sensitivity",
+            json={
+                "klines": _candles(30),
+                "short_window": 2,
+                "long_window": 4,
+                "short_offsets": [-1, 0, 1],
+                "long_offsets": [-1, 0, 1],
+                "fee_rate": 0,
+            },
+        )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["sensitivity"]["baseline_parameters"] == {"short_window": 2, "long_window": 4}
+    assert body["sensitivity"]["candidate_count"] == 8
+    assert body["sensitivity"]["parameter_mode"] == "bounded_local_variation"
+    assert body["sensitivity"]["in_sample_only"] is True
+    assert body["sensitivity"]["auto_selection"] is False
+    assert body["baseline"]["short_offset"] == 0
+    assert body["baseline"]["long_offset"] == 0
+    assert len(body["candidates"]) == 8
+    assert body["backtest_run_id"] > 0
+
+
+def test_parameter_sensitivity_data_version_can_be_reproduced(tmp_path) -> None:
+    catalog_candles = [
+        {
+            "timestamp": f"2026-01-{1 + index // 24:02d}T{index % 24:02d}:00:00Z",
+            "open": 100.0 + index * 0.1,
+            "high": 105.0 + index * 0.1,
+            "low": 95.0 + index * 0.1,
+            "close": 100.0 + (index % 5) * 0.5,
+            "volume": 10.0,
+        }
+        for index in range(30)
+    ]
+    settings = _settings(
+        sqlite_path=str(tmp_path / "h.sqlite3"),
+        market_data_catalog_path=str(tmp_path / "market_data.duckdb"),
+        market_data_parquet_dir=str(tmp_path / "market_data"),
+    )
+    with TestClient(create_app(settings)) as c:
+        imported = c.post(
+            "/api/v1/market-data/datasets",
+            json={
+                "symbol": "BTCUSDT",
+                "timeframe": "1h",
+                "source": "test",
+                "candles": catalog_candles,
+            },
+        )
+        assert imported.status_code == 201
+        response = c.post(
+            "/api/v1/backtest/parameter-sensitivity",
+            json={
+                "data_version": imported.json()["version"],
+                "short_window": 2,
+                "long_window": 4,
+                "fee_rate": 0,
+            },
+        )
+        assert response.status_code == 200
+        reproduced = c.post(f"/api/v1/backtests/{response.json()['backtest_run_id']}/reproduce")
+
+    assert reproduced.status_code == 200
+    assert reproduced.json()["reproducible"] is True
+
+
+def test_parameter_sensitivity_requires_baseline_offsets(tmp_path) -> None:
+    with TestClient(create_app(_settings(sqlite_path=str(tmp_path / "h.sqlite3")))) as c:
+        response = c.post(
+            "/api/v1/backtest/parameter-sensitivity",
+            json={
+                "klines": _candles(30),
+                "short_window": 2,
+                "long_window": 4,
+                "short_offsets": [1],
+                "long_offsets": [0],
+            },
+        )
+
+    assert response.status_code == 422
+
+
 def test_grid_search_backtest_returns_ranked_candidates(tmp_path) -> None:
     with TestClient(create_app(_settings(sqlite_path=str(tmp_path / "h.sqlite3")))) as c:
         response = c.post(

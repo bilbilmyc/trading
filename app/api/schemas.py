@@ -220,6 +220,40 @@ class GridSearchRequest(BacktestRequest):
         return self
 
 
+class ParameterSensitivityRequest(BacktestRequest):
+    """Bounded local SMA variations around one fixed baseline parameter pair."""
+
+    short_offsets: list[int] = Field(default_factory=lambda: [-1, 0, 1], min_length=1, max_length=8)
+    long_offsets: list[int] = Field(default_factory=lambda: [-1, 0, 1], min_length=1, max_length=8)
+
+    @model_validator(mode="after")
+    def _has_bounded_local_variations(self) -> ParameterSensitivityRequest:
+        if self.short_window >= self.long_window:
+            raise ValueError("short_window must be smaller than long_window")
+        if 0 not in self.short_offsets or 0 not in self.long_offsets:
+            raise ValueError("short_offsets and long_offsets must both include zero")
+        candidates = {
+            (
+                self.short_window + short_offset,
+                self.long_window + long_offset,
+                short_offset,
+                long_offset,
+            )
+            for short_offset in self.short_offsets
+            for long_offset in self.long_offsets
+            if self.short_window + short_offset > 0
+            and self.long_window + long_offset > 0
+            and self.short_window + short_offset < self.long_window + long_offset
+        }
+        if not candidates:
+            raise ValueError(
+                "offsets must produce at least one valid short_window < long_window pair"
+            )
+        if len(candidates) > 64:
+            raise ValueError("the local sensitivity grid may contain at most 64 valid candidates")
+        return self
+
+
 class InOutSampleBacktestRequest(BacktestRequest):
     """Fixed-parameter contiguous in-sample / out-of-sample SMA study."""
 

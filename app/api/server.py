@@ -52,6 +52,7 @@ from app.api.schemas import (
     MonteCarloBacktestRequest,
     OrderRequest,
     PaperResetRequest,
+    ParameterSensitivityRequest,
     PortfolioBacktestRequest,
     ReconciliationRecoveryRequest,
     RollingBacktestRequest,
@@ -3053,6 +3054,113 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             payload["backtest_run_id"] = run_id
         return payload
 
+    def _run_parameter_sensitivity(
+        request: ParameterSensitivityRequest,
+        state: AppState,
+        *,
+        persist: bool,
+    ) -> dict[str, Any]:
+        """Compare bounded local fixed-parameter SMA variations without selecting a winner."""
+
+        from app.engine.parameter_sensitivity import (
+            MAX_SENSITIVITY_CANDIDATES,
+            run_sma_parameter_sensitivity,
+        )
+
+        try:
+            candles, backtest_candles = _load_backtest_candles(request, state)
+            trials = run_sma_parameter_sensitivity(
+                candles=backtest_candles,
+                short_window=request.short_window,
+                long_window=request.long_window,
+                short_offsets=request.short_offsets,
+                long_offsets=request.long_offsets,
+                initial_capital=request.initial_capital,
+                position_size_pct=request.position_size_pct,
+                fee_rate=request.fee_rate,
+                slippage_rate=request.slippage_rate,
+                max_volume_participation=request.max_volume_participation,
+                stop_loss_pct=request.stop_loss_pct,
+                take_profit_pct=request.take_profit_pct,
+            )
+        except DatasetNotFoundError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except DatasetQualityError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        except (KeyError, MarketDataError, ValueError, TypeError) as exc:
+            raise HTTPException(
+                status_code=400, detail=f"Invalid parameter-sensitivity backtest data: {exc}"
+            ) from exc
+
+        baseline = next(
+            trial for trial in trials if trial.short_offset == 0 and trial.long_offset == 0
+        )
+        execution_model = {
+            "signal_execution": "next_bar_open",
+            "fee_rate": request.fee_rate,
+            "slippage_rate": request.slippage_rate,
+            "max_volume_participation": request.max_volume_participation,
+            "volume_limit_behavior": "partial_fill_then_cancel",
+        }
+        payload: dict[str, Any] = {
+            "sensitivity": {
+                "baseline_parameters": {
+                    "short_window": request.short_window,
+                    "long_window": request.long_window,
+                },
+                "short_offsets": sorted(set(request.short_offsets)),
+                "long_offsets": sorted(set(request.long_offsets)),
+                "candidate_count": len(trials),
+                "maximum_candidate_count": MAX_SENSITIVITY_CANDIDATES,
+                "parameter_mode": "bounded_local_variation",
+                "in_sample_only": True,
+                "auto_selection": False,
+            },
+            "baseline": baseline.as_dict(),
+            "candidates": [trial.as_dict() for trial in trials],
+            "execution_model": execution_model,
+            "klines_used": [_serialize_kline(kline) for kline in candles],
+            "data_version": request.data_version,
+        }
+        result_hash = hashlib.sha256(
+            json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode()
+        ).hexdigest()
+        payload["result_hash"] = result_hash
+
+        if persist:
+            run_id = state.store.save_backtest_experiment(
+                strategy_name="sma_parameter_sensitivity",
+                strategy_version=_strategy_version(),
+                data_version=request.data_version,
+                data_start=str(backtest_candles[0].get("open_time")),
+                data_end=str(backtest_candles[-1].get("open_time")),
+                strategy_parameters={
+                    "short_window": request.short_window,
+                    "long_window": request.long_window,
+                    "short_offsets": sorted(set(request.short_offsets)),
+                    "long_offsets": sorted(set(request.long_offsets)),
+                    "initial_capital": request.initial_capital,
+                    "position_size_pct": request.position_size_pct,
+                },
+                execution_model=execution_model,
+                risk_model={
+                    "stop_loss_pct": request.stop_loss_pct,
+                    "take_profit_pct": request.take_profit_pct,
+                },
+                environment={
+                    "app_version": "0.1.0",
+                    "python_version": platform.python_version(),
+                    "model_version": "not_applicable:sma_rule",
+                    "backtest_engine": "event_driven_simulation_v1",
+                },
+                request=request.model_dump(mode="json", exclude_none=True),
+                result=payload,
+                result_hash=result_hash,
+                created_at=datetime.now(UTC).isoformat().replace("+00:00", "Z"),
+            )
+            payload["backtest_run_id"] = run_id
+        return payload
+
     def _run_grid_search(
         request: GridSearchRequest,
         state: AppState,
@@ -3319,6 +3427,15 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
         return _run_rolling_backtest(request, state, persist=True)
 
+    @app.post("/api/v1/backtest/parameter-sensitivity")
+    async def parameter_sensitivity_backtest_endpoint(
+        request: ParameterSensitivityRequest,
+        state: AppState = Depends(get_state),
+    ):
+        """Run bounded local SMA parameter-sensitivity diagnostics."""
+
+        return _run_parameter_sensitivity(request, state, persist=True)
+
     @app.post("/api/v1/backtest/grid-search")
     async def grid_search_backtest_endpoint(
         request: GridSearchRequest,
@@ -3371,6 +3488,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         if "strategies" in raw_request:
             request = PortfolioBacktestRequest.model_validate(raw_request)
             replay = _run_portfolio_backtest(request, state, persist=False)
+        elif run["strategy_name"] == "sma_parameter_sensitivity":
+            request = ParameterSensitivityRequest.model_validate(raw_request)
+            replay = _run_parameter_sensitivity(request, state, persist=False)
         elif "short_windows" in raw_request and "long_windows" in raw_request:
             request = GridSearchRequest.model_validate(raw_request)
             replay = _run_grid_search(request, state, persist=False)
